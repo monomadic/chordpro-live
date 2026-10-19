@@ -1,0 +1,11 @@
+[workspace]
+members = ["crates/cpl-song"]
+resolver = "3"
+
+[package]
+name = "cpl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cpl-song = { path = "crates/cpl-song" }
