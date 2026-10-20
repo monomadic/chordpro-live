@@ -10,6 +10,8 @@ use winit::{
 };
 
 const SAMPLE: &str = "{title: The Long Road Home}\n{artist: Sample song}\n{start_of_verse: Verse 1}\n[C]Morning light is [G]falling on the [Am]road\n[F]Every step is [C]bringing us back [G]home\n{end_of_verse}\n{start_of_chorus: Chorus}\n[F]Carry on, [C]carry on\n[G]We can hear the [Am]morning song\n{end_of_chorus}\n{start_of_verse: Verse 2}\n[C]When the night is [G]quiet we will [Am]know\n[F]All the roads we [C]travel lead us [G]home\n{end_of_verse}";
+const INLINE_SAMPLE: &str =
+    "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n[G]Bravo\n[Am]Charlie\n{end_of_verse}";
 
 fn block_on<F: Future>(future: F) -> F::Output {
     let mut context = std::task::Context::from_waker(Waker::noop());
@@ -24,6 +26,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 
 struct Viewer {
     app: App,
+    initial_size: (f64, f64),
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
 }
@@ -53,7 +56,10 @@ impl ApplicationHandler for Viewer {
                 .create_window(
                     Window::default_attributes()
                         .with_title("chordpro-live")
-                        .with_inner_size(winit::dpi::LogicalSize::new(980.0, 720.0)),
+                        .with_inner_size(winit::dpi::LogicalSize::new(
+                            self.initial_size.0,
+                            self.initial_size.1,
+                        )),
                 )
                 .expect("create window"),
         );
@@ -123,23 +129,25 @@ fn main() -> ExitCode {
         path => (false, path.map(str::to_owned)),
     };
     if args.next().is_some() || (!view && path.is_none()) {
-        eprintln!("usage: cpl [--view [page|page-dark]] <song.cho>");
+        eprintln!("usage: cpl [--view [page|page-dark|page-inline]] <song.cho>");
         return ExitCode::FAILURE;
     }
     let dark = path.as_deref() == Some("page-dark");
-    let source =
-        if view && (path.is_none() || matches!(path.as_deref(), Some("page" | "page-dark"))) {
-            SAMPLE.to_owned()
-        } else {
-            let path = path.as_deref().unwrap();
-            match fs::read_to_string(path) {
-                Ok(source) => source,
-                Err(error) => {
-                    eprintln!("{path}: {error}");
-                    return ExitCode::FAILURE;
-                }
+    let inline = path.as_deref() == Some("page-inline");
+    let source = if view && inline {
+        INLINE_SAMPLE.to_owned()
+    } else if view && (path.is_none() || matches!(path.as_deref(), Some("page" | "page-dark"))) {
+        SAMPLE.to_owned()
+    } else {
+        let path = path.as_deref().unwrap();
+        match fs::read_to_string(path) {
+            Ok(source) => source,
+            Err(error) => {
+                eprintln!("{path}: {error}");
+                return ExitCode::FAILURE;
             }
-        };
+        }
+    };
     let result = cpl_song::parse(&source);
     for diagnostic in &result.diagnostics {
         eprintln!("line {}: {}", diagnostic.line, diagnostic.message);
@@ -168,6 +176,11 @@ fn main() -> ExitCode {
             } else {
                 Polarity::Light
             },
+        },
+        initial_size: if inline {
+            (300.0, 200.0)
+        } else {
+            (980.0, 720.0)
         },
         window: None,
         gpu: None,

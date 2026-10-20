@@ -12,7 +12,7 @@ An initial macOS viewer is built. `cpl-song` parses a small ChordPro slice;
 `cpl-layout` fits whole sections into columns at the stand-size floor;
 `cpl-app` composes the page; `cpl-render` composites CoreText
 rasters into a wgpu texture; `src/main.rs` hosts the winit window. The
-remaining reduction steps, scrolling/paging, library, full ChordPro 6
+parser-dependent reduction steps, scrolling/paging, library, full ChordPro 6
 conformance, text atlas, and iOS host are still planned. Do not describe
 these as implemented.
 
@@ -30,6 +30,7 @@ and keep these notes as specifications rather than history.
 Build with `cargo build --workspace`. Check with `cargo test --workspace`
 and `cargo clippy --workspace --all-targets -- -D warnings`. Run the
 sample macOS page with `cargo run -- --view page` (or `page-dark`),
+and inspect inline chords with `cargo run -- --view page-inline`,
 or open a song with `cargo run -- --view song.cho`. Press `i` for polarity
 and Escape to close. `cargo run -- song.cho` prints the parsed lyrics.
 
@@ -65,9 +66,8 @@ the commit message.
   honoured. Generate the conformance note's status table; never hand-edit it.
 - **The page is always readable.** Body text never drops below the
   readability floor. The current page shows a paging-needed message when
-  it overflows after trying the first three applicable reduction steps and
-  title removal at step 7.
-  The remaining ladder must descend before switching mode.
+  it overflows after trying the currently applicable reduction steps
+  (1–3, 7–9). Complete parser-dependent steps 4–6 before switching mode.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. The current renderer rasterises on
   page updates inside the window callback; move that work off the frame

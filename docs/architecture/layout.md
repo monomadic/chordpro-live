@@ -14,5 +14,7 @@ short labels in the side margin (step 2) and a single-line header (step 3).
 The side-label choice is skipped when a label is too wide, so the collapsed
 header can still be tried. Step 7 removes the title after the earlier
 applicable choices fail; steps 4–6 have no rendered content yet.
-A song that still cannot fit shows a paging-needed message. Later reduction
-steps, point-size presets, scroll and page fallback remain unimplemented.
+Step 8 collapses a repeated chorus to its first line, and step 9 uses inline
+chords with a shorter line block. The lyric face stays at the body floor in
+every candidate. A song that still cannot fit shows a paging-needed message.
+Point-size presets, scroll and page fallback remain unimplemented.

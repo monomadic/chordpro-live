@@ -65,6 +65,11 @@ pub struct Config {
     pub label_height: f32,
     pub label_gap: f32,
     pub chord_gap: f32,
+    pub inline_line_height: f32,
+    pub inline_lyric_baseline: f32,
+    pub inline_chord_baseline: f32,
+    pub inline_chord_size: f32,
+    pub inline_chord_gap: f32,
     pub column_gutter: f32,
 }
 
@@ -132,6 +137,11 @@ impl Config {
             label_height: take!("label_height"),
             label_gap: take!("label_gap"),
             chord_gap: take!("chord_gap"),
+            inline_line_height: take!("inline_line_height"),
+            inline_lyric_baseline: take!("inline_lyric_baseline"),
+            inline_chord_baseline: take!("inline_chord_baseline"),
+            inline_chord_size: take!("inline_chord_size"),
+            inline_chord_gap: take!("inline_chord_gap"),
             column_gutter: take!("column_gutter"),
         };
         if let Some(key) = values.keys().next() {
@@ -139,6 +149,8 @@ impl Config {
         }
         if config.chord_baseline >= config.lyric_baseline
             || config.lyric_baseline >= config.line_height
+            || config.inline_chord_baseline >= config.inline_lyric_baseline
+            || config.inline_lyric_baseline >= config.inline_line_height
         {
             return Err("invalid chord/lyric baseline order".into());
         }
@@ -158,6 +170,8 @@ struct Candidate {
     side_labels: bool,
     collapsed_header: bool,
     hide_title: bool,
+    collapse_repeats: bool,
+    inline_chords: bool,
     ladder_step: u8,
 }
 
@@ -168,6 +182,8 @@ impl App {
             side_labels: false,
             collapsed_header: false,
             hide_title: false,
+            collapse_repeats: false,
+            inline_chords: false,
             ladder_step: 0,
         };
         let full = self.frame_candidate(width, height, measure, full_options);
@@ -204,16 +220,47 @@ impl App {
         if header.fits {
             return header;
         }
+        let no_title = Candidate {
+            hide_title: true,
+            ladder_step: 7,
+            ..header_options
+        };
+        let title_dropped = self.frame_candidate(width, height, measure, no_title);
+        if title_dropped.fits {
+            return title_dropped;
+        }
+        let repeated = self.frame_candidate(
+            width,
+            height,
+            measure,
+            Candidate {
+                collapse_repeats: true,
+                ladder_step: 8,
+                ..no_title
+            },
+        );
+        if repeated.fits {
+            return repeated;
+        }
         self.frame_candidate(
             width,
             height,
             measure,
             Candidate {
-                hide_title: true,
-                ladder_step: 7,
-                ..header_options
+                inline_chords: true,
+                ladder_step: 9,
+                collapse_repeats: true,
+                ..no_title
             },
         )
+    }
+
+    fn is_repeated_chorus(&self, index: usize) -> bool {
+        let section = &self.song.sections[index];
+        section.kind == SectionKind::Chorus
+            && self.song.sections[..index].iter().any(|earlier| {
+                earlier.kind == SectionKind::Chorus && earlier.lines == section.lines
+            })
     }
 
     fn labels_fit_side(&self, measure: &impl Measure) -> bool {
@@ -242,6 +289,8 @@ impl App {
             side_labels,
             collapsed_header,
             hide_title,
+            collapse_repeats,
+            inline_chords,
             ladder_step,
         } = candidate;
         let c = &self.config;
@@ -297,7 +346,13 @@ impl App {
             .song
             .sections
             .iter()
-            .map(|section| {
+            .enumerate()
+            .map(|(index, section)| {
+                let visible_lines = if collapse_repeats && self.is_repeated_chorus(index) {
+                    section.lines.len().min(1)
+                } else {
+                    section.lines.len()
+                };
                 let label_width = measure.width(
                     &section.label.to_uppercase(),
                     c.label_size * body,
@@ -307,7 +362,8 @@ impl App {
                 let line_width = section
                     .lines
                     .iter()
-                    .map(|line| line_width(line, c, measure) / body)
+                    .take(visible_lines)
+                    .map(|line| line_width(line, c, measure, inline_chords) / body)
                     .fold(0.0, f32::max);
                 cpl_layout::Block {
                     width: if side_labels {
@@ -319,7 +375,11 @@ impl App {
                         0.0
                     } else {
                         c.label_height + c.label_gap
-                    }) + c.line_height * section.lines.len() as f32,
+                    }) + (if inline_chords {
+                        c.inline_line_height
+                    } else {
+                        c.line_height
+                    }) * visible_lines as f32,
                 }
             })
             .collect();
@@ -375,7 +435,12 @@ impl App {
                                 column_x
                             },
                             baseline: if side_labels {
-                                section_y + c.label_size * body
+                                section_y
+                                    + if inline_chords {
+                                        c.inline_lyric_baseline
+                                    } else {
+                                        c.lyric_baseline
+                                    } * body
                             } else {
                                 section_y
                             },
@@ -392,7 +457,48 @@ impl App {
                             section_y += c.label_gap * body;
                         }
                     }
-                    for line in &section.lines {
+                    let visible_lines = if collapse_repeats && self.is_repeated_chorus(index) {
+                        section.lines.len().min(1)
+                    } else {
+                        section.lines.len()
+                    };
+                    for line in section.lines.iter().take(visible_lines) {
+                        if inline_chords {
+                            let mut x = column_x;
+                            for segment in &line.segments {
+                                if let Some(chord) = &segment.chord {
+                                    frame.text.push(Text {
+                                        content: chord.clone(),
+                                        x,
+                                        baseline: section_y + c.inline_chord_baseline * body,
+                                        size: c.inline_chord_size * body,
+                                        weight: 600,
+                                        face: Face::Monospace,
+                                        ink: Ink::Soft,
+                                    });
+                                    x += measure.width(
+                                        chord,
+                                        c.inline_chord_size * body,
+                                        600,
+                                        Face::Monospace,
+                                    ) + c.inline_chord_gap * body;
+                                }
+                                if !segment.lyric.is_empty() {
+                                    frame.text.push(Text {
+                                        content: segment.lyric.clone(),
+                                        x,
+                                        baseline: section_y + c.inline_lyric_baseline * body,
+                                        size: body,
+                                        weight: 400,
+                                        face: Face::System,
+                                        ink: Ink::Strong,
+                                    });
+                                    x += measure.width(&segment.lyric, body, 400, Face::System);
+                                }
+                            }
+                            section_y += c.inline_line_height * body;
+                            continue;
+                        }
                         let chord_y = section_y + c.chord_baseline * body;
                         let lyric_y = section_y + c.lyric_baseline * body;
                         let mut lyric_x = column_x;
@@ -449,7 +555,9 @@ impl App {
             });
         }
         frame.text.push(Text {
-            content: if frame.fits {
+            content: if frame.fits && width < 500.0 {
+                format!("FIT  ·  {body} pt  ·  step {}", frame.ladder_step)
+            } else if frame.fits {
                 format!(
                     "FIT  ·  {} {}  ·  stand {} pt",
                     frame.columns,
@@ -478,7 +586,24 @@ impl App {
     }
 }
 
-fn line_width(line: &cpl_song::Line, c: &Config, measure: &impl Measure) -> f32 {
+fn line_width(line: &cpl_song::Line, c: &Config, measure: &impl Measure, inline: bool) -> f32 {
+    if inline {
+        return line
+            .segments
+            .iter()
+            .map(|segment| {
+                measure.width(&segment.lyric, c.body_size, 400, Face::System)
+                    + segment.chord.as_ref().map_or(0.0, |chord| {
+                        measure.width(
+                            chord,
+                            c.inline_chord_size * c.body_size,
+                            600,
+                            Face::Monospace,
+                        ) + c.inline_chord_gap * c.body_size
+                    })
+            })
+            .sum();
+    }
     let mut lyric_x: f32 = 0.0;
     let mut chord_x: f32 = 0.0;
     for segment in &line.segments {
@@ -675,6 +800,62 @@ mod tests {
                 .iter()
                 .any(|item| item.content == "Alpha" && item.size == 17.0)
         );
+    }
+
+    #[test]
+    fn repeat_chorus_keeps_its_first_line_at_step_eight() {
+        let song = cpl_song::parse(
+            "{title: Test}\n{start_of_chorus: A}\n[C]Echo\n[G]Again\n{end_of_chorus}\n{start_of_chorus: A}\n[C]Echo\n[G]Again\n{end_of_chorus}",
+        ).song;
+        let app = App {
+            song,
+            config: Config::default(),
+            polarity: Polarity::Light,
+        };
+        let frame = app.frame(190.0, 235.0, &Fixed);
+        assert!(frame.fits);
+        assert_eq!(frame.ladder_step, 8);
+        assert_eq!(
+            frame
+                .text
+                .iter()
+                .filter(|item| item.content == "Echo")
+                .count(),
+            2
+        );
+        assert_eq!(
+            frame
+                .text
+                .iter()
+                .filter(|item| item.content == "Again")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn inline_chords_are_last_fit_that_keeps_lyrics_readable() {
+        let song = cpl_song::parse(
+            "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n[G]Bravo\n[Am]Charlie\n{end_of_verse}",
+        )
+        .song;
+        let app = App {
+            song,
+            config: Config::default(),
+            polarity: Polarity::Light,
+        };
+        let frame = app.frame(300.0, 200.0, &Fixed);
+        assert!(frame.fits);
+        assert_eq!(frame.ladder_step, 9);
+        let chord = frame.text.iter().find(|item| item.content == "C").unwrap();
+        let lyric = frame
+            .text
+            .iter()
+            .find(|item| item.content == "Alpha")
+            .unwrap();
+        assert!(chord.baseline < lyric.baseline);
+        assert!(chord.x < lyric.x);
+        assert_eq!(lyric.size, 17.0);
     }
 
     #[test]

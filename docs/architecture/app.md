@@ -18,7 +18,9 @@ and put the title and byline on one baseline if they fit the page width.
 When those fail, step 7 removes the title; steps 4–6 concern diagrams,
 tablature and metadata pills that this viewer does not render yet. A side
 label candidate is skipped when its text will not fit in the margin.
-Every candidate retries at the same body size. The rest of the ladder,
-scroll and page modes, and normalised input events in the proposal are not
-implemented yet. The default config is embedded
+Step 8 keeps the first line of a repeated chorus (exact line/segment
+equality), and step 9 places small chord symbols inline before their lyric
+segments. Every candidate retries at the same body size. The scroll and
+page modes, later parser-dependent reductions, and normalised input events
+in the proposal are not implemented yet. The default config is embedded
 at build time; hot reload has not landed.
