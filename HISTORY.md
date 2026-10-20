@@ -6,6 +6,13 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-20
 
+- **Checked the supplied “What's Up” source in the macOS window.** At a
+  1960×1504 px Retina capture, the initial scroll position shows Intro,
+  its compact chord row, and Verse 1 lyric/chord pairs without the tab block.
+  After Page Down, pairs remain together and the status names CHORUS when its
+  label is above the viewport. The title's quotation marks are authored in
+  the ChordPro file. A notation legend outside the tab block remains visible
+  as ordinary text; the fixed-size repeatable capture task remains open.
 - **Measured ink against page bounds.** A macOS integration test now rasterises
   every positioned item on fitted pages through CoreText at 1x and 2x and
   checks its actual ink against the content bounds. The tested title, byline,

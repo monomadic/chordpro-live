@@ -7,27 +7,35 @@ automated checks.
 
 ## P0 — make the song page usable
 
-- [ ] Temporarily hide tablature blocks in the viewer. Keep them in the parsed
+- [x] Temporarily hide tablature blocks in the viewer. Keep them in the parsed
   `Song` and the `.cho` file. Do not let a hidden tab consume fit or scroll
-  space. Code and headless tests landed; a window capture of the affected song
-  is still part of the next visual check.
+  space. Headless tests and the real-song macOS window check passed.
 - [ ] Reproduce the supplied **“What's Up”** screenshot with the source song
   and a fixed `--view` window size. Capture fit and scroll states; check title,
   intro, verse, chorus, chord alignment, margins, and the bottom edge. Keep a
-  small, redistributable regression fixture or equivalent test case.
-- [ ] Make the first viewport show a coherent part of the song. The screenshot
+  small, redistributable regression fixture or equivalent test case. The
+  supplied source has been checked in a 1960×1504 px Retina window at the
+  initial and Page Down positions; a repeatable fixed-size capture remains.
+- [x] Make the first viewport show a coherent part of the song. The screenshot
   shows an isolated chord row near the bottom and a large gap above it. Audit
   scroll group bounds, section breaks, and clipping so a chord row never
   appears without its lyric line and no visible line is needlessly withheld.
-- [ ] Check chord-only lines and section labels in real songs. An `Intro` with
+  The real-song window now shows the Intro, the complete first verse lines,
+  and no orphaned chord row; Page Down also preserves pairs.
+- [x] Check chord-only lines and section labels in real songs. An `Intro` with
   only chords should read as intentional musical structure, not as a lyric
   line with missing words. Compact chord-only rows and headless tests landed;
-  verify them with the supplied song. A section cue now appears in the scroll
-  status when its page label is off screen; check the hierarchy on the real
-  song and through page turns.
-- [ ] Verify the title displayed in the screenshot. Determine whether the
+  the supplied song shows a compact Intro chord row and Verse 1 label. After
+  Page Down, the status says CHORUS while its label is off screen.
+- [x] Verify the title displayed in the screenshot. Determine whether the
   quotation marks are authored in the ChordPro title or introduced by parsing;
-  only change parsing if a minimal fixture proves the latter.
+  only change parsing if a minimal fixture proves the latter. The source
+  explicitly contains `{title: "What's Up"}`.
+- [ ] Decide how the viewer should handle notation legends immediately after
+  hidden tab blocks. The supplied song has a technique key after `{end_of_tab}`
+  as ordinary text, and it currently appears as a large lyric line. Preserve
+  source text unless a clear, general rule or explicit metadata distinguishes
+  it from sung words.
 
 ## P1 — dependable performance behavior
 
