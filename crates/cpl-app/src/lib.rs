@@ -3,6 +3,7 @@
 pub use cpl_layout::{Face, Measure};
 use cpl_layout::{MeasuredSong, Metrics, Options, PageMetrics, Role, Solution, Viewport};
 use cpl_song::{SectionKind, Song};
+use std::{cell::RefCell, collections::BTreeMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Polarity {
@@ -185,7 +186,18 @@ pub struct App {
     song: Song,
     config: Config,
     measured: MeasuredSong,
+    prepared: RefCell<Option<(u32, u32, PreparedPage)>>,
     pub polarity: Polarity,
+}
+
+enum PreparedPage {
+    Fit(Frame),
+    NeedsWidth(Frame),
+    Scroll {
+        content: Vec<Text>,
+        bounds: BTreeMap<usize, (f32, f32)>,
+        max_offset: f32,
+    },
 }
 
 impl App {
@@ -197,6 +209,7 @@ impl App {
             song,
             config,
             measured,
+            prepared: RefCell::new(None),
             polarity,
         }
     }
@@ -238,12 +251,75 @@ impl App {
         }
     }
 
-    /// Keeps the full song at the configured body size when fit mode cannot hold it.
-    /// The caller owns the offset so navigation never changes the song model.
+    /// Scroll navigation selects a viewport from a retained, positioned page.
     pub fn frame_scrolled(&self, width: f32, height: f32, offset: f32) -> (Frame, f32) {
+        let key = (width.to_bits(), height.to_bits());
+        if self.prepared.borrow().as_ref().map(|(w, h, _)| (*w, *h)) != Some(key) {
+            let page = self.prepare_page(width, height);
+            *self.prepared.borrow_mut() = Some((key.0, key.1, page));
+        }
+        let cache = self.prepared.borrow();
+        let (_, _, page) = cache.as_ref().unwrap();
+        match page {
+            PreparedPage::Fit(frame) | PreparedPage::NeedsWidth(frame) => {
+                let mut frame = frame.clone();
+                frame.polarity = self.polarity;
+                (frame, 0.0)
+            }
+            PreparedPage::Scroll {
+                content,
+                bounds,
+                max_offset,
+            } => {
+                let c = &self.config;
+                let body = c.body_size;
+                let offset = offset.clamp(0.0, *max_offset);
+                let content_end = height - c.margin_bottom - c.status_height * body;
+                let mut frame = Frame {
+                    width,
+                    height,
+                    polarity: self.polarity,
+                    text: Vec::new(),
+                    fits: false,
+                    columns: 1,
+                    ladder_step: 10,
+                };
+                for item in content {
+                    let (top, bottom) = bounds[&item.group];
+                    if top - offset >= c.margin_top && bottom - offset <= content_end {
+                        let mut item = item.clone();
+                        item.baseline -= offset;
+                        frame.text.push(item);
+                    }
+                }
+                let more = if offset < *max_offset {
+                    "  ·  MORE ↓"
+                } else {
+                    ""
+                };
+                frame.text.push(Text {
+                    group: usize::MAX,
+                    content: if width < 500.0 {
+                        format!("SCROLL  ·  {body} pt{more}")
+                    } else {
+                        format!("SCROLL  ·  stand {body} pt  ·  ↑ ↓ / Page Up Down{more}")
+                    },
+                    x: c.margin_x,
+                    baseline: height - c.margin_bottom * 0.5,
+                    size: body * 0.7,
+                    weight: 400,
+                    face: Face::Monospace,
+                    ink: Ink::Faint,
+                });
+                (frame, *max_offset)
+            }
+        }
+    }
+
+    fn prepare_page(&self, width: f32, height: f32) -> PreparedPage {
         let mut fit = self.frame(width, height);
         if fit.fits {
-            return (fit, 0.0);
+            return PreparedPage::Fit(fit);
         }
         let c = &self.config;
         let body = c.body_size;
@@ -269,7 +345,7 @@ impl App {
                     item.content = format!("WIDTH NEEDED  ·  stand {} pt", body);
                 }
             }
-            return (fit, 0.0);
+            return PreparedPage::NeedsWidth(fit);
         }
         let mut long = self.compose(width, height, &long);
         long.text.pop(); // the long page's status strip belongs below its viewport
@@ -280,17 +356,7 @@ impl App {
             .map(|item| item.baseline)
             .fold(c.margin_top, f32::max);
         let max_offset = (last_baseline + body * 0.5 - content_end).max(0.0);
-        let offset = offset.clamp(0.0, max_offset);
-        let mut frame = Frame {
-            width,
-            height,
-            polarity: self.polarity,
-            text: Vec::new(),
-            fits: false,
-            columns: 1,
-            ladder_step: 10,
-        };
-        let mut group_bounds = std::collections::BTreeMap::<usize, (f32, f32)>::new();
+        let mut group_bounds = BTreeMap::<usize, (f32, f32)>::new();
         for item in &long.text {
             let bounds = group_bounds
                 .entry(item.group)
@@ -298,33 +364,11 @@ impl App {
             bounds.0 = bounds.0.min(item.baseline - item.size);
             bounds.1 = bounds.1.max(item.baseline + item.size * 0.25);
         }
-        for mut item in long.text {
-            let (top, bottom) = group_bounds[&item.group];
-            item.baseline -= offset;
-            if top - offset >= c.margin_top && bottom - offset <= content_end {
-                frame.text.push(item);
-            }
+        PreparedPage::Scroll {
+            content: long.text,
+            bounds: group_bounds,
+            max_offset,
         }
-        let more = if offset < max_offset {
-            "  ·  MORE ↓"
-        } else {
-            ""
-        };
-        frame.text.push(Text {
-            group: usize::MAX,
-            content: if width < 500.0 {
-                format!("SCROLL  ·  {body} pt{more}")
-            } else {
-                format!("SCROLL  ·  stand {body} pt  ·  ↑ ↓ / Page Up Down{more}")
-            },
-            x: c.margin_x,
-            baseline: height - c.margin_bottom * 0.5,
-            size: body * 0.7,
-            weight: 400,
-            face: Face::Monospace,
-            ink: Ink::Faint,
-        });
-        (frame, max_offset)
     }
 
     /// The least-reduced page that fits, or the most-reduced candidate marked unfit.

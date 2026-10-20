@@ -168,35 +168,53 @@ impl ApplicationHandler for Viewer {
     }
 }
 
+const USAGE: &str = "\
+usage: cpl --view <song.cho>              open a song in the viewer
+       cpl --view page-dark <song.cho>    open it white on black (`i` toggles)
+       cpl --view [page|page-dark|page-inline|page-scroll]
+                                          open a built-in sample page
+       cpl <song.cho>                     print the parsed lyrics
+In the viewer: i polarity, arrows / Page Up / Page Down / Home / End scroll,
+Escape closes.";
+
+const SAMPLES: [&str; 4] = ["page", "page-dark", "page-inline", "page-scroll"];
+
 fn main() -> ExitCode {
-    let mut args = env::args().skip(1);
-    let first = args.next();
-    let (view, path) = match first.as_deref() {
-        Some("--view") => (true, args.next()),
-        path => (false, path.map(str::to_owned)),
-    };
-    if args.next().is_some() || (!view && path.is_none()) {
-        eprintln!("usage: cpl [--view [page|page-dark|page-inline|page-scroll]] <song.cho>");
-        return ExitCode::FAILURE;
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
     }
-    let dark = path.as_deref() == Some("page-dark");
-    let inline = path.as_deref() == Some("page-inline");
-    let scroll = path.as_deref() == Some("page-scroll");
-    let source = if view && scroll {
-        SCROLL_SAMPLE.to_owned()
-    } else if view && inline {
-        INLINE_SAMPLE.to_owned()
-    } else if view && (path.is_none() || matches!(path.as_deref(), Some("page" | "page-dark"))) {
-        SAMPLE.to_owned()
-    } else {
-        let path = path.as_deref().unwrap();
-        match fs::read_to_string(path) {
+    // (open a window, sample page name, song path)
+    let (view, sample, path) = match args.as_slice() {
+        [flag] if flag == "--view" => (true, "page", None),
+        [flag, name] if flag == "--view" && SAMPLES.contains(&name.as_str()) => {
+            (true, name.as_str(), None)
+        }
+        [flag, path] if flag == "--view" => (true, "page", Some(path)),
+        [flag, name, path] if flag == "--view" && matches!(name.as_str(), "page" | "page-dark") => {
+            (true, name.as_str(), Some(path))
+        }
+        [path] if !path.starts_with('-') => (false, "page", Some(path)),
+        _ => {
+            eprintln!("{USAGE}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let dark = sample == "page-dark";
+    let inline = path.is_none() && sample == "page-inline";
+    let scroll = path.is_none() && sample == "page-scroll";
+    let source = match path {
+        Some(path) => match fs::read_to_string(path) {
             Ok(source) => source,
             Err(error) => {
                 eprintln!("{path}: {error}");
                 return ExitCode::FAILURE;
             }
-        }
+        },
+        None if scroll => SCROLL_SAMPLE.to_owned(),
+        None if inline => INLINE_SAMPLE.to_owned(),
+        None => SAMPLE.to_owned(),
     };
     let result = cpl_song::parse(&source);
     for diagnostic in &result.diagnostics {

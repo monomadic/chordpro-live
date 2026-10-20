@@ -34,7 +34,8 @@ and `cargo clippy --workspace --all-targets -- -D warnings`. Run the
 sample macOS page with `cargo run -- --view page` (or `page-dark`),
 inspect inline chords with `cargo run -- --view page-inline`, and inspect
 overflow with `cargo run -- --view page-scroll`; or open a song with
-`cargo run -- --view song.cho`. Press `i` for polarity and Escape to close.
+`cargo run -- --view song.cho` (`--view page-dark song.cho` for white on
+black); `cpl --help` lists the forms. Press `i` for polarity and Escape to close.
 Arrow keys, Page Up/Down, Home, and End navigate an overflowing song.
 `cargo run -- song.cho` prints the parsed lyrics.
 
