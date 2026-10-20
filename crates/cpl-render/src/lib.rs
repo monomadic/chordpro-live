@@ -5,7 +5,56 @@ mod text;
 
 pub use text::CoreText;
 
-use cpl_app::{Frame, Ink, Polarity};
+use cpl_app::{Face, Frame, Ink, Polarity};
+use std::{cell::RefCell, collections::HashMap, sync::Arc};
+
+#[derive(Hash, PartialEq, Eq)]
+struct RasterKey {
+    content: String,
+    size: u32,
+    scale: u32,
+    weight: u16,
+    face: Face,
+}
+
+#[derive(Default)]
+struct RasterCache {
+    entries: HashMap<RasterKey, Arc<text::Raster>>,
+    bytes: usize,
+}
+
+impl RasterCache {
+    fn get(&mut self, item: &cpl_app::Text, scale: f32) -> Option<Arc<text::Raster>> {
+        let key = RasterKey {
+            content: item.content.clone(),
+            size: item.size.to_bits(),
+            scale: scale.to_bits(),
+            weight: item.weight,
+            face: item.face,
+        };
+        if let Some(raster) = self.entries.get(&key) {
+            return Some(Arc::clone(raster));
+        }
+        let raster = Arc::new(CoreText.rasterize(
+            &item.content,
+            item.size,
+            scale,
+            item.weight,
+            item.face,
+        )?);
+        const BUDGET: usize = 32 * 1024 * 1024;
+        let bytes = raster.coverage.len();
+        if self.bytes + bytes > BUDGET {
+            self.entries.clear();
+            self.bytes = 0;
+        }
+        if bytes <= BUDGET {
+            self.bytes += bytes;
+            self.entries.insert(key, Arc::clone(&raster));
+        }
+        Some(raster)
+    }
+}
 
 pub struct Gpu {
     surface: wgpu::Surface<'static>,
@@ -17,6 +66,7 @@ pub struct Gpu {
     sampler: wgpu::Sampler,
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
+    rasters: RefCell<RasterCache>,
 }
 
 impl Gpu {
@@ -128,6 +178,7 @@ impl Gpu {
             sampler,
             texture,
             bind_group,
+            rasters: RefCell::new(RasterCache::default()),
         })
     }
 
@@ -154,11 +205,8 @@ impl Gpu {
         for pixel in pixels.chunks_exact_mut(4) {
             pixel[3] = 255;
         }
-        let rasterizer = CoreText;
         for item in &frame.text {
-            let Some(raster) =
-                rasterizer.rasterize(&item.content, item.size, scale, item.weight, item.face)
-            else {
+            let Some(raster) = self.rasters.borrow_mut().get(item, scale) else {
                 continue;
             };
             let ink = match (frame.polarity, item.ink) {
@@ -295,4 +343,31 @@ fn make_bind_group(
             },
         ],
     })
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use cpl_app::{Ink, Text};
+
+    #[test]
+    fn same_text_at_same_scale_reuses_coverage() {
+        let item = Text {
+            content: "A lyric line".into(),
+            group: 0,
+            x: 10.0,
+            baseline: 20.0,
+            size: 17.0,
+            weight: 400,
+            face: Face::System,
+            ink: Ink::Strong,
+        };
+        let mut cache = RasterCache::default();
+        let first = cache.get(&item, 2.0).unwrap();
+        let second = cache.get(&item, 2.0).unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(cache.entries.len(), 1);
+        cache.get(&item, 1.0).unwrap();
+        assert_eq!(cache.entries.len(), 2);
+    }
 }

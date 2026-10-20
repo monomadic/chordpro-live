@@ -3,7 +3,7 @@
 pub use cpl_layout::{Face, Measure};
 use cpl_layout::{MeasuredSong, Metrics, Options, PageMetrics, Role, Solution, Viewport};
 use cpl_song::{SectionKind, Song};
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Polarity {
@@ -186,7 +186,7 @@ pub struct App {
     song: Song,
     config: Config,
     measured: MeasuredSong,
-    prepared: RefCell<Option<(u32, u32, PreparedPage)>>,
+    prepared: RefCell<Option<(u32, u32, Arc<PreparedPage>)>>,
     pub polarity: Polarity,
 }
 
@@ -256,11 +256,11 @@ impl App {
         let key = (width.to_bits(), height.to_bits());
         if self.prepared.borrow().as_ref().map(|(w, h, _)| (*w, *h)) != Some(key) {
             let page = self.prepare_page(width, height);
-            *self.prepared.borrow_mut() = Some((key.0, key.1, page));
+            *self.prepared.borrow_mut() = Some((key.0, key.1, Arc::new(page)));
         }
         let cache = self.prepared.borrow();
         let (_, _, page) = cache.as_ref().unwrap();
-        match page {
+        match page.as_ref() {
             PreparedPage::Fit(frame) | PreparedPage::NeedsWidth(frame) => {
                 let mut frame = frame.clone();
                 frame.polarity = self.polarity;
@@ -684,8 +684,11 @@ mod tests {
         let app = app(
             "{title: A Rather Long Title}\n{artist: Somebody Famous}\n{start_of_tab: Intro}\ne|--3---|\nB|--1---|\nG|--0---|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
         );
-        assert!((40..1600).all(|h| app.frame(320.0, h as f32).ladder_step != 3));
-        let frame = at_step(&app, 320.0, 5);
+        let width = 2.0 * app.config.margin_x
+            + app.measured.header.title_width * app.config.body_size
+            + 1.0;
+        assert!((40..1600).all(|h| app.frame(width, h as f32).ladder_step != 3));
+        let frame = at_step(&app, width, 5);
         assert_eq!(count(&frame, "A Rather Long Title"), 1);
         assert_eq!(count(&frame, "e|--3---|"), 0);
     }
@@ -804,6 +807,10 @@ mod tests {
         assert!(max_offset > 0.0);
         assert_eq!(count(&first, "Line 0"), 1);
         assert_eq!(count(&first, "Line 17"), 0);
+        let prepared = {
+            let cache = app.prepared.borrow();
+            Arc::clone(&cache.as_ref().unwrap().2)
+        };
         for chord in first.text.iter().filter(|item| item.content == "C") {
             assert!(
                 first
@@ -813,6 +820,11 @@ mod tests {
             );
         }
         let (last, _) = app.frame_scrolled(450.0, 260.0, max_offset);
+        let reused = {
+            let cache = app.prepared.borrow();
+            Arc::clone(&cache.as_ref().unwrap().2)
+        };
+        assert!(Arc::ptr_eq(&prepared, &reused));
         assert_eq!(count(&last, "Line 17"), 1);
         assert!(
             last.text
