@@ -16,7 +16,11 @@ unsafe extern "C" {
         out_adv_n: *mut c_int,
     ) -> *mut c_uchar;
     fn sb_text_free(p: *mut c_uchar);
+    fn sb_text_width(utf8: *const c_char, size: f64, weight: c_int, mono: c_int) -> f64;
 }
+
+/// Pixels of slack the shim puts on each side of a raster (`pad` in text_shim.m).
+pub(crate) const RASTER_PAD: i32 = 1;
 
 pub struct Raster {
     pub width: u32,
@@ -62,9 +66,19 @@ impl CoreText {
 }
 
 impl Measure for CoreText {
+    /// Typographic advance only; no bitmap is drawn to measure.
     fn width(&self, text: &str, size_pt: f32, weight: u16, face: Face) -> f32 {
-        self.rasterize(text, size_pt, weight, face)
-            .map_or(0.0, |raster| raster.width as f32 - 2.0)
+        let Ok(text) = CString::new(text) else {
+            return 0.0;
+        };
+        unsafe {
+            sb_text_width(
+                text.as_ptr(),
+                size_pt as f64,
+                weight as c_int,
+                i32::from(face == Face::Monospace),
+            ) as f32
+        }
     }
 }
 
@@ -85,6 +99,19 @@ mod tests {
         );
         assert!(raster.coverage.iter().any(|&pixel| pixel > 0));
         assert!(raster.coverage.contains(&0));
+    }
+
+    #[test]
+    fn width_matches_the_raster_and_counts_trailing_space() {
+        let width = CoreText.width("Hello", 24.0, 400, Face::System);
+        let raster = CoreText
+            .rasterize("Hello", 24.0, 400, Face::System)
+            .unwrap();
+        // The raster is the advance rounded up plus one pixel of slack per side.
+        assert!(raster.width as f32 - 2.0 - width >= 0.0);
+        assert!(raster.width as f32 - 2.0 - width < 1.0);
+        assert!(CoreText.width("Hello ", 24.0, 400, Face::System) > width + 3.0);
+        assert_eq!(CoreText.width("", 24.0, 400, Face::System), 0.0);
     }
 
     #[test]

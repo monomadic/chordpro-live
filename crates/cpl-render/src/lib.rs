@@ -169,7 +169,8 @@ impl Gpu {
                 (Polarity::Dark, Ink::Soft) => 181,
                 (Polarity::Dark, Ink::Faint) => 110,
             };
-            let left = (item.x * scale).round() as i32;
+            // The raster carries slack before the glyph origin; the origin sits at `x`.
+            let left = (item.x * scale).round() as i32 - text::RASTER_PAD;
             let top = (item.baseline * scale).round() as i32 - raster.baseline as i32;
             for row in 0..raster.height as i32 {
                 let y = top + row;

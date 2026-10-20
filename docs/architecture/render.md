@@ -13,6 +13,11 @@ Measurement and rasterisation receive the same face, size and weight, so
 switching faces preserves chord alignment. The type scale and spacing live
 in `config/default.toml`.
 
+`Measure` for `CoreText` is `sb_text_width`: the line's typographic advance,
+trailing spaces included, with no bitmap drawn. A raster carries one pixel of
+slack on each side (`RASTER_PAD`); compositing places the glyph origin, not
+the bitmap's edge, at the item's `x`.
+
 The CoreText shim is copied from
 `switchblade/crates/sb-window/src/text_shim.m`. This starter does not yet
 use switchblade's R8 atlas, span highlighting, raster budget, or scheduler.

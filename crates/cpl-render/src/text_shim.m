@@ -30,6 +30,32 @@ static NSFontWeight sb_weight(int w) {
     return NSFontWeightHeavy;
 }
 
+static NSFont *sb_font(double size, int weight, int mono) {
+    return mono ? [NSFont monospacedSystemFontOfSize:size weight:sb_weight(weight)]
+                : [NSFont systemFontOfSize:size weight:sb_weight(weight)];
+}
+
+// Typographic advance of `utf8` at `size` points, without drawing anything.
+// Layout measures with this; only the renderer pays for a bitmap. Trailing
+// spaces count, because the next run starts after them.
+double sb_text_width(const char *utf8, double size, int weight, int mono) {
+    @autoreleasepool {
+        if (!utf8 || size <= 0.0) return 0.0;
+        NSString *s = [NSString stringWithUTF8String:utf8];
+        if (!s || s.length == 0) return 0.0;
+        NSFont *font = sb_font(size, weight, mono);
+        if (!font) return 0.0;
+        NSAttributedString *as =
+            [[NSAttributedString alloc] initWithString:s
+                                            attributes:@{NSFontAttributeName : font}];
+        CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)as);
+        if (!line) return 0.0;
+        double width = CTLineGetTypographicBounds(line, NULL, NULL, NULL);
+        CFRelease(line);
+        return width;
+    }
+}
+
 // Rasterize `utf8` at `size` points (already scaled to physical pixels by the
 // caller) and weight `weight` (CSS-ish: 400 regular, 600 semibold).
 //
@@ -61,9 +87,7 @@ unsigned char *sb_text_rasterize(const char *utf8, double size, int weight,
         NSString *s = [NSString stringWithUTF8String:utf8];
         if (!s || s.length == 0) return NULL;
 
-        NSFont *font = mono ? [NSFont monospacedSystemFontOfSize:size
-                                                          weight:sb_weight(weight)]
-                            : [NSFont systemFontOfSize:size weight:sb_weight(weight)];
+        NSFont *font = sb_font(size, weight, mono);
         if (!font) return NULL;
         if (tnum) {
             // Tabular figures as a font feature. A face without the feature
