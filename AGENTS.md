@@ -65,7 +65,8 @@ the commit message.
   honoured. Generate the conformance note's status table; never hand-edit it.
 - **The page is always readable.** Body text never drops below the
   readability floor. The current page shows a paging-needed message when
-  it overflows after trying the first three applicable reduction steps.
+  it overflows after trying the first three applicable reduction steps and
+  title removal at step 7.
   The remaining ladder must descend before switching mode.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. The current renderer rasterises on

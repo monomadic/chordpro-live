@@ -15,6 +15,9 @@ drawing a lyric below the readability floor.
 The first three fit candidates run in proposal order: remove inter-section
 gaps; move section labels into the side margin when all labels fit there;
 and put the title and byline on one baseline if they fit the page width.
+When those fail, step 7 removes the title; steps 4–6 concern diagrams,
+tablature and metadata pills that this viewer does not render yet. A side
+label candidate is skipped when its text will not fit in the margin.
 Every candidate retries at the same body size. The rest of the ladder,
 scroll and page modes, and normalised input events in the proposal are not
 implemented yet. The default config is embedded
