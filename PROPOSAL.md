@@ -1,8 +1,9 @@
 # chordpro-live — technical proposal
 
 *Status: implementation started, 2026-10-20. A partial parser and a
-multi-column macOS viewer exist; the reduction ladder, library, conformance work,
-and iOS host remain proposed. Where a decision is settled it says so; where
+multi-column macOS viewer exist; only the first reduction step is built.
+The rest of the ladder, library, conformance work, and iOS host remain
+proposed. Where a decision is settled it says so; where
 it is an unknown it says what will settle it.*
 
 ## The pitch in one paragraph

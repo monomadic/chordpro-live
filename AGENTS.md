@@ -12,8 +12,9 @@ An initial macOS viewer is built. `cpl-song` parses a small ChordPro slice;
 `cpl-layout` fits whole sections into columns at the stand-size floor;
 `cpl-app` composes the page; `cpl-render` composites CoreText
 rasters into a wgpu texture; `src/main.rs` hosts the winit window. The
-fit ladder, scrolling/paging, library, full ChordPro 6 conformance, text
-atlas, and iOS host are still planned. Do not describe these as implemented.
+remaining reduction steps, scrolling/paging, library, full ChordPro 6
+conformance, text atlas, and iOS host are still planned. Do not describe
+these as implemented.
 
 [PROPOSAL.md](PROPOSAL.md) remains the source of truth for design decisions,
 ranked unknowns, and phases. Read the relevant section before structural
@@ -64,7 +65,8 @@ the commit message.
   honoured. Generate the conformance note's status table; never hand-edit it.
 - **The page is always readable.** Body text never drops below the
   readability floor. The current page shows a paging-needed message when
-  it overflows. The planned fit ladder must descend before switching mode.
+  it overflows after trying the first reduction step (zero section gap).
+  The remaining ladder must descend before switching mode.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. The current renderer rasterises on
   page updates inside the window callback; move that work off the frame

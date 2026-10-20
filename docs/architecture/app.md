@@ -12,6 +12,8 @@ body-size units except margins, which are points. If a line crosses the right
 or bottom margin, this initial view shows a paging-needed message instead of
 drawing a lyric below the readability floor.
 
-The reduction ladder, scroll and page modes, and normalised input events in
-the proposal are not implemented yet. The default config is embedded
+The first reduction step removes inter-section gaps when the ordinary page
+misses the floor, then retries the fit at the same body size. The rest of the
+ladder, scroll and page modes, and normalised input events in the proposal
+are not implemented yet. The default config is embedded
 at build time; hot reload has not landed.

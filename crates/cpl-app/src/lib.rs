@@ -44,6 +44,7 @@ pub struct Frame {
     pub text: Vec<Text>,
     pub fits: bool,
     pub columns: usize,
+    pub ladder_step: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +163,7 @@ impl App {
             text: Vec::new(),
             fits: true,
             columns: 0,
+            ladder_step: 0,
         };
         let title = self.song.first_meta("title").unwrap_or("Untitled");
         let title_size = c.title_size * body;
@@ -215,20 +217,33 @@ impl App {
                 }
             })
             .collect();
-        let fit = cpl_layout::fit(
-            &blocks,
-            cpl_layout::FitOptions {
-                available_width: ((width - 2.0 * c.margin_x) / body).max(0.0),
-                available_height: ((content_end - y) / body).max(0.0),
-                header_height: 0.0,
-                header_gap: 0.0,
-                section_gap: c.section_gap,
-                column_gutter: c.column_gutter,
-                max_columns: 4,
-                max_body_size: 1.0,
-                floor: 1.0,
-            },
-        );
+        let base_options = cpl_layout::FitOptions {
+            available_width: ((width - 2.0 * c.margin_x) / body).max(0.0),
+            available_height: ((content_end - y) / body).max(0.0),
+            header_height: 0.0,
+            header_gap: 0.0,
+            section_gap: c.section_gap,
+            column_gutter: c.column_gutter,
+            max_columns: 4,
+            max_body_size: 1.0,
+            floor: 1.0,
+        };
+        let mut fit = cpl_layout::fit(&blocks, base_options);
+        let mut section_gap = c.section_gap;
+        if !fit.meets_floor {
+            let compact = cpl_layout::fit(
+                &blocks,
+                cpl_layout::FitOptions {
+                    section_gap: 0.0,
+                    ..base_options
+                },
+            );
+            if compact.meets_floor {
+                fit = compact;
+                section_gap = 0.0;
+                frame.ladder_step = 1;
+            }
+        }
         frame.fits = fit.meets_floor;
         frame.columns = if frame.fits { fit.columns.len() } else { 0 };
         if frame.fits {
@@ -238,7 +253,7 @@ impl App {
                 for (offset, index) in range.clone().enumerate() {
                     let section = &self.song.sections[index];
                     if offset > 0 {
-                        section_y += c.section_gap * body;
+                        section_y += section_gap * body;
                     }
                     if !section.label.is_empty() {
                         section_y += c.label_height * body;
@@ -324,7 +339,11 @@ impl App {
                         "columns"
                     },
                     body
-                )
+                ) + if frame.ladder_step == 1 {
+                    "  ·  compact 1"
+                } else {
+                    ""
+                }
             } else {
                 format!("PAGE NEEDED  ·  stand {} pt", body)
             },
@@ -417,6 +436,28 @@ mod tests {
         assert_eq!(lyrics.len(), 3);
         assert!(lyrics.windows(2).all(|pair| pair[0].x < pair[1].x));
         assert!(lyrics.iter().all(|item| item.size == 17.0));
+    }
+
+    #[test]
+    fn removes_section_gap_before_falling_back_to_paging() {
+        let song = cpl_song::parse(
+            "{title: Test}\n{start_of_verse: Verse 1}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: Verse 2}\n[G]Bravo\n{end_of_verse}",
+        ).song;
+        let app = App {
+            song,
+            config: Config::default(),
+            polarity: Polarity::Light,
+        };
+        let frame = app.frame(190.0, 285.0, &Fixed);
+        assert!(frame.fits);
+        assert_eq!(frame.columns, 1);
+        assert_eq!(frame.ladder_step, 1);
+        assert!(
+            frame
+                .text
+                .iter()
+                .any(|t| t.content == "Bravo" && t.size == 17.0)
+        );
     }
 
     #[test]
