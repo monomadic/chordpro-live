@@ -1,7 +1,9 @@
 # chordpro-live — technical proposal
 
-*Status: proposal, 2026-10-15. Nothing here is built. Where a decision is
-settled it says so; where it is an unknown it says what will settle it.*
+*Status: implementation started, 2026-10-20. A partial parser and a
+single-column macOS viewer exist; the fit ladder, library, conformance work,
+and iOS host remain proposed. Where a decision is settled it says so; where
+it is an unknown it says what will settle it.*
 
 ## The pitch in one paragraph
 
@@ -366,6 +368,24 @@ is read as a file-authored tag, shown, and never written back. A single file
 is chosen over SQLite for the same reason switchblade chose a filesystem
 cache: the data is small (a few hundred bytes per song), it diffs and syncs
 through iCloud Drive as a plain file, and profiling has not asked for more.
+
+## Design source
+
+**Every surface is mocked in Figma:** [chordpro-live — Screens](https://www.figma.com/design/0ovWyKEx7qyWh38a08Wl82)
+(2026-10-18): the Page in both polarities, the lyric-following state, Search and
+Chords, all at iPad mini landscape (1133×744 pt) with the `stand` 17 pt body.
+The file is built the way the app will be: colours are a `Polarity` variable
+collection with Light and Dark modes (`paper`, `ink`, `ink-soft`, `ink-faint`,
+`ink-wash`), so the dark page is the light page with the mode switched; type is
+the em table above as `Page/*` text styles at body 17; chords sit over their
+syllables as nested auto-layout segments, which is the same push-right rule the
+layout engine applies; chord diagrams are hairline rectangles and dots, as the
+quad pipeline will draw them. SF Pro stands in for the system face and Roboto
+Mono for the system monospaced face (JetBrains Mono's ligatures mangle tab
+lines, a reminder to disable `liga` in the tab face). Two things the mock
+exposed before any code: the song does not fit two columns at 17 pt on that
+device and needs three, and whitespace at segment edges must be measured, not
+trimmed.
 
 ## macOS, Xcode-minimal
 

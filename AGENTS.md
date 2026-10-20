@@ -8,15 +8,35 @@ It is not an editor and never writes a `.cho` file.
 
 ## Status
 
-**Proposal only. Nothing is built.** [PROPOSAL.md](PROPOSAL.md) is the source
-of truth for every design decision, the ranked unknowns and the phases. Read
-the relevant section before structural work, and do not re-litigate a
-decision listed under "Settled decisions" there without the user. When a
-decision changes, change PROPOSAL.md in the same commit.
+An initial macOS viewer is built. `cpl-song` parses a small ChordPro slice;
+`cpl-app` lays out a single-column page; `cpl-render` composites CoreText
+rasters into a wgpu texture; `src/main.rs` hosts the winit window. The
+fit ladder, scrolling/paging, library, full ChordPro 6 conformance, text
+atlas, and iOS host are still planned. Do not describe these as implemented.
 
-Once code exists this file grows the architecture map, the build and
-verification commands, and one `docs/architecture/<subsystem>.md` note per
-subsystem, written as each lands and kept as specification, not history.
+[PROPOSAL.md](PROPOSAL.md) remains the source of truth for design decisions,
+ranked unknowns, and phases. Read the relevant section before structural
+work; do not re-litigate a settled decision without the user. When a
+decision changes, change the proposal in the same commit.
+
+Architecture notes: [song](docs/architecture/chordpro.md),
+[app](docs/architecture/app.md), [render](docs/architecture/render.md).
+Add a `docs/architecture/<subsystem>.md` note as each subsystem lands,
+and keep these notes as specifications rather than history.
+
+Build with `cargo build --workspace`. Check with `cargo test --workspace`
+and `cargo clippy --workspace --all-targets -- -D warnings`. Run the
+sample macOS page with `cargo run -- --view page` (or `page-dark`),
+or open a song with `cargo run -- --view song.cho`. Press `i` for polarity
+and Escape to close. `cargo run -- song.cho` prints the parsed lyrics.
+
+## Design source
+
+Every surface is mocked in Figma — [chordpro-live — Screens](https://www.figma.com/design/0ovWyKEx7qyWh38a08Wl82)
+— and PROPOSAL.md's "Design source" section says how the file maps to the
+code (Polarity variables, `Page/*` text styles, segment auto-layout). Keep the
+mock and the em table in step: a layout constant that changes in one changes
+in the other.
 
 ## Sibling projects
 
@@ -33,26 +53,28 @@ rationale behind what is reused here:
 When porting something, port its tests with it and name the source file in
 the commit message.
 
-## Rules that already hold
+## Product and architecture rules
 
-- **ChordPro 6 in full.** The parser is written to the current spec
-  (chordpro.org) and measured against the reference implementation by the
-  `conform` subcommand. Formatting directives are accepted and ignored by
-  design; everything else is honoured. The conformance note's status table
-  is generated, never hand-edited.
+- **ChordPro 6 in full is the target.** The current parser is not conformant.
+  Extend it against the spec (chordpro.org), then measure it against the
+  reference implementation with a `conform` subcommand. Formatting
+  directives are accepted and ignored by design; everything else must be
+  honoured. Generate the conformance note's status table; never hand-edit it.
 - **The page is always readable.** Body text never drops below the
-  readability floor; fit descends the ladder, then switches mode. No layout
-  ever draws under the floor.
+  readability floor. The current page shows a paging-needed message when
+  it overflows. The planned fit ladder must descend before switching mode.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
-  I/O on the frame path, no screen sleep. The render thread never touches the
-  filesystem.
+  I/O on the frame path, no screen sleep. The current renderer rasterises on
+  page updates inside the window callback; move that work off the frame
+  path before claiming this rule is met. The render thread must never touch
+  the filesystem.
 - **Sidecar metadata only.** Tags, ratings, timings and setlists live in the
-  library store keyed by content fingerprint. The app never rewrites a song
-  file.
+  planned library store keyed by content fingerprint. The app never rewrites
+  a song file.
 - **No winit, wgpu or UIKit types in `cpl-app`.** That boundary is what makes
   the iOS host a second caller rather than a port.
-- **Xcode-minimal.** macOS needs only the Command Line Tools; bundles are
-  assembled by scripts in `packaging/` and `ios/`. No `.xcodeproj`, ever.
+- **Xcode-minimal.** macOS needs only the Command Line Tools. Bundle scripts
+  in `packaging/` and `ios/` are planned. No `.xcodeproj`, ever.
 - **Black and white only**, as a polarity toggle. No colour themes.
 - Keep dependencies lean; ask before adding one.
 
