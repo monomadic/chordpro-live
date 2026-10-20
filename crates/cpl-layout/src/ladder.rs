@@ -231,6 +231,22 @@ pub fn layout(
     step: u8,
 ) -> Solution {
     let header = options.header(&song.header, m);
+    let header_width = if options.one_line_header && !options.hide_title {
+        song.header.title_width
+            + m.header_inline_gap
+            + song
+                .header
+                .artist
+                .as_ref()
+                .map_or(0.0, |_| song.header.artist_width)
+    } else {
+        (if options.hide_title {
+            0.0
+        } else {
+            song.header.title_width
+        })
+        .max(song.header.artist_width)
+    };
     let blocks: Vec<Block> = song.sections.iter().map(|s| options.block(s, m)).collect();
     let fit = fit(
         &blocks,
@@ -249,7 +265,7 @@ pub fn layout(
     Solution {
         options,
         step,
-        fits: fit.meets_floor,
+        fits: fit.meets_floor && header_width <= view.width,
         header,
         blocks,
         fit,
@@ -396,7 +412,7 @@ mod tests {
     fn a_header_too_wide_for_one_line_does_not_block_later_steps() {
         let song = song(SONGS[1]);
         let narrow = Viewport {
-            width: 12.0,
+            width: song.header.title_width + 0.1,
             height: 0.0,
         };
         assert!(!header_fits_one_line(&song, &PAGE, narrow));
@@ -449,5 +465,19 @@ mod tests {
         .header(&song.header, &PAGE);
         assert_eq!(one.artist.unwrap().1, one.title_baseline.unwrap());
         assert!(one.height < full.height);
+    }
+
+    #[test]
+    fn wide_title_must_drop_before_page_can_fit() {
+        let song = song("{title: A title wider than the page}\n[C]Hi");
+        let view = Viewport {
+            width: 7.0,
+            height: 30.0,
+        };
+        assert!(!layout(&song, &PAGE, view, Options::default(), 0).fits);
+        let chosen = solve(&song, &PAGE, view);
+        assert!(chosen.fits);
+        assert_eq!(chosen.step, 7);
+        assert!(chosen.options.hide_title);
     }
 }
