@@ -13,7 +13,8 @@ An initial macOS viewer is built. `cpl-song` parses a growing ChordPro 6 subset
 `cpl-layout` measures each song at the floor and larger point sizes into em-unit
 runs and fits whole sections into columns; `cpl-app` composes the page
 from those runs without measuring again; `cpl-render` composites CoreText
-rasters into a wgpu texture; `src/main.rs` hosts the winit window. The viewer
+rasters on a worker and uploads complete pages to a wgpu texture;
+`src/main.rs` hosts the winit window. The viewer
 currently hides tablature blocks while preserving them in the parsed song.
 The diagram and metadata-pill reduction steps, paged mode, library, full
 ChordPro 6 conformance, text atlas, and iOS host are still planned. Do not
@@ -87,10 +88,10 @@ the commit message.
   the full song at that size. Lines too wide for the window still need a
   layout solution. Diagram and pill steps 4 and 6 are not built yet.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
-  I/O on the frame path, no screen sleep. The current renderer rasterises on
-  page updates inside the window callback; move that work off the frame
-  path before claiming this rule is met. The render thread must never touch
-  the filesystem.
+  I/O on the frame path, no screen sleep. Page measurement and CoreText
+  rasterisation now run on a worker; full page texture upload still occurs on
+  accepted updates, and next-song preloading is still planned. The render
+  thread must never touch the filesystem.
 - **Sidecar metadata only.** Tags, ratings, timings and setlists live in the
   planned library store keyed by content fingerprint. The app never rewrites
   a song file.

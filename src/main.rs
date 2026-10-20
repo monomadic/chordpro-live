@@ -1,6 +1,11 @@
 use cpl_app::{App, Config, Polarity};
-use cpl_render::{CoreText, Gpu};
-use std::{env, fs, process::ExitCode, sync::Arc, task::Waker};
+use cpl_render::{CoreText, Gpu, PageCompositor, PageImage};
+use std::{
+    env, fs,
+    process::ExitCode,
+    sync::{Arc, mpsc},
+    task::Waker,
+};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, KeyEvent, WindowEvent},
@@ -26,42 +31,70 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 struct Viewer {
-    app: App,
+    config: Config,
+    polarity: Polarity,
     initial_size: (f64, f64),
     scroll_offset: f32,
     scroll_max: f32,
+    generation: u64,
+    requests: mpsc::Sender<PageRequest>,
+    results: mpsc::Receiver<ReadyPage>,
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
 }
+
+struct PageRequest {
+    generation: u64,
+    width: u32,
+    height: u32,
+    scale: f32,
+    offset: f32,
+    polarity: Polarity,
+}
+
+struct ReadyPage {
+    generation: u64,
+    max_offset: f32,
+    image: PageImage,
+}
+
+struct PageReady;
+
 impl Viewer {
-    fn update_page(&mut self) {
-        let (Some(window), Some(gpu)) = (&self.window, &self.gpu) else {
+    fn request_page(&mut self) {
+        let Some(window) = &self.window else {
             return;
         };
         let size = window.inner_size();
-        let scale = window.scale_factor() as f32;
-        let (mut frame, max_offset) = self.app.frame_scrolled(
-            size.width as f32 / scale,
-            size.height as f32 / scale,
-            self.scroll_offset,
-        );
-        self.scroll_max = max_offset;
-        if self.scroll_offset > max_offset {
-            self.scroll_offset = max_offset;
-            frame = self
-                .app
-                .frame_scrolled(
-                    size.width as f32 / scale,
-                    size.height as f32 / scale,
-                    self.scroll_offset,
-                )
-                .0;
+        if size.width == 0 || size.height == 0 {
+            return;
         }
-        gpu.upload(&frame, scale);
-        window.request_redraw();
+        self.generation += 1;
+        let _ = self.requests.send(PageRequest {
+            generation: self.generation,
+            width: size.width,
+            height: size.height,
+            scale: window.scale_factor() as f32,
+            offset: self.scroll_offset,
+            polarity: self.polarity,
+        });
+    }
+
+    fn accept_ready_page(&mut self) {
+        while let Ok(page) = self.results.try_recv() {
+            if page.generation != self.generation {
+                continue;
+            }
+            self.scroll_max = page.max_offset;
+            self.scroll_offset = self.scroll_offset.min(self.scroll_max);
+            if let (Some(gpu), Some(window)) = (&mut self.gpu, &self.window) {
+                gpu.upload_image(&page.image);
+                window.request_redraw();
+            }
+        }
     }
 }
-impl ApplicationHandler for Viewer {
+impl ApplicationHandler<PageReady> for Viewer {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -87,7 +120,7 @@ impl ApplicationHandler for Viewer {
             block_on(Gpu::new(instance, surface, size.width, size.height)).expect("initialize GPU");
         self.window = Some(window);
         self.gpu = Some(gpu);
-        self.update_page();
+        self.request_page();
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if self.window.as_ref().is_none_or(|window| window.id() != id) {
@@ -99,9 +132,10 @@ impl ApplicationHandler for Viewer {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(size.width, size.height);
                 }
-                self.update_page();
+                self.request_page();
+                self.window.as_ref().unwrap().request_redraw();
             }
-            WindowEvent::ScaleFactorChanged { .. } => self.update_page(),
+            WindowEvent::ScaleFactorChanged { .. } => self.request_page(),
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -113,44 +147,44 @@ impl ApplicationHandler for Viewer {
             } => match logical_key {
                 Key::Named(NamedKey::Escape) => event_loop.exit(),
                 Key::Character(key) if key.eq_ignore_ascii_case("i") => {
-                    self.app.polarity = if self.app.polarity == Polarity::Light {
+                    self.polarity = if self.polarity == Polarity::Light {
                         Polarity::Dark
                     } else {
                         Polarity::Light
                     };
-                    self.update_page();
+                    self.request_page();
                 }
                 Key::Named(NamedKey::ArrowDown) => {
                     self.scroll_offset = (self.scroll_offset
-                        + self.app.config().line_height * self.app.config().body_size)
+                        + self.config.line_height * self.config.body_size)
                         .min(self.scroll_max);
-                    self.update_page();
+                    self.request_page();
                 }
                 Key::Named(NamedKey::ArrowUp) => {
                     self.scroll_offset = (self.scroll_offset
-                        - self.app.config().line_height * self.app.config().body_size)
+                        - self.config.line_height * self.config.body_size)
                         .max(0.0);
-                    self.update_page();
+                    self.request_page();
                 }
                 Key::Named(NamedKey::PageDown) => {
                     let height = self.window.as_ref().unwrap().inner_size().height as f32
                         / self.window.as_ref().unwrap().scale_factor() as f32;
                     self.scroll_offset = (self.scroll_offset + height * 0.8).min(self.scroll_max);
-                    self.update_page();
+                    self.request_page();
                 }
                 Key::Named(NamedKey::PageUp) => {
                     let height = self.window.as_ref().unwrap().inner_size().height as f32
                         / self.window.as_ref().unwrap().scale_factor() as f32;
                     self.scroll_offset = (self.scroll_offset - height * 0.8).max(0.0);
-                    self.update_page();
+                    self.request_page();
                 }
                 Key::Named(NamedKey::Home) => {
                     self.scroll_offset = 0.0;
-                    self.update_page();
+                    self.request_page();
                 }
                 Key::Named(NamedKey::End) => {
                     self.scroll_offset = self.scroll_max;
-                    self.update_page();
+                    self.request_page();
                 }
                 _ => {}
             },
@@ -160,11 +194,15 @@ impl ApplicationHandler for Viewer {
                 {
                     let size = self.window.as_ref().unwrap().inner_size();
                     self.gpu.as_mut().unwrap().resize(size.width, size.height);
-                    self.update_page();
+                    self.request_page();
                 }
             }
             _ => {}
         }
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: PageReady) {
+        self.accept_ready_page();
     }
 }
 
@@ -264,18 +302,51 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         };
     }
-    let event_loop = EventLoop::new().expect("create event loop");
+    let event_loop = EventLoop::<PageReady>::with_user_event()
+        .build()
+        .expect("create event loop");
+    let (requests, request_rx) = mpsc::channel::<PageRequest>();
+    let (result_tx, results) = mpsc::channel::<ReadyPage>();
+    let proxy = event_loop.create_proxy();
+    let config = Config::default();
+    let polarity = if dark {
+        Polarity::Dark
+    } else {
+        Polarity::Light
+    };
+    let worker_config = config.clone();
+    std::thread::spawn(move || {
+        let mut app = App::new(result.song, worker_config, polarity, &CoreText);
+        let mut compositor = PageCompositor::default();
+        while let Ok(mut request) = request_rx.recv() {
+            // Resize and scroll events can arrive faster than a page composes.
+            // Only begin the latest pending request.
+            while let Ok(newer) = request_rx.try_recv() {
+                request = newer;
+            }
+            app.polarity = request.polarity;
+            let (frame, max_offset) = app.frame_scrolled(
+                request.width as f32 / request.scale,
+                request.height as f32 / request.scale,
+                request.offset,
+            );
+            let image = compositor.compose(&frame, request.scale, request.width, request.height);
+            if result_tx
+                .send(ReadyPage {
+                    generation: request.generation,
+                    max_offset,
+                    image,
+                })
+                .is_err()
+                || proxy.send_event(PageReady).is_err()
+            {
+                break;
+            }
+        }
+    });
     let mut viewer = Viewer {
-        app: App::new(
-            result.song,
-            Config::default(),
-            if dark {
-                Polarity::Dark
-            } else {
-                Polarity::Light
-            },
-            &CoreText,
-        ),
+        config,
+        polarity,
         initial_size: requested_size.unwrap_or(if inline {
             (300.0, 200.0)
         } else if scroll {
@@ -285,6 +356,9 @@ fn main() -> ExitCode {
         }),
         scroll_offset: 0.0,
         scroll_max: 0.0,
+        generation: 0,
+        requests,
+        results,
         window: None,
         gpu: None,
     };

@@ -1,11 +1,12 @@
 # macOS renderer
 
 `src/main.rs` owns the winit event loop and the wgpu surface. `cpl-render`
-accepts the surface and a headless `Frame`, and has no winit dependency.
-On page changes it rasterises whole strings through the CoreText shim,
-composites a monochrome RGBA page, and uploads that texture to wgpu. Ordinary
-redraws only draw and present a fullscreen triangle. Resize and the `i`
-polarity key rebuild the page; Escape closes the window.
+has no winit dependency. A worker uses `PageCompositor` to rasterise whole
+strings through the CoreText shim and compose a complete monochrome RGBA page.
+The window callback uploads only the newest completed image and presents it
+with a fullscreen triangle. Resize and the `i` polarity key request a new
+page; the previous texture remains visible until that page is ready. Escape
+closes the window.
 Coverage rasters are cached by text, face, weight, size and display scale,
 with a 32 MiB cap. Scrolling still composites and uploads the visible page.
 
@@ -30,5 +31,6 @@ section label, lyric and chord runs.
 The CoreText shim is copied from
 `switchblade/crates/sb-window/src/text_shim.m`. This starter does not yet
 use switchblade's R8 atlas, span highlighting, raster budget, or scheduler.
-The rasterisation currently happens in the window callback; moving it off
-the frame path is required before making the live-performance no-stall claim.
+Page composition and rasterisation run on a worker. Full texture upload still
+occurs for every accepted scroll step, so scroll latency and GPU transfer
+cost remain to be measured and reduced.

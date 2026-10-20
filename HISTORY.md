@@ -6,6 +6,14 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **Prepared complete pages on a worker.** The macOS callback now sends
+  viewport requests; a worker owns song measurement, layout and CoreText page
+  composition. A generation check discards stale resize or scroll results,
+  and the previous texture remains visible until a completed replacement is
+  uploaded. Workspace tests and strict Clippy passed. The supplied song was
+  inspected in the macOS preview at startup, after Page Down, and after a
+  polarity switch. Next-song preloading and scroll upload reduction remain
+  open.
 - **Reproducible song window size.** `--view <song> --size 980x720` sets a
   logical-point window size for the real-song visual check. The supplied song
   was inspected again in a 1960×1504 px Retina window. The first screen keeps

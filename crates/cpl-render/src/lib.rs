@@ -6,7 +6,7 @@ mod text;
 pub use text::CoreText;
 
 use cpl_app::{Face, Frame, Ink, Polarity};
-use std::{cell::RefCell, collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Hash, PartialEq, Eq)]
 struct RasterKey {
@@ -56,6 +56,75 @@ impl RasterCache {
     }
 }
 
+pub struct PageImage {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+#[derive(Default)]
+pub struct PageCompositor {
+    rasters: RasterCache,
+}
+
+impl PageCompositor {
+    pub fn compose(&mut self, frame: &Frame, scale: f32, width: u32, height: u32) -> PageImage {
+        let width_usize = width as usize;
+        let height_usize = height as usize;
+        let paper: u8 = if frame.polarity == Polarity::Light {
+            255
+        } else {
+            0
+        };
+        let mut pixels = vec![paper; width_usize * height_usize * 4];
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+        for item in &frame.text {
+            let Some(raster) = self.rasters.get(item, scale) else {
+                continue;
+            };
+            let ink = match (frame.polarity, item.ink) {
+                (Polarity::Light, Ink::Strong) => 0,
+                (Polarity::Light, Ink::Soft) => 74,
+                (Polarity::Light, Ink::Faint) => 145,
+                (Polarity::Dark, Ink::Strong) => 255,
+                (Polarity::Dark, Ink::Soft) => 181,
+                (Polarity::Dark, Ink::Faint) => 110,
+            };
+            let left = (item.x * scale).round() as i32 - text::RASTER_PAD;
+            let top = (item.baseline * scale).round() as i32 - raster.baseline as i32;
+            for row in 0..raster.height as i32 {
+                let y = top + row;
+                if y < 0 || y >= height_usize as i32 {
+                    continue;
+                }
+                for col in 0..raster.width as i32 {
+                    let x = left + col;
+                    if x < 0 || x >= width_usize as i32 {
+                        continue;
+                    }
+                    let alpha =
+                        raster.coverage[row as usize * raster.width as usize + col as usize] as u16;
+                    if alpha == 0 {
+                        continue;
+                    }
+                    let offset = (y as usize * width_usize + x as usize) * 4;
+                    for channel in &mut pixels[offset..offset + 3] {
+                        *channel =
+                            (((*channel as u16) * (255 - alpha) + ink as u16 * alpha) / 255) as u8;
+                    }
+                }
+            }
+        }
+        PageImage {
+            width,
+            height,
+            pixels,
+        }
+    }
+}
+
 pub struct Gpu {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -66,7 +135,7 @@ pub struct Gpu {
     sampler: wgpu::Sampler,
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
-    rasters: RefCell<RasterCache>,
+    image_size: (u32, u32),
 }
 
 impl Gpu {
@@ -178,7 +247,7 @@ impl Gpu {
             sampler,
             texture,
             bind_group,
-            rasters: RefCell::new(RasterCache::default()),
+            image_size: (width.max(1), height.max(1)),
         })
     }
 
@@ -189,59 +258,17 @@ impl Gpu {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
-        self.texture = make_texture(&self.device, width, height);
-        self.bind_group = make_bind_group(&self.device, &self.layout, &self.texture, &self.sampler);
     }
 
-    pub fn upload(&self, frame: &Frame, scale: f32) {
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
-        let paper: u8 = if frame.polarity == Polarity::Light {
-            255
-        } else {
-            0
-        };
-        let mut pixels = vec![paper; width * height * 4];
-        for pixel in pixels.chunks_exact_mut(4) {
-            pixel[3] = 255;
+    pub fn upload_image(&mut self, image: &PageImage) {
+        if (image.width, image.height) != (self.config.width, self.config.height) {
+            return;
         }
-        for item in &frame.text {
-            let Some(raster) = self.rasters.borrow_mut().get(item, scale) else {
-                continue;
-            };
-            let ink = match (frame.polarity, item.ink) {
-                (Polarity::Light, Ink::Strong) => 0,
-                (Polarity::Light, Ink::Soft) => 74,
-                (Polarity::Light, Ink::Faint) => 145,
-                (Polarity::Dark, Ink::Strong) => 255,
-                (Polarity::Dark, Ink::Soft) => 181,
-                (Polarity::Dark, Ink::Faint) => 110,
-            };
-            // The raster carries slack before the glyph origin; the origin sits at `x`.
-            let left = (item.x * scale).round() as i32 - text::RASTER_PAD;
-            let top = (item.baseline * scale).round() as i32 - raster.baseline as i32;
-            for row in 0..raster.height as i32 {
-                let y = top + row;
-                if y < 0 || y >= height as i32 {
-                    continue;
-                }
-                for col in 0..raster.width as i32 {
-                    let x = left + col;
-                    if x < 0 || x >= width as i32 {
-                        continue;
-                    }
-                    let alpha =
-                        raster.coverage[row as usize * raster.width as usize + col as usize] as u16;
-                    if alpha == 0 {
-                        continue;
-                    }
-                    let offset = (y as usize * width + x as usize) * 4;
-                    for channel in &mut pixels[offset..offset + 3] {
-                        *channel =
-                            (((*channel as u16) * (255 - alpha) + ink as u16 * alpha) / 255) as u8;
-                    }
-                }
-            }
+        if self.image_size != (image.width, image.height) {
+            self.texture = make_texture(&self.device, image.width, image.height);
+            self.bind_group =
+                make_bind_group(&self.device, &self.layout, &self.texture, &self.sampler);
+            self.image_size = (image.width, image.height);
         }
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -250,15 +277,15 @@ impl Gpu {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &pixels,
+            &image.pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(self.config.width * 4),
-                rows_per_image: Some(self.config.height),
+                bytes_per_row: Some(image.width * 4),
+                rows_per_image: Some(image.height),
             },
             wgpu::Extent3d {
-                width: self.config.width,
-                height: self.config.height,
+                width: image.width,
+                height: image.height,
                 depth_or_array_layers: 1,
             },
         );
@@ -369,5 +396,37 @@ mod cache_tests {
         assert_eq!(cache.entries.len(), 1);
         cache.get(&item, 1.0).unwrap();
         assert_eq!(cache.entries.len(), 2);
+    }
+
+    #[test]
+    fn a_composed_page_has_complete_pixels_in_both_polarities() {
+        let mut compositor = PageCompositor::default();
+        let mut frame = Frame {
+            width: 120.0,
+            height: 60.0,
+            polarity: Polarity::Light,
+            text: vec![Text {
+                content: "Page".into(),
+                group: 0,
+                x: 10.0,
+                baseline: 30.0,
+                size: 17.0,
+                weight: 400,
+                face: Face::System,
+                ink: Ink::Strong,
+            }],
+            fits: true,
+            columns: 1,
+            ladder_step: 0,
+        };
+        let light = compositor.compose(&frame, 2.0, 240, 120);
+        frame.polarity = Polarity::Dark;
+        let dark = compositor.compose(&frame, 2.0, 240, 120);
+        assert_eq!(light.pixels.len(), 240 * 120 * 4);
+        assert!(light.pixels.chunks_exact(4).all(|pixel| pixel[3] == 255));
+        assert_eq!(&light.pixels[..4], &[255, 255, 255, 255]);
+        assert_eq!(&dark.pixels[..4], &[0, 0, 0, 255]);
+        assert!(light.pixels.chunks_exact(4).any(|pixel| pixel[0] < 255));
+        assert!(dark.pixels.chunks_exact(4).any(|pixel| pixel[0] > 0));
     }
 }

@@ -6,8 +6,10 @@ source song intact but excludes tablature sections from the measured display
 song for now. It measures the display song at the floor and larger whole-point
 sizes up to the configured maximum. `frame` and `frame_scrolled` then take
 only logical window dimensions and the scroll offset, and never measure, so
-resize, scroll and polarity changes are arithmetic. `cpl-app` has no window
-or GPU dependency.
+resize, scroll and polarity changes need no new CoreText measurement. The
+macOS host owns `App` on a worker and submits viewport requests from the
+window thread; only the newest complete result is accepted. `cpl-app` has no
+window or GPU dependency.
 
 The page uses up to four columns. Chords and lyrics share a
 line block: the chord baseline is immediately above the lyric baseline, and

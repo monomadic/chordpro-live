@@ -41,9 +41,11 @@ automated checks.
 
 ## P1 — dependable performance behavior
 
-- [ ] Move song measurement and page preparation off the window callback.
-  Preload the next song, and swap only complete pages so opening a song or
-  resizing cannot stall or visibly reflow during performance.
+- [x] Move song measurement and page preparation off the window callback.
+  A worker measures, lays out and rasterises complete pages; stale results
+  are discarded and resize keeps the previous texture until replacement.
+- [ ] Preload the next song and swap only complete pages during setlist
+  navigation. The current viewer opens one song and has no queue yet.
 - [ ] Replace full page recomposition and texture upload on every scroll step
   with retained drawing or a moving viewport over a prepared page. Keep the
   existing text coverage cache, bound its memory, and measure scroll latency.
