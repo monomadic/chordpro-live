@@ -1,14 +1,37 @@
 # ChordPro parsing
 
-`cpl-song` owns source parsing and the platform-independent `Song` model.
-Chord markers split a lyric line into segments so each chord belongs to the
-lyric text immediately after it. Original spaces in each segment are kept.
+`cpl-song` owns source parsing and the platform-independent `Song` model,
+written against the working spec in `~/src/chordpro-library`. Chord markers
+split a lyric line into segments so each chord belongs to the lyric text
+immediately after it. Original spaces in each segment are kept.
 
-The current parser is an initial slice, **not ChordPro 6 conformant**. It
-handles common metadata, verse/chorus/bridge sections, verbatim tab sections,
-UTF-8 BOM, CRLF, and bracketed chord markers. Other directives produce
-diagnostics and make the `cpl` command fail. No conformance status table exists until it can be
-generated from the reference implementation as required by `PROPOSAL.md`.
+The parser is **not yet ChordPro 6 conformant**. What it handles:
 
-Next: cover the remaining directive and environment grammar, transpose and
-chord definitions, then compare against the official ChordPro parser.
+- Directives with a colon and/or whitespace before the argument, names
+  case-insensitive, long and short forms (`t`, `st`, `c`, `ci`, `cb`, `sov`,
+  `eov`, `soc`, `eoc`, `sob`, `eob`, `sot`, `eot`).
+- The standard metadata items and `{meta: name value}`.
+- Verse, chorus, bridge and tab environments, labelled by a bare argument or
+  a quoted `label="…"` attribute. Tablature is verbatim, with tab characters
+  expanded to eight-column stops.
+- `{chorus}` and `{chorus: Label}` recall the latest chorus: the section's
+  `recall_of` names the chorus as written, and its lines are a copy.
+- Blank lines end a stanza that no environment encloses; lines before the
+  first environment are such a stanza.
+- `{comment}`, `{comment_italic}`, `{comment_box}` and `{highlight}` are
+  visible `LineKind::Comment` lines; `#` remarks are dropped.
+- Formatting directives (the `*font`, `*size`, `*colour` families and their
+  short forms, `titles`, `diagrams`, `grid`, `no_grid`, `pagetype`) and `x_*`
+  private directives are accepted and ignored by design.
+- UTF-8 BOM and CRLF.
+
+Diagnosed, which makes the `cpl` command fail: mismatched, orphaned or
+unclosed environments, recall before any chorus, empty comments, layout
+hints (`new_page`, `column_break`, `columns`) until the fit engine honours
+them, and every other directive. Not yet parsed: selectors, grid and
+delegated environments, `[*annotation]`, markup, `%{}` substitution,
+`{define}`, `{transpose}` and `{new_song}`. Comments render in the soft ink
+at lyric size until the Figma mock defines a comment style.
+
+No conformance status table exists until it can be generated from the
+reference implementation, as `PROPOSAL.md` requires.

@@ -438,6 +438,8 @@ impl App {
                                 Role::Chord => (c.chord_baseline, Ink::Soft),
                                 Role::InlineChord => (c.inline_chord_baseline, Ink::Soft),
                                 Role::Lyric if inline => (c.inline_lyric_baseline, Ink::Strong),
+                                Role::Comment if inline => (c.inline_lyric_baseline, Ink::Soft),
+                                Role::Comment => (c.lyric_baseline, Ink::Soft),
                                 _ => (c.lyric_baseline, Ink::Strong),
                             };
                             frame.text.push(Text {
@@ -701,6 +703,41 @@ mod tests {
         assert!(tab.x < next.x, "labels are in the side margin");
         let row = app.config().line_height * app.config().body_size;
         assert!(next.baseline - tab.baseline >= row - 0.01);
+    }
+
+    #[test]
+    fn comments_draw_in_the_soft_ink_on_the_lyric_baseline() {
+        let app = app("{title: Test}\n{sov: A}\n[C]Alpha\n{c: Repeat x2}\n{eov}");
+        let frame = app.frame(600.0, 600.0);
+        let comment = find(&frame, "Repeat x2");
+        let lyric = find(&frame, "Alpha");
+        assert_eq!(comment.ink, Ink::Soft);
+        assert_eq!(comment.size, lyric.size);
+        assert_eq!(comment.x, lyric.x);
+        let row = app.config().line_height * app.config().body_size;
+        assert!((comment.baseline - lyric.baseline - row).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_recalled_chorus_collapses_at_step_eight() {
+        let app = app("{title: Test}\n{soc: A}\n[C]Echo\n[G]Again\n{eoc}\n{chorus}");
+        let frame = at_step(&app, 190.0, 8);
+        assert_eq!(count(&frame, "Echo"), 2);
+        assert_eq!(count(&frame, "Again"), 1);
+    }
+
+    #[test]
+    fn blank_line_stanzas_flow_into_columns() {
+        let mut source = String::from("{title: Test}\n");
+        for verse in 0..4 {
+            for line in 0..4 {
+                source.push_str(&format!("[C]verse {verse} line {line}\n"));
+            }
+            source.push('\n');
+        }
+        let frame = app(&source).frame(1200.0, 400.0);
+        assert!(frame.fits);
+        assert!(frame.columns >= 2);
     }
 
     #[test]

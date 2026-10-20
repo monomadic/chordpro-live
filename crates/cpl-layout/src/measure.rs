@@ -1,7 +1,7 @@
 //! Measures a song once into em-unit runs. This is the only layout stage that
 //! calls the OS; fitting and placement are arithmetic over these numbers.
 
-use cpl_song::{Line, SectionKind, Song};
+use cpl_song::{Line, LineKind, SectionKind, Song};
 use std::collections::HashMap;
 
 pub trait Measure {
@@ -26,6 +26,8 @@ pub enum Role {
     Lyric,
     InlineChord,
     Tab,
+    /// A visible `{comment}` line: lyric-sized, in the soft ink.
+    Comment,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,6 +64,7 @@ impl Metrics {
             Role::Lyric => (1.0, 400, Face::System),
             Role::InlineChord => (self.inline_chord_size, 600, Face::Monospace),
             Role::Tab => (1.0, 400, Face::Monospace),
+            Role::Comment => (1.0, 400, Face::System),
         };
         Style { size, weight, face }
     }
@@ -106,7 +109,8 @@ pub struct MeasuredSection {
     /// Upper-cased, as drawn.
     pub label: String,
     pub label_width: f32,
-    /// A chorus whose lines equal an earlier chorus (ladder step 8).
+    /// A `{chorus}` recall, or a chorus retyped with the same lines as an
+    /// earlier one (ladder step 8).
     pub repeats_earlier: bool,
     pub lines: Vec<MeasuredLine>,
 }
@@ -151,16 +155,19 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
                 kind: section.kind,
                 label_width: m.em(&label, Role::Label),
                 label,
-                repeats_earlier: section.kind == SectionKind::Chorus
-                    && song.sections[..index].iter().any(|earlier| {
-                        earlier.kind == SectionKind::Chorus && earlier.lines == section.lines
-                    }),
+                repeats_earlier: section.recall_of.is_some()
+                    || section.kind == SectionKind::Chorus
+                        && song.sections[..index].iter().any(|earlier| {
+                            earlier.kind == SectionKind::Chorus && earlier.lines == section.lines
+                        }),
                 lines: section
                     .lines
                     .iter()
                     .map(|line| {
                         if section.kind == SectionKind::Tab {
-                            m.tab_line(line)
+                            m.whole_line(line, Role::Tab)
+                        } else if line.kind == LineKind::Comment {
+                            m.whole_line(line, Role::Comment)
                         } else {
                             m.line(line)
                         }
@@ -206,8 +213,9 @@ impl<M: Measure> Measurer<'_, M> {
         }
     }
 
-    fn tab_line(&mut self, line: &Line) -> MeasuredLine {
-        let run = self.run(Role::Tab, &line.lyrics(), 0.0);
+    /// Tablature and comments: one run, the same in both chord layouts.
+    fn whole_line(&mut self, line: &Line, role: Role) -> MeasuredLine {
+        let run = self.run(role, &line.lyrics(), 0.0);
         let width = run.width;
         MeasuredLine {
             above: vec![run.clone()],
@@ -368,6 +376,20 @@ mod tests {
         let (_, calls) = measured("[C]la[C]la[C]la\n[C]la[C]la");
         // "C" as chord and as inline chord, "la" as lyric, then title "Untitled".
         assert_eq!(calls, 4);
+    }
+
+    #[test]
+    fn comments_are_one_run_and_recalls_count_as_repeats() {
+        let (song, _) = measured(
+            "{soc: Chorus}\n[C]Sing\n{c: Repeat x2}\n{eoc}\n{sov}\n[G]Verse\n{eov}\n{chorus}",
+        );
+        let comment = &song.sections[0].lines[1];
+        assert_eq!(comment.above.len(), 1);
+        assert_eq!(comment.above[0].role, Role::Comment);
+        assert_eq!(comment.above[0].text, "Repeat x2");
+        assert_eq!(comment.above, comment.inline);
+        assert!(!song.sections[0].repeats_earlier);
+        assert!(song.sections[2].repeats_earlier);
     }
 
     #[test]

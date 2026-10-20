@@ -8,7 +8,8 @@ It is not an editor and never writes a `.cho` file.
 
 ## Status
 
-An initial macOS viewer is built. `cpl-song` parses a small ChordPro slice;
+An initial macOS viewer is built. `cpl-song` parses a growing ChordPro 6 subset
+([what it covers](docs/architecture/chordpro.md));
 `cpl-layout` measures each song once into em-unit runs and fits whole
 sections into columns at the stand-size floor; `cpl-app` composes the page
 from those runs without measuring again; `cpl-render` composites CoreText
