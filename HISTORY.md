@@ -6,6 +6,24 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **Setlists with the next song preloaded.** `cpl --view` now takes several
+  songs or a folder (ChordPro extensions, name order) and opens them as a
+  setlist; `n`/`p` and ← → move through it without wrapping, and the window
+  title carries the song's position. `cpl_app::Setlist` keeps the current
+  song and its two neighbours measured and drops anything further away; the
+  page worker measures a missing neighbour or composes the next song's first
+  page at the last viewport whenever it has no request waiting, one unit of
+  work between checks for requests. A song change is an ordinary generation-
+  stamped request, so the old page stays up until the new song's complete
+  page arrives, and when the preloaded page matches the viewport and
+  polarity it is sent without measuring or rasterising. `--song N` opens on
+  a given song so a capture needs no keypress; `scripts/window-id.swift`
+  finds the window for `screencapture -l`. Headless tests cover preload
+  order, neighbour pruning, non-wrapping steps and folder expansion;
+  workspace tests and strict Clippy passed; both songs of the two-song
+  testdata setlist were captured at 980×720. Unverified: the key-driven
+  swap in a window, and the latency of a swap on a long song.
+
 - **Epic closed: P0 — make the song page usable.** Six tasks, all checked
   against the supplied “What's Up” source in a 1960×1504 px Retina window
   (`--view <song> --size 980x720`): tablature blocks hidden from the page but

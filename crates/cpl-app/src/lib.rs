@@ -1,8 +1,11 @@
 //! Headless song-page composition. No window or GPU types cross this boundary.
 
+mod setlist;
+
 pub use cpl_layout::{Face, Measure};
 use cpl_layout::{MeasuredSong, Metrics, Options, PageMetrics, Role, Solution, Viewport};
 use cpl_song::{SectionKind, Song};
+pub use setlist::Setlist;
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

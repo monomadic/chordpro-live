@@ -11,8 +11,13 @@ automated checks. When every task in an epic is checked, the epic moves to
 - [x] Move song measurement and page preparation off the window callback.
   A worker measures, lays out and rasterises complete pages; stale results
   are discarded and resize keeps the previous texture until replacement.
-- [ ] Preload the next song and swap only complete pages during setlist
-  navigation. The current viewer opens one song and has no queue yet.
+- [x] Preload the next song and swap only complete pages during setlist
+  navigation. `cpl --view a.cho b.cho` or `--view <folder>` opens a setlist;
+  `Setlist` in `cpl-app` keeps the current song and its neighbours measured,
+  the worker composes the next song's first page while idle, and `n`/`p`
+  swap to it only when that complete page is accepted. Both songs of the
+  two-song testdata setlist were captured through `--song`; the key-driven
+  swap itself has not been captured.
 - [ ] Replace full page recomposition and texture upload on every scroll step
   with retained drawing or a moving viewport over a prepared page. Keep the
   existing text coverage cache, bound its memory, and measure scroll latency.

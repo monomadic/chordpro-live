@@ -34,3 +34,13 @@ use switchblade's R8 atlas, span highlighting, raster budget, or scheduler.
 Page composition and rasterisation run on a worker. Full texture upload still
 occurs for every accepted scroll step, so scroll latency and GPU transfer
 cost remain to be measured and reduced.
+
+The worker also owns the `Setlist`. Whenever no request is waiting it does
+one unit of preparation and checks again: measure a missing neighbour song,
+or compose the next song's first page at the last viewport and polarity.
+A song-change request that matches that preloaded page (same song, size,
+scale, polarity, offset zero) is answered with it directly; anything else
+composes as usual. Only the newest generation is accepted, so a page from
+the previous song can never land after the change. `--song N` opens the
+viewer on a given song and `scripts/window-id.swift` finds the window, so a
+capture of any song needs no keypress.

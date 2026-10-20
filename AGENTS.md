@@ -14,11 +14,14 @@ An initial macOS viewer is built. `cpl-song` parses a growing ChordPro 6 subset
 runs and fits whole sections into columns; `cpl-app` composes the page
 from those runs without measuring again; `cpl-render` composites CoreText
 rasters on a worker and uploads complete pages to a wgpu texture;
-`src/main.rs` hosts the winit window. The viewer
+`src/main.rs` hosts the winit window and owns the page worker, which also
+holds the `Setlist`: several songs or a folder open as an ordered setlist,
+the next song's first page is composed while the worker is idle, and a song
+change shows the old page until the new one is complete. The viewer
 currently hides tablature blocks while preserving them in the parsed song.
-The diagram and metadata-pill reduction steps, paged mode, library, full
-ChordPro 6 conformance, text atlas, and iOS host are still planned. Do not
-describe these as implemented.
+The diagram and metadata-pill reduction steps, paged mode, library, search,
+sidecar metadata, full ChordPro 6 conformance, text atlas, and iOS host are
+still planned. Do not describe these as implemented.
 
 [PROPOSAL.md](PROPOSAL.md) remains the source of truth for design decisions,
 ranked unknowns, and phases. Read the relevant section before structural
@@ -50,10 +53,13 @@ sample macOS page with `cargo run -- --view page` (or `page-dark`),
 inspect inline chords with `cargo run -- --view page-inline`, and inspect
 overflow with `cargo run -- --view page-scroll`; or open a song with
 `cargo run -- --view song.cho` (`--view page-dark song.cho` for white on
-black); append `--size 980x720` to a `--view` command for a repeatable
-logical-point window size. `cpl --help` lists the forms. Press `i` for polarity
-and Escape to close.
-Arrow keys, Page Up/Down, Home, and End navigate an overflowing song.
+black), or several songs or a folder as a setlist (`--view testdata`); append
+`--size 980x720` to a `--view` command for a repeatable logical-point window
+size and `--song 2` to open on a given song. `cpl --help` lists the forms.
+Press `i` for polarity, `n`/`p` (or ← →) for the next and previous song, and
+Escape to close. Up/Down, Page Up/Down, Home, and End navigate an
+overflowing song. Capture the window with
+`screencapture -x -l "$(swift scripts/window-id.swift | head -1)" shot.png`.
 `cargo run -- song.cho` prints the parsed lyrics.
 
 ## Design source
@@ -100,8 +106,8 @@ the commit message.
   layout solution. Diagram and pill steps 4 and 6 are not built yet.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. Page measurement and CoreText
-  rasterisation now run on a worker; full page texture upload still occurs on
-  accepted updates, and next-song preloading is still planned. The render
+  rasterisation run on a worker, which preloads the next song while idle;
+  full page texture upload still occurs on accepted updates. The render
   thread must never touch the filesystem.
 - **Sidecar metadata only.** Tags, ratings, timings and setlists live in the
   planned library store keyed by content fingerprint. The app never rewrites

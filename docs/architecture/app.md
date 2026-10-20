@@ -34,3 +34,15 @@ viewport. Paged and timed scroll modes, diagram and
 pill reductions, per-step on/off/auto pins, and normalised input events in
 the proposal are not implemented yet. The default config is embedded at
 build time; hot reload has not landed.
+
+## Setlist
+
+`Setlist` is the ordered song queue, headless like the rest of the crate.
+It owns the parsed songs and a map of measured `App`s for the current song
+and its immediate neighbours: `current` measures on demand, `preload` measures
+one missing neighbour per call (next before previous) so a worker can slot it
+between requests, and `go_to`/`step` move without wrapping and drop any
+`App` more than one song away, so memory is bounded by three measured songs.
+The host keeps the song index and the scroll offset; a song change is a page
+request like any other, which is what lets the old page stay visible until
+the new song's complete page replaces it.
