@@ -26,7 +26,9 @@ unfit candidate draws no lyrics. When fit fails, `frame_scrolled` lays the
 full song out as one column of unbounded height, falling back to inline
 chords only if a line is too wide, and selects complete chord/lyric line
 groups for the viewport. The macOS host owns the offset and handles arrow,
-Page Up/Down, Home, and End keys. Paged and timed scroll modes, diagram and
+Page Up/Down, Home, and End keys. The scroll status names the section
+containing the first visible song line, even after its label leaves the
+viewport. Paged and timed scroll modes, diagram and
 pill reductions, per-step on/off/auto pins, and normalised input events in
 the proposal are not implemented yet. The default config is embedded at
 build time; hot reload has not landed.

@@ -22,8 +22,9 @@ automated checks.
 - [ ] Check chord-only lines and section labels in real songs. An `Intro` with
   only chords should read as intentional musical structure, not as a lyric
   line with missing words. Compact chord-only rows and headless tests landed;
-  verify them with the supplied song. Preserve verse/chorus hierarchy when
-  the page compacts or scrolls.
+  verify them with the supplied song. A section cue now appears in the scroll
+  status when its page label is off screen; check the hierarchy on the real
+  song and through page turns.
 - [ ] Verify the title displayed in the screenshot. Determine whether the
   quotation marks are authored in the ChordPro title or introduced by parsing;
   only change parsing if a minimal fixture proves the latter.

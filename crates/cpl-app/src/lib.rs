@@ -206,8 +206,14 @@ enum PreparedPage {
     Scroll {
         content: Vec<Text>,
         bounds: BTreeMap<usize, (f32, f32)>,
+        sections: Vec<ScrollSection>,
         max_offset: f32,
     },
+}
+
+struct ScrollSection {
+    groups: std::ops::Range<usize>,
+    name: String,
 }
 
 impl App {
@@ -313,6 +319,7 @@ impl App {
             PreparedPage::Scroll {
                 content,
                 bounds,
+                sections,
                 max_offset,
             } => {
                 let c = &self.config;
@@ -328,9 +335,16 @@ impl App {
                     columns: 1,
                     ladder_step: 10,
                 };
+                let mut first_visible_group = None;
                 for item in content {
                     let (top, bottom) = bounds[&item.group];
                     if top - offset >= c.margin_top && bottom - offset <= content_end {
+                        if item.group != 0 {
+                            first_visible_group = Some(
+                                first_visible_group
+                                    .map_or(item.group, |group: usize| group.min(item.group)),
+                            );
+                        }
                         let mut item = item.clone();
                         item.baseline -= offset;
                         frame.text.push(item);
@@ -341,12 +355,19 @@ impl App {
                 } else {
                     ""
                 };
+                let section = first_visible_group.and_then(|group| {
+                    sections
+                        .iter()
+                        .find(|section| section.groups.contains(&group))
+                });
+                let section_prefix =
+                    section.map_or(String::new(), |section| format!("{}  ·  ", section.name));
                 frame.text.push(Text {
                     group: usize::MAX,
-                    content: if width < 500.0 {
-                        format!("SCROLL  ·  {body} pt{more}")
+                    content: if width < 700.0 {
+                        format!("{section_prefix}SCROLL  ·  {body} pt{more}")
                     } else {
-                        format!("SCROLL  ·  stand {body} pt  ·  ↑ ↓ / Page Up Down{more}")
+                        format!("{section_prefix}SCROLL  ·  stand {body} pt  ·  ↑ ↓ / Page Up Down{more}")
                     },
                     x: c.margin_x,
                     baseline: height - c.margin_bottom * 0.5,
@@ -408,9 +429,37 @@ impl App {
             bounds.0 = bounds.0.min(item.baseline - item.size);
             bounds.1 = bounds.1.max(item.baseline + item.size * 0.25);
         }
+        let mut first_group = 1;
+        let sections = self
+            .measured
+            .sections
+            .iter()
+            .map(|section| {
+                let count = section.lines.len().max(1);
+                let name = if section.label.is_empty() {
+                    match section.kind {
+                        SectionKind::Verse => "VERSE",
+                        SectionKind::Chorus => "CHORUS",
+                        SectionKind::Bridge => "BRIDGE",
+                        SectionKind::Tab => "TAB",
+                        SectionKind::Unlabelled => "SONG",
+                    }
+                    .to_owned()
+                } else {
+                    section.label.clone()
+                };
+                let marker = ScrollSection {
+                    groups: first_group..first_group + count,
+                    name,
+                };
+                first_group += count;
+                marker
+            })
+            .collect();
         PreparedPage::Scroll {
             content: long.text,
             bounds: group_bounds,
+            sections,
             max_offset,
         }
     }
@@ -861,6 +910,31 @@ mod tests {
         assert_eq!(count(&first, "Am"), 1);
         assert_eq!(count(&first, "e|--3---|"), 0);
         assert!(!first.text.iter().any(|item| item.content.trim().is_empty()));
+    }
+
+    #[test]
+    fn scroll_status_keeps_the_section_name_when_its_label_has_left_view() {
+        let mut source = String::from(
+            "{title: Test}\n{sov: Verse 1}\n[C]First\n[G]Second\n{eov}\n{soc: Chorus}\n[F]Echo\n[C]Again\n{eoc}\n{sov: Verse 2}\n",
+        );
+        for index in 0..18 {
+            source.push_str(&format!("[C]Line {index}\n"));
+        }
+        source.push_str("{eov}");
+        let app = app(&source);
+        let (_, max_offset) = app.frame_scrolled(450.0, 260.0, 0.0);
+        let frame = (0..=max_offset.ceil() as usize)
+            .step_by(10)
+            .map(|offset| app.frame_scrolled(450.0, 260.0, offset as f32).0)
+            .find(|frame| count(frame, "Again") == 1 && count(frame, "CHORUS") == 0)
+            .expect("the second chorus line can be visible after its label scrolls away");
+        assert!(
+            frame
+                .text
+                .iter()
+                .any(|item| item.group == usize::MAX
+                    && item.content.starts_with("CHORUS  ·  SCROLL"))
+        );
     }
 
     #[test]

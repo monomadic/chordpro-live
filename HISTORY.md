@@ -6,6 +6,12 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-20
 
+- **Scroll status retains section context.** The status strip now names the
+  section containing the top visible song line, including after a label
+  scrolls away. A focused headless test passed, and the built-in scroll
+  sample was inspected in the macOS preview at its initial position and after
+  Page Down. The user's “What's Up” source is still needed for its exact
+  screenshot regression.
 - **Chord-only progressions use a compact row.** Lines without sung words now
   keep normal-size chords and avoid drawing an empty lyric run, including at
   the inline reduction step. Headless layout and page tests passed; the

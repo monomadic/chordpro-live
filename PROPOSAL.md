@@ -292,7 +292,8 @@ Four surfaces, one modal ladder, every key remappable through the same
 **Page** — the song. Fit mode by default; `v` cycles fit → scroll → sync →
 paged. Transpose `[`/`]`, reset `0`, polarity `i`, fold tabs `T`, hide header
 `h`. The status strip (one line, bottom, `ink_faint`) shows mode, key with
-transpose offset, ladder level when any step fired, and a `MORE ↓` flag when
+transpose offset, ladder level when any step fired, the section containing
+the top visible line in scroll mode, and a `MORE ↓` flag when
 a scrolling mode has content below. In scroll mode `+`/`-` nudge the
 tempo-derived speed; in sync mode they adjust the `{duration}` and `space`
 plays and pauses the progress line, both exactly as chordpro-tui.
