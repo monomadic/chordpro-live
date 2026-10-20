@@ -6,6 +6,27 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **Scrolling over a retained page, and a chromeless window.** The worker
+  now retains each song's positioned page per viewport and composes a slab of
+  it up to three viewports tall; `cpl_app::App::page` and `App::view` give the
+  retained frame and, per step, the offset, the band of complete chord/lyric
+  groups and the status text. The shader places the slab by a `View` uniform,
+  paints paper outside the band and reads a separate one-line status texture,
+  so a scroll step inside the slab uploads nothing but that strip; a step that
+  leaves the slab composes the next slab from the retained frame without
+  measuring. The next song's page and slab are preloaded the same way. The
+  macOS window is chromeless with winit's own attributes (transparent
+  titlebar, hidden title, full-size content view, no shadow, which on macOS 26
+  is what removes the window contour); the page runs under a 28 pt title
+  strip of paper so the traffic lights float over it, and `q` quits beside
+  Escape. `--scroll N` opens a song scrolled, for captures. Headless tests
+  check that a view's band contains exactly what `frame_scrolled` drew, that a
+  fitted page views as itself, that a slab equals the matching rows of the
+  whole page, and the uniform layout; workspace tests and strict Clippy
+  passed; the fitted, scrolled (0 and 120 pt) and dark pages were captured at
+  2x. Measured in a debug build: slab 50–120 ms, view 2 µs (fit) / 3–9 ms
+  (scroll status strip). Unverified: a key-driven scroll in a window, release
+  timings, and the window on a 1x display.
 - **Setlists with the next song preloaded.** `cpl --view` now takes several
   songs or a folder (ChordPro extensions, name order) and opens them as a
   setlist; `n`/`p` and ← → move through it without wrapping, and the window

@@ -45,6 +45,20 @@ pub struct Frame {
     pub ladder_step: u8,
 }
 
+/// One scroll step over a retained page: where the page sits in the window
+/// and the band of it that shows only complete chord/lyric groups.
+#[derive(Debug, Clone)]
+pub struct ScrollView {
+    /// The clamped page offset, in points.
+    pub offset: f32,
+    pub max_offset: f32,
+    /// Window-space band, in points, outside which the host paints paper so
+    /// a partially visible line never shows. Empty when nothing is visible.
+    pub band: (f32, f32),
+    /// The status strip of a scrolling page. A fitted page draws its own.
+    pub status: Option<Text>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub margin_x: f32,
@@ -304,15 +318,139 @@ impl App {
         }
     }
 
-    /// Scroll navigation selects a viewport from a retained, positioned page.
-    pub fn frame_scrolled(&self, width: f32, height: f32, offset: f32) -> (Frame, f32) {
+    fn prepared(&self, width: f32, height: f32) -> Arc<PreparedPage> {
         let key = (width.to_bits(), height.to_bits());
         if self.prepared.borrow().as_ref().map(|(w, h, _)| (*w, *h)) != Some(key) {
             let page = self.prepare_page(width, height);
             *self.prepared.borrow_mut() = Some((key.0, key.1, Arc::new(page)));
         }
-        let cache = self.prepared.borrow();
-        let (_, _, page) = cache.as_ref().unwrap();
+        Arc::clone(&self.prepared.borrow().as_ref().unwrap().2)
+    }
+
+    /// The page to retain for this viewport: a fitted page at window height
+    /// (status strip included), or the whole scrolled song as one tall frame
+    /// in page coordinates, without a status strip. `view` then positions it.
+    pub fn page(&self, width: f32, height: f32) -> Frame {
+        match self.prepared(width, height).as_ref() {
+            PreparedPage::Fit(frame) | PreparedPage::NeedsWidth(frame) => {
+                let mut frame = frame.clone();
+                frame.polarity = self.polarity;
+                frame
+            }
+            PreparedPage::Scroll {
+                content,
+                max_offset,
+                ..
+            } => Frame {
+                width,
+                height: height + max_offset,
+                polarity: self.polarity,
+                text: content.clone(),
+                fits: false,
+                columns: 1,
+                ladder_step: 10,
+            },
+        }
+    }
+
+    /// Where the retained page sits for `offset`, and which band of it shows.
+    /// Only the status strip's text changes per step, so this costs no
+    /// measurement and no page composition.
+    pub fn view(&self, width: f32, height: f32, offset: f32) -> ScrollView {
+        match self.prepared(width, height).as_ref() {
+            PreparedPage::Fit(_) | PreparedPage::NeedsWidth(_) => ScrollView {
+                offset: 0.0,
+                max_offset: 0.0,
+                band: (0.0, height),
+                status: None,
+            },
+            PreparedPage::Scroll {
+                bounds,
+                sections,
+                max_offset,
+                ..
+            } => {
+                let c = &self.config;
+                let body = c.body_size;
+                let offset = offset.clamp(0.0, *max_offset);
+                let content_end = height - c.margin_bottom - c.status_height * body;
+                let mut band = (f32::INFINITY, f32::NEG_INFINITY);
+                let mut first_visible_group = None;
+                for (&group, &(top, bottom)) in bounds {
+                    if top - offset >= c.margin_top && bottom - offset <= content_end {
+                        band.0 = band.0.min(top - offset);
+                        band.1 = band.1.max(bottom - offset);
+                        if group != 0 {
+                            first_visible_group =
+                                Some(first_visible_group.map_or(group, |g: usize| g.min(group)));
+                        }
+                    }
+                }
+                // Neighbouring groups keep 0.45 em clear of each other, so a
+                // little slack covers ascenders and descenders without
+                // letting the next line's chord row peek in.
+                let band = if band.0.is_finite() {
+                    (band.0 - body * 0.15, band.1 + body * 0.15)
+                } else {
+                    (0.0, 0.0)
+                };
+                let status = Text {
+                    group: usize::MAX,
+                    content: self.scroll_status(
+                        width,
+                        offset,
+                        *max_offset,
+                        first_visible_group,
+                        sections,
+                    ),
+                    x: c.margin_x,
+                    baseline: height - c.margin_bottom * 0.5,
+                    size: body * 0.7,
+                    weight: 400,
+                    face: Face::Monospace,
+                    ink: Ink::Faint,
+                };
+                ScrollView {
+                    offset,
+                    max_offset: *max_offset,
+                    band,
+                    status: Some(status),
+                }
+            }
+        }
+    }
+
+    fn scroll_status(
+        &self,
+        width: f32,
+        offset: f32,
+        max_offset: f32,
+        first_visible_group: Option<usize>,
+        sections: &[ScrollSection],
+    ) -> String {
+        let body = self.config.body_size;
+        let more = if offset < max_offset {
+            "  ·  MORE ↓"
+        } else {
+            ""
+        };
+        let section = first_visible_group.and_then(|group| {
+            sections
+                .iter()
+                .find(|section| section.groups.contains(&group))
+        });
+        let section_prefix =
+            section.map_or(String::new(), |section| format!("{}  ·  ", section.name));
+        if width < 700.0 {
+            format!("{section_prefix}SCROLL  ·  {body} pt{more}")
+        } else {
+            format!("{section_prefix}SCROLL  ·  stand {body} pt  ·  ↑ ↓ / Page Up Down{more}")
+        }
+    }
+
+    /// Scroll navigation selects a viewport from a retained, positioned page.
+    pub fn frame_scrolled(&self, width: f32, height: f32, offset: f32) -> (Frame, f32) {
+        let page = self.prepared(width, height);
         match page.as_ref() {
             PreparedPage::Fit(frame) | PreparedPage::NeedsWidth(frame) => {
                 let mut frame = frame.clone();
@@ -353,25 +491,15 @@ impl App {
                         frame.text.push(item);
                     }
                 }
-                let more = if offset < *max_offset {
-                    "  ·  MORE ↓"
-                } else {
-                    ""
-                };
-                let section = first_visible_group.and_then(|group| {
-                    sections
-                        .iter()
-                        .find(|section| section.groups.contains(&group))
-                });
-                let section_prefix =
-                    section.map_or(String::new(), |section| format!("{}  ·  ", section.name));
                 frame.text.push(Text {
                     group: usize::MAX,
-                    content: if width < 700.0 {
-                        format!("{section_prefix}SCROLL  ·  {body} pt{more}")
-                    } else {
-                        format!("{section_prefix}SCROLL  ·  stand {body} pt  ·  ↑ ↓ / Page Up Down{more}")
-                    },
+                    content: self.scroll_status(
+                        width,
+                        offset,
+                        *max_offset,
+                        first_visible_group,
+                        sections,
+                    ),
                     x: c.margin_x,
                     baseline: height - c.margin_bottom * 0.5,
                     size: body * 0.7,
@@ -1007,6 +1135,80 @@ mod tests {
         let frame = app("{title: Only a title}").frame(600.0, 400.0);
         assert!(frame.fits);
         assert_eq!(frame.ladder_step, 0);
+    }
+
+    #[test]
+    fn a_scroll_view_bands_exactly_the_groups_frame_scrolled_would_draw() {
+        let mut source = String::from("{title: Test}\n{start_of_verse: Verse 1}\n");
+        for index in 0..10 {
+            source.push_str(&format!("[C]Line {index} [G]here\n"));
+        }
+        source.push_str("{end_of_verse}\n{start_of_chorus: Chorus}\n");
+        for index in 0..8 {
+            source.push_str(&format!("[F]Chorus {index}\n"));
+        }
+        source.push_str("{end_of_chorus}");
+        let app = app(&source);
+        let (width, height) = (400.0, 300.0);
+        let page = app.page(width, height);
+        assert!(!page.fits, "this song overflows at the floor");
+        assert!(page.height > height);
+        assert!(
+            page.text.iter().all(|t| t.group != usize::MAX),
+            "no status in the page"
+        );
+        for offset in [0.0, 37.0, 150.0, 1e9] {
+            let (frame, max_offset) = app.frame_scrolled(width, height, offset);
+            let view = app.view(width, height, offset);
+            assert_eq!(view.max_offset, max_offset);
+            assert_eq!(view.offset, offset.min(max_offset));
+            let status = view.status.as_ref().expect("scroll status");
+            let drawn_status = frame.text.iter().find(|t| t.group == usize::MAX).unwrap();
+            assert_eq!(status.content, drawn_status.content);
+            // Every drawn song item sits inside the band; every page item the
+            // frame withheld lies outside it.
+            let visible: Vec<&Text> = frame
+                .text
+                .iter()
+                .filter(|t| t.group != usize::MAX)
+                .collect();
+            for item in &visible {
+                assert!(item.baseline - item.size >= view.band.0 - 1e-3);
+                assert!(item.baseline <= view.band.1 + 1e-3);
+            }
+            for item in page.text.iter() {
+                let shown = visible.iter().any(|v| {
+                    v.content == item.content
+                        && (v.baseline + view.offset - item.baseline).abs() < 1e-3
+                });
+                if !shown {
+                    let window_baseline = item.baseline - view.offset;
+                    assert!(
+                        window_baseline - item.size * 0.9 >= view.band.1
+                            || window_baseline + item.size * 0.25 <= view.band.0,
+                        "{:?} at {window_baseline} overlaps band {:?} at offset {offset}",
+                        item.content,
+                        view.band
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_fitted_page_views_as_itself() {
+        let app =
+            app("{title: Test}\n{start_of_verse: Verse 1}\n[C]Hello [G]world\n{end_of_verse}");
+        let page = app.page(900.0, 600.0);
+        assert!(page.fits);
+        assert!(
+            page.text.iter().any(|t| t.group == usize::MAX),
+            "a fitted page keeps its status"
+        );
+        let view = app.view(900.0, 600.0, 500.0);
+        assert_eq!(view.offset, 0.0);
+        assert_eq!(view.band, (0.0, 600.0));
+        assert!(view.status.is_none());
     }
 
     #[test]

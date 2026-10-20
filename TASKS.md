@@ -18,9 +18,17 @@ automated checks. When every task in an epic is checked, the epic moves to
   swap to it only when that complete page is accepted. Both songs of the
   two-song testdata setlist were captured through `--song`; the key-driven
   swap itself has not been captured.
-- [ ] Replace full page recomposition and texture upload on every scroll step
-  with retained drawing or a moving viewport over a prepared page. Keep the
-  existing text coverage cache, bound its memory, and measure scroll latency.
+- [x] Replace full page recomposition and texture upload on every scroll step
+  with retained drawing or a moving viewport over a prepared page. The worker
+  retains the positioned page and a slab of it at most three viewports tall
+  (bounded by the adapter's texture limit); a scroll step inside the slab
+  uploads only a one-line status strip and a 32-byte view uniform, and the
+  shader masks everything outside the band of complete chord/lyric groups.
+  Measured in a debug build with `CPL_TIMING=1`: a slab composes in 50–120 ms,
+  a view step in 2 µs for a fitted page and 3–9 ms for a scrolling one (the
+  status strip raster). Captured at the top and at `--scroll 120` of the
+  scroll sample. Not yet measured: a release build, a key-driven scroll run,
+  and the GPU upload cost itself.
 - [ ] Handle a lyric line wider than the content box without drawing under the
   readability floor. Decide and implement horizontal paging, wrapping, or an
   explicit width-needed state with a useful recovery path.

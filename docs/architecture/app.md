@@ -46,3 +46,16 @@ between requests, and `go_to`/`step` move without wrapping and drop any
 The host keeps the song index and the scroll offset; a song change is a page
 request like any other, which is what lets the old page stay visible until
 the new song's complete page replaces it.
+
+## Retained page and view
+
+`App::page` returns the frame to retain for a viewport: a fitted page at
+window height with its status strip, or the whole scrolled song as one tall
+frame in page coordinates without one. `App::view` answers a scroll step from
+the same prepared page with no measurement and no composition: the clamped
+offset, the window-space band covering exactly the complete chord/lyric
+groups `frame_scrolled` would draw (with 0.15 em of slack for ascenders and
+descenders, safe because neighbouring groups keep 0.45 em clear), and the
+status text. The renderer masks outside the band, so the retained page can
+be drawn at any offset while partial lines stay hidden. `frame_scrolled`
+remains for headless checks and shares the status text with `view`.

@@ -1,11 +1,12 @@
-use cpl_app::{Config, Polarity, Setlist};
-use cpl_render::{CoreText, Gpu, PageCompositor, PageImage};
+use cpl_app::{App, Config, Frame, Polarity, Setlist};
+use cpl_render::{CoreText, Gpu, PageCompositor, PageImage, View};
 use std::{
     env, fs,
     path::Path,
     process::ExitCode,
     sync::{Arc, mpsc},
     task::Waker,
+    time::Instant,
 };
 use winit::{
     application::ApplicationHandler,
@@ -31,6 +32,19 @@ fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
+/// Height of the title strip the page runs under on macOS (transparent
+/// titlebar, hidden title, full-size content view): the traffic lights float
+/// over paper and the page starts below them. Zero until fullscreen exists.
+#[cfg(target_os = "macos")]
+const TITLE_STRIP_PT: f32 = 28.0;
+#[cfg(not(target_os = "macos"))]
+const TITLE_STRIP_PT: f32 = 0.0;
+
+/// A retained slab is at most this many viewports tall, so the page texture
+/// stays bounded however long the song: a 980×720 pt window at 2x keeps
+/// at most ~35 MB resident.
+const SLAB_VIEWPORTS: u32 = 3;
+
 struct Viewer {
     config: Config,
     polarity: Polarity,
@@ -41,6 +55,10 @@ struct Viewer {
     song: usize,
     song_count: usize,
     generation: u64,
+    /// The slab the GPU holds, so a scroll step that stays inside it uploads
+    /// nothing but the status strip.
+    uploaded_slab: Option<u64>,
+    max_texture_side: u32,
     requests: mpsc::Sender<PageRequest>,
     results: mpsc::Receiver<ReadyPage>,
     window: Option<Arc<Window>>,
@@ -51,11 +69,42 @@ struct Viewer {
 struct PageRequest {
     generation: u64,
     song: usize,
+    /// Window size in device pixels; the page occupies the rows below `inset`.
     width: u32,
     height: u32,
     scale: f32,
+    /// Title strip height in points.
+    inset: f32,
     offset: f32,
     polarity: Polarity,
+    max_texture_side: u32,
+}
+
+impl PageRequest {
+    fn inset_px(&self) -> u32 {
+        (self.inset * self.scale).round() as u32
+    }
+    /// Device rows the page may use.
+    fn content_px(&self) -> u32 {
+        self.height.saturating_sub(self.inset_px()).max(1)
+    }
+    fn logical(&self) -> (f32, f32) {
+        (
+            self.width as f32 / self.scale,
+            self.content_px() as f32 / self.scale,
+        )
+    }
+    fn offset_px(&self) -> i32 {
+        (self.offset * self.scale).round() as i32
+    }
+}
+
+/// A composed run of page rows, identified so the host uploads it once.
+struct Slab {
+    id: u64,
+    /// First page row (device pixels) the image holds.
+    top: i32,
+    image: PageImage,
 }
 
 struct ReadyPage {
@@ -63,15 +112,19 @@ struct ReadyPage {
     song: usize,
     title: String,
     max_offset: f32,
-    image: PageImage,
+    slab: Arc<Slab>,
+    /// A freshly composed status strip, when the page does not carry its own.
+    status: Option<PageImage>,
+    view: View,
 }
 
-/// What a composed page depends on besides the song and the scroll offset.
+/// What a retained page depends on besides the song and the scroll offset.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct ViewKey {
     width: u32,
     height: u32,
     scale: u32,
+    inset: u32,
     polarity: Polarity,
 }
 
@@ -81,60 +134,209 @@ impl ViewKey {
             width: request.width,
             height: request.height,
             scale: request.scale.to_bits(),
+            inset: request.inset.to_bits(),
             polarity: request.polarity,
         }
     }
 }
 
-/// The next song's first page, composed while the worker was idle so a song
-/// change can be answered without measuring or rasterising anything.
-struct Preloaded {
+/// A song's page for one viewport: the positioned frame and the slab of it
+/// currently composed. Scrolling inside the slab re-composes nothing.
+struct Retained {
     song: usize,
     key: ViewKey,
-    max_offset: f32,
-    image: PageImage,
+    page: Frame,
+    page_px: u32,
+    slab: Arc<Slab>,
 }
 
-/// Measures a missing neighbour or composes the next song's first page at the
-/// last viewport. One unit of work per call, so a request never waits behind
-/// more than one of them. Returns false once nothing is left to prepare.
-fn preload_step(
-    setlist: &mut Setlist,
+struct Worker {
+    setlist: Setlist,
+    compositor: PageCompositor,
+    config: Config,
+    retained: Option<Retained>,
+    /// The next song's page at the last viewport, built while idle.
+    preloaded: Option<Retained>,
+    last: Option<PageRequest>,
+    next_slab_id: u64,
+    timing: bool,
+}
+
+/// Composes the slab of `page` around the requested offset.
+fn compose_slab(
     compositor: &mut PageCompositor,
-    last: Option<&PageRequest>,
-    preloaded: &mut Option<Preloaded>,
-) -> bool {
-    if setlist.preload(&CoreText) {
-        return true;
-    }
-    let Some(last) = last else {
-        return false;
-    };
-    let next = setlist.position() + 1;
-    let key = ViewKey::of(last);
-    if preloaded
-        .as_ref()
-        .is_some_and(|page| page.song == next && page.key == key)
-    {
-        return false;
-    }
-    let Some(app) = setlist.ready_mut(next) else {
-        return false;
-    };
-    app.polarity = last.polarity;
-    let (frame, max_offset) = app.frame_scrolled(
-        last.width as f32 / last.scale,
-        last.height as f32 / last.scale,
-        0.0,
-    );
-    let image = compositor.compose(&frame, last.scale, last.width, last.height);
-    *preloaded = Some(Preloaded {
-        song: next,
-        key,
-        max_offset,
+    next_id: &mut u64,
+    page: &Frame,
+    page_px: u32,
+    request: &PageRequest,
+) -> Arc<Slab> {
+    let viewport = request.content_px();
+    let height = page_px
+        .min(viewport * SLAB_VIEWPORTS)
+        .min(request.max_texture_side)
+        .max(1);
+    let top = (request.offset_px() - viewport as i32).clamp(0, page_px as i32 - height as i32);
+    let image = compositor.compose_slab(page, request.scale, request.width, height, top);
+    *next_id += 1;
+    Arc::new(Slab {
+        id: *next_id,
+        top,
         image,
-    });
-    true
+    })
+}
+
+/// Positions a song's page for the request's viewport and composes its first slab.
+fn retain(
+    compositor: &mut PageCompositor,
+    next_id: &mut u64,
+    app: &mut App,
+    request: &PageRequest,
+) -> Retained {
+    app.polarity = request.polarity;
+    let (width, height) = request.logical();
+    let page = app.page(width, height);
+    let page_px = ((page.height * request.scale).round() as u32).max(1);
+    let slab = compose_slab(compositor, next_id, &page, page_px, request);
+    Retained {
+        song: request.song,
+        key: ViewKey::of(request),
+        page,
+        page_px,
+        slab,
+    }
+}
+
+impl Worker {
+    /// Answers one request: a song change or viewport change retains a new
+    /// page, a scroll that leaves the slab composes another slab, and any
+    /// scroll composes only the status strip. Returns whether a slab was
+    /// composed, for the timing log.
+    fn answer(&mut self, request: &PageRequest) -> (ReadyPage, bool) {
+        if request.song != self.setlist.position() {
+            self.setlist.go_to(request.song);
+        }
+        let key = ViewKey::of(request);
+        let mut composed_slab = false;
+        let fresh = self
+            .retained
+            .as_ref()
+            .is_none_or(|r| r.song != request.song || r.key != key);
+        if fresh {
+            self.retained = Some(
+                match self
+                    .preloaded
+                    .take_if(|p| p.song == request.song && p.key == key)
+                {
+                    Some(preloaded) => preloaded,
+                    None => {
+                        composed_slab = true;
+                        let app = self.setlist.current(&CoreText);
+                        retain(&mut self.compositor, &mut self.next_slab_id, app, request)
+                    }
+                },
+            );
+        }
+        let retained = self.retained.as_mut().unwrap();
+        let viewport = request.content_px() as i32;
+        let offset_px = request.offset_px();
+        let covered = retained.slab.top <= offset_px
+            && retained.slab.top + retained.slab.image.height as i32 >= offset_px + viewport;
+        if !covered {
+            composed_slab = true;
+            retained.slab = compose_slab(
+                &mut self.compositor,
+                &mut self.next_slab_id,
+                &retained.page,
+                retained.page_px,
+                request,
+            );
+        }
+        let retained = self.retained.as_ref().unwrap();
+        let (width, height) = request.logical();
+        let app = self.setlist.current(&CoreText);
+        app.polarity = request.polarity;
+        let scroll = app.view(width, height, request.offset);
+        let scale = request.scale;
+        let paper = if request.polarity == Polarity::Light {
+            255
+        } else {
+            0
+        };
+        let mut view = View {
+            scroll: (scroll.offset * scale).round() as i32 - retained.slab.top,
+            band_top: (scroll.band.0 * scale).floor() as i32,
+            band_bottom: (scroll.band.1 * scale).ceil() as i32,
+            status_top: i32::MAX,
+            inset: request.inset_px() as i32,
+            paper,
+        };
+        let status = scroll.status.map(|mut text| {
+            let c = &self.config;
+            let strip = c.margin_bottom + c.status_height * c.body_size;
+            let strip_px = (strip * scale).ceil() as u32;
+            view.status_top = request.content_px() as i32 - strip_px as i32;
+            text.baseline -= height - strip;
+            let frame = Frame {
+                width,
+                height: strip,
+                polarity: request.polarity,
+                text: vec![text],
+                fits: false,
+                columns: 1,
+                ladder_step: 10,
+            };
+            self.compositor
+                .compose(&frame, scale, request.width, strip_px)
+        });
+        (
+            ReadyPage {
+                generation: request.generation,
+                song: request.song,
+                title: self.setlist.title(request.song).to_owned(),
+                max_offset: scroll.max_offset,
+                slab: Arc::clone(&retained.slab),
+                status,
+                view,
+            },
+            composed_slab,
+        )
+    }
+
+    /// Measures a missing neighbour or retains the next song's first page at
+    /// the last viewport. One unit of work per call, so a request never waits
+    /// behind more than one of them. Returns false once nothing is left.
+    fn preload_step(&mut self) -> bool {
+        if self.setlist.preload(&CoreText) {
+            return true;
+        }
+        let Some(last) = self.last else {
+            return false;
+        };
+        let next = self.setlist.position() + 1;
+        let key = ViewKey::of(&last);
+        if self
+            .preloaded
+            .as_ref()
+            .is_some_and(|page| page.song == next && page.key == key)
+        {
+            return false;
+        }
+        let Some(app) = self.setlist.ready_mut(next) else {
+            return false;
+        };
+        let request = PageRequest {
+            song: next,
+            offset: 0.0,
+            ..last
+        };
+        self.preloaded = Some(retain(
+            &mut self.compositor,
+            &mut self.next_slab_id,
+            app,
+            &request,
+        ));
+        true
+    }
 }
 
 struct PageReady;
@@ -155,8 +357,10 @@ impl Viewer {
             width: size.width,
             height: size.height,
             scale: window.scale_factor() as f32,
+            inset: TITLE_STRIP_PT,
             offset: self.scroll_offset,
             polarity: self.polarity,
+            max_texture_side: self.max_texture_side,
         });
     }
 
@@ -168,7 +372,14 @@ impl Viewer {
             self.scroll_max = page.max_offset;
             self.scroll_offset = self.scroll_offset.min(self.scroll_max);
             if let (Some(gpu), Some(window)) = (&mut self.gpu, &self.window) {
-                gpu.upload_image(&page.image);
+                if self.uploaded_slab != Some(page.slab.id) {
+                    gpu.upload_page(&page.slab.image);
+                    self.uploaded_slab = Some(page.slab.id);
+                }
+                if let Some(status) = &page.status {
+                    gpu.upload_status(status);
+                }
+                gpu.set_view(page.view);
                 window.set_title(&if self.song_count > 1 {
                     format!(
                         "{}  ·  {} / {}  —  chordpro-live",
@@ -202,18 +413,27 @@ impl ApplicationHandler<PageReady> for Viewer {
         if self.window.is_some() {
             return;
         }
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title("chordpro-live")
-                        .with_inner_size(winit::dpi::LogicalSize::new(
-                            self.initial_size.0,
-                            self.initial_size.1,
-                        )),
-                )
-                .expect("create window"),
-        );
+        let attributes = Window::default_attributes()
+            .with_title("chordpro-live")
+            .with_inner_size(winit::dpi::LogicalSize::new(
+                self.initial_size.0,
+                self.initial_size.1,
+            ));
+        // Chromeless, as switchblade and abner do it: the titlebar is glass
+        // with its title hidden and the content view runs under it, so the
+        // page's own paper fills the strip and only the traffic lights float
+        // over it. No shadow: on macOS 26 the window contour is drawn with
+        // the shadow, and dropping the shadow is the only way to lose it.
+        #[cfg(target_os = "macos")]
+        let attributes = {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+            attributes
+                .with_titlebar_transparent(true)
+                .with_title_hidden(true)
+                .with_fullsize_content_view(true)
+                .with_has_shadow(false)
+        };
+        let window = Arc::new(event_loop.create_window(attributes).expect("create window"));
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance
@@ -221,6 +441,7 @@ impl ApplicationHandler<PageReady> for Viewer {
             .expect("create surface");
         let gpu =
             block_on(Gpu::new(instance, surface, size.width, size.height)).expect("initialize GPU");
+        self.max_texture_side = gpu.max_texture_side;
         self.window = Some(window);
         self.gpu = Some(gpu);
         self.request_page();
@@ -249,6 +470,7 @@ impl ApplicationHandler<PageReady> for Viewer {
                 ..
             } => match logical_key {
                 Key::Named(NamedKey::Escape) => event_loop.exit(),
+                Key::Character(key) if key.eq_ignore_ascii_case("q") => event_loop.exit(),
                 Key::Character(key) if key.eq_ignore_ascii_case("i") => {
                     self.polarity = if self.polarity == Polarity::Light {
                         Polarity::Dark
@@ -322,6 +544,7 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
        cpl --view <song.cho> --size 980x720
                                           set the window size in logical points
        cpl --view <folder> --song 2       open on the second song of the setlist
+       cpl --view <song.cho> --scroll 300 open scrolled 300 points down the song
        cpl <song.cho>                     print the parsed lyrics
 In the viewer: i polarity, n / p or ← → next and previous song,
 ↑ ↓ / Page Up / Page Down / Home / End scroll, Escape closes.";
@@ -386,7 +609,13 @@ fn main() -> ExitCode {
     // Trailing `--size WxH` and `--song N` options, in either order.
     let mut requested_size = None;
     let mut start_song = 0;
-    while args.len() >= 2 && matches!(args[args.len() - 2].as_str(), "--size" | "--song") {
+    let mut start_offset = 0.0f32;
+    while args.len() >= 2
+        && matches!(
+            args[args.len() - 2].as_str(),
+            "--size" | "--song" | "--scroll"
+        )
+    {
         let value = args.pop().unwrap();
         let flag = args.pop().unwrap();
         if flag == "--size" {
@@ -394,6 +623,15 @@ fn main() -> ExitCode {
                 Some(size) => requested_size = Some(size),
                 None => {
                     eprintln!("invalid --size {value:?}; expected WIDTHxHEIGHT (at least 200x200)");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else if flag == "--scroll" {
+            // Points down the song, so a capture can reach a scrolled state.
+            match value.parse::<f32>() {
+                Ok(offset) if offset.is_finite() && offset >= 0.0 => start_offset = offset,
+                _ => {
+                    eprintln!("invalid --scroll {value:?}; expected points, 0 or more");
                     return ExitCode::FAILURE;
                 }
             }
@@ -425,8 +663,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if (requested_size.is_some() || start_song > 0) && !view {
-        eprintln!("--size and --song require --view");
+    if (requested_size.is_some() || start_song > 0 || start_offset > 0.0) && !view {
+        eprintln!("--size, --song and --scroll require --view");
         return ExitCode::FAILURE;
     }
     let paths = match expand_paths(&paths) {
@@ -508,13 +746,18 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    let timing = env::var_os("CPL_TIMING").is_some();
     std::thread::spawn(move || {
-        let mut setlist = Setlist::new(songs, worker_config, polarity);
-        let mut compositor = PageCompositor::default();
-        // The newest viewport, so the next song is composed at the size it
-        // will be shown; and that composition, if it has been done.
-        let mut last: Option<PageRequest> = None;
-        let mut preloaded: Option<Preloaded> = None;
+        let mut worker = Worker {
+            setlist: Setlist::new(songs, worker_config.clone(), polarity),
+            compositor: PageCompositor::default(),
+            config: worker_config,
+            retained: None,
+            preloaded: None,
+            last: None,
+            next_slab_id: 0,
+            timing,
+        };
         loop {
             let mut request = match request_rx.try_recv() {
                 Ok(request) => request,
@@ -522,7 +765,7 @@ fn main() -> ExitCode {
                 Err(mpsc::TryRecvError::Empty) => {
                     // Idle: prepare the neighbours one unit at a time, checking
                     // for a request between units, then block.
-                    if preload_step(&mut setlist, &mut compositor, last.as_ref(), &mut preloaded) {
+                    if worker.preload_step() {
                         continue;
                     }
                     match request_rx.recv() {
@@ -536,41 +779,19 @@ fn main() -> ExitCode {
             while let Ok(newer) = request_rx.try_recv() {
                 request = newer;
             }
-            if request.song != setlist.position() {
-                setlist.go_to(request.song);
-            }
-            let key = ViewKey::of(&request);
-            let ready = preloaded
-                .take_if(|page| {
-                    page.song == request.song && page.key == key && request.offset == 0.0
-                })
-                .map(|page| (page.image, page.max_offset));
-            let (image, max_offset) = ready.unwrap_or_else(|| {
-                let app = setlist.current(&CoreText);
-                app.polarity = request.polarity;
-                let (frame, max_offset) = app.frame_scrolled(
-                    request.width as f32 / request.scale,
-                    request.height as f32 / request.scale,
-                    request.offset,
+            let started = Instant::now();
+            let (page, composed_slab) = worker.answer(&request);
+            if worker.timing {
+                eprintln!(
+                    "{} {:?}",
+                    if composed_slab { "slab" } else { "view" },
+                    started.elapsed()
                 );
-                let image =
-                    compositor.compose(&frame, request.scale, request.width, request.height);
-                (image, max_offset)
-            });
-            if result_tx
-                .send(ReadyPage {
-                    generation: request.generation,
-                    song: request.song,
-                    title: setlist.title(request.song).to_owned(),
-                    max_offset,
-                    image,
-                })
-                .is_err()
-                || proxy.send_event(PageReady).is_err()
-            {
+            }
+            if result_tx.send(page).is_err() || proxy.send_event(PageReady).is_err() {
                 break;
             }
-            last = Some(request);
+            worker.last = Some(request);
         }
     });
     let mut viewer = Viewer {
@@ -583,11 +804,13 @@ fn main() -> ExitCode {
         } else {
             (980.0, 720.0)
         }),
-        scroll_offset: 0.0,
-        scroll_max: 0.0,
+        scroll_offset: start_offset,
+        scroll_max: f32::INFINITY,
         song: start_song,
         song_count,
         generation: 0,
+        uploaded_slab: None,
+        max_texture_side: 8192,
         requests,
         results,
         window: None,

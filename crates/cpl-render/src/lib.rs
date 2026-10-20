@@ -69,6 +69,19 @@ pub struct PageCompositor {
 
 impl PageCompositor {
     pub fn compose(&mut self, frame: &Frame, scale: f32, width: u32, height: u32) -> PageImage {
+        self.compose_slab(frame, scale, width, height, 0)
+    }
+
+    /// Composes the rows `[top, top + height)` of the frame, in device
+    /// pixels: a slab of a tall page that the window scrolls over.
+    pub fn compose_slab(
+        &mut self,
+        frame: &Frame,
+        scale: f32,
+        width: u32,
+        height: u32,
+        top: i32,
+    ) -> PageImage {
         let width_usize = width as usize;
         let height_usize = height as usize;
         let paper: u8 = if frame.polarity == Polarity::Light {
@@ -93,9 +106,12 @@ impl PageCompositor {
                 (Polarity::Dark, Ink::Faint) => 110,
             };
             let left = (item.x * scale).round() as i32 - text::RASTER_PAD;
-            let top = (item.baseline * scale).round() as i32 - raster.baseline as i32;
+            let item_top = (item.baseline * scale).round() as i32 - raster.baseline as i32 - top;
+            if item_top >= height as i32 || item_top + (raster.height as i32) <= 0 {
+                continue;
+            }
             for row in 0..raster.height as i32 {
-                let y = top + row;
+                let y = item_top + row;
                 if y < 0 || y >= height_usize as i32 {
                     continue;
                 }
@@ -125,6 +141,44 @@ impl PageCompositor {
     }
 }
 
+/// How the retained slab and the status strip are placed in the window, in
+/// device pixels. Mirrors the `View` uniform in `page.wgsl`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct View {
+    /// Slab row shown at content row 0: the page offset minus the slab's top.
+    pub scroll: i32,
+    /// Content rows outside `[band_top, band_bottom)` are paper.
+    pub band_top: i32,
+    pub band_bottom: i32,
+    /// Content row from which the status texture is shown; past the window
+    /// height when the page carries its own strip.
+    pub status_top: i32,
+    /// Rows of paper above the content: the title strip it runs under.
+    pub inset: i32,
+    /// Paper level, 0 or 255.
+    pub paper: u8,
+}
+
+impl View {
+    fn bytes(&self) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        let words = [
+            self.scroll,
+            self.band_top,
+            self.band_bottom,
+            self.status_top,
+            self.inset,
+            self.paper as i32,
+            0,
+            0,
+        ];
+        for (chunk, word) in out.chunks_exact_mut(4).zip(words) {
+            chunk.copy_from_slice(&word.to_ne_bytes());
+        }
+        out
+    }
+}
+
 pub struct Gpu {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -132,10 +186,14 @@ pub struct Gpu {
     config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
-    texture: wgpu::Texture,
+    uniform: wgpu::Buffer,
+    page: wgpu::Texture,
+    status: wgpu::Texture,
     bind_group: wgpu::BindGroup,
-    image_size: (u32, u32),
+    page_size: (u32, u32),
+    status_size: (u32, u32),
+    /// The largest slab or strip a texture may be, from the adapter.
+    pub max_texture_side: u32,
 }
 
 impl Gpu {
@@ -174,33 +232,40 @@ impl Gpu {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
+        let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("page texture layout"),
+            label: Some("page layout"),
             entries: &[
+                texture_entry(0),
+                texture_entry(1),
                 wgpu::BindGroupLayoutEntry {
-                    binding: 0,
+                    binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
         });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("page sampler"),
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("view"),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
+        let max_texture_side = device.limits().max_texture_dimension_2d;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("page shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("page.wgsl").into()),
@@ -235,20 +300,71 @@ impl Gpu {
             multiview_mask: None,
             cache: None,
         });
-        let texture = make_texture(&device, config.width, config.height);
-        let bind_group = make_bind_group(&device, &layout, &texture, &sampler);
-        Ok(Self {
+        let page = make_texture(&device, config.width, config.height);
+        let status = make_texture(&device, 1, 1);
+        let bind_group = make_bind_group(&device, &layout, &page, &status, &uniform);
+        let mut gpu = Self {
             surface,
             device,
             queue,
             config,
             pipeline,
             layout,
-            sampler,
-            texture,
+            uniform,
+            page,
+            status,
             bind_group,
-            image_size: (width.max(1), height.max(1)),
-        })
+            page_size: (width.max(1), height.max(1)),
+            status_size: (1, 1),
+            max_texture_side,
+        };
+        gpu.set_view(View {
+            scroll: 0,
+            band_top: 0,
+            band_bottom: 0,
+            status_top: i32::MAX,
+            inset: 0,
+            paper: 255,
+        });
+        Ok(gpu)
+    }
+
+    /// Places the retained slab and status strip. Cheap: one 32-byte write.
+    pub fn set_view(&mut self, view: View) {
+        self.queue.write_buffer(&self.uniform, 0, &view.bytes());
+    }
+
+    /// Replaces the retained page slab. Its width should match the window;
+    /// its height is the slab's, up to `max_texture_side`.
+    pub fn upload_page(&mut self, image: &PageImage) {
+        if self.page_size != (image.width, image.height) {
+            self.page = make_texture(&self.device, image.width, image.height);
+            self.page_size = (image.width, image.height);
+            self.bind_group = make_bind_group(
+                &self.device,
+                &self.layout,
+                &self.page,
+                &self.status,
+                &self.uniform,
+            );
+        }
+        write_image(&self.queue, &self.page, image);
+    }
+
+    /// Replaces the status strip texture.
+    pub fn upload_status(&mut self, image: &PageImage) {
+        if self.status_size != (image.width, image.height) {
+            self.status = make_texture(&self.device, image.width, image.height);
+            self.status_size = (image.width, image.height);
+            self.bind_group = make_bind_group(
+                &self.device,
+                &self.layout,
+                &self.page,
+                &self.status,
+                &self.uniform,
+            );
+        }
+        write_image(&self.queue, &self.status, image);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -258,37 +374,6 @@ impl Gpu {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
-    }
-
-    pub fn upload_image(&mut self, image: &PageImage) {
-        if (image.width, image.height) != (self.config.width, self.config.height) {
-            return;
-        }
-        if self.image_size != (image.width, image.height) {
-            self.texture = make_texture(&self.device, image.width, image.height);
-            self.bind_group =
-                make_bind_group(&self.device, &self.layout, &self.texture, &self.sampler);
-            self.image_size = (image.width, image.height);
-        }
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &image.pixels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(image.width * 4),
-                rows_per_image: Some(image.height),
-            },
-            wgpu::Extent3d {
-                width: image.width,
-                height: image.height,
-                depth_or_array_layers: 1,
-            },
-        );
     }
 
     pub fn render(&self) -> bool {
@@ -349,24 +434,52 @@ fn make_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture
     })
 }
 
+fn write_image(queue: &wgpu::Queue, texture: &wgpu::Texture, image: &PageImage) {
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &image.pixels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(image.width * 4),
+            rows_per_image: Some(image.height),
+        },
+        wgpu::Extent3d {
+            width: image.width,
+            height: image.height,
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
 fn make_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    texture: &wgpu::Texture,
-    sampler: &wgpu::Sampler,
+    page: &wgpu::Texture,
+    status: &wgpu::Texture,
+    uniform: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let page_view = page.create_view(&wgpu::TextureViewDescriptor::default());
+    let status_view = status.create_view(&wgpu::TextureViewDescriptor::default());
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("song page bind group"),
         layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
+                resource: wgpu::BindingResource::TextureView(&page_view),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
+                resource: wgpu::BindingResource::TextureView(&status_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: uniform.as_entire_binding(),
             },
         ],
     })
@@ -396,6 +509,51 @@ mod cache_tests {
         assert_eq!(cache.entries.len(), 1);
         cache.get(&item, 1.0).unwrap();
         assert_eq!(cache.entries.len(), 2);
+    }
+
+    #[test]
+    fn a_slab_is_the_matching_rows_of_the_whole_page() {
+        let mut compositor = PageCompositor::default();
+        let frame = Frame {
+            width: 120.0,
+            height: 200.0,
+            polarity: Polarity::Light,
+            text: (0..4)
+                .map(|row| Text {
+                    content: format!("Row {row}"),
+                    group: row,
+                    x: 10.0,
+                    baseline: 30.0 + row as f32 * 40.0,
+                    size: 17.0,
+                    weight: 400,
+                    face: Face::System,
+                    ink: Ink::Strong,
+                })
+                .collect(),
+            fits: false,
+            columns: 1,
+            ladder_step: 10,
+        };
+        let whole = compositor.compose(&frame, 1.0, 120, 200);
+        let slab = compositor.compose_slab(&frame, 1.0, 120, 70, 50);
+        assert_eq!(slab.height, 70);
+        assert_eq!(&slab.pixels[..], &whole.pixels[50 * 120 * 4..120 * 120 * 4]);
+        assert!(slab.pixels.chunks_exact(4).any(|pixel| pixel[0] < 255));
+    }
+
+    #[test]
+    fn view_bytes_follow_the_uniform_layout() {
+        let view = View {
+            scroll: 7,
+            band_top: 1,
+            band_bottom: 2,
+            status_top: 3,
+            inset: 4,
+            paper: 255,
+        };
+        let bytes = view.bytes();
+        assert_eq!(i32::from_ne_bytes(bytes[0..4].try_into().unwrap()), 7);
+        assert_eq!(i32::from_ne_bytes(bytes[20..24].try_into().unwrap()), 255);
     }
 
     #[test]
