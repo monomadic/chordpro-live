@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cpl-song"]
+members = ["crates/cpl-song", "crates/cpl-app", "crates/cpl-render"]
 resolver = "3"
 
 [package]
@@ -9,3 +9,7 @@ edition = "2024"
 
 [dependencies]
 cpl-song = { path = "crates/cpl-song" }
+cpl-app = { path = "crates/cpl-app" }
+cpl-render = { path = "crates/cpl-render" }
+winit = "0.30"
+wgpu = "30"

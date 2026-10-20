@@ -1,0 +1,9 @@
+[package]
+name = "cpl-render"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+cpl-app = { path = "../cpl-app" }
+wgpu = "30"
