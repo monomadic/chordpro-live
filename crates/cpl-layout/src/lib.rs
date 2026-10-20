@@ -1,6 +1,11 @@
 //! Song measurement and the pure arithmetic that fits measured blocks into columns.
 
+mod ladder;
 mod measure;
+
+pub use ladder::{
+    HeaderLayout, LADDER, Options, PageMetrics, Solution, Step, Viewport, layout, solve,
+};
 
 pub use measure::{
     Face, Header, Measure, MeasuredLine, MeasuredSection, MeasuredSong, Metrics, Role, Run, Style,
@@ -51,8 +56,16 @@ pub fn fit(blocks: &[Block], options: FitOptions) -> Fit {
         body_size: 0.0,
         meets_floor: false,
     };
-    if blocks.is_empty() || available_width <= 0.0 || available_height <= 0.0 {
+    if available_width <= 0.0 || available_height <= 0.0 {
         return best;
+    }
+    if blocks.is_empty() {
+        // Nothing to draw beyond the header always fits.
+        return Fit {
+            columns: Vec::new(),
+            body_size: max_body_size,
+            meets_floor: max_body_size >= floor,
+        };
     }
     for count in 1..=max_columns.min(blocks.len()) {
         let columns = pack_into(blocks, count, section_gap);
@@ -168,6 +181,26 @@ mod tests {
         );
         assert_eq!(result.columns.len(), 3);
         assert!(result.meets_floor);
+    }
+
+    #[test]
+    fn an_empty_song_fits() {
+        let result = fit(
+            &[],
+            FitOptions {
+                available_width: 10.0,
+                available_height: 10.0,
+                header_height: 0.0,
+                header_gap: 0.0,
+                section_gap: 0.0,
+                column_gutter: 0.0,
+                max_columns: 4,
+                max_body_size: 1.0,
+                floor: 1.0,
+            },
+        );
+        assert!(result.meets_floor);
+        assert!(result.columns.is_empty());
     }
 
     #[test]

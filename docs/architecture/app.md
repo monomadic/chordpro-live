@@ -13,19 +13,14 @@ section labels have their own gap. All page dimensions are in
 body-size units except margins, which are points. A song crossing the bottom
 margin scrolls at the same body size. Width overflow still needs a solution.
 
-The first three fit candidates run in proposal order: remove inter-section
-gaps; move section labels into the side margin when all labels fit there;
-and put the title and byline on one baseline if they fit the page width.
-When those fail, step 5 folds parsed tablature to its label; step 7 removes
-the title. Steps 4 and 6 concern diagrams and metadata pills that this viewer
-does not render yet. A side label candidate is skipped when its text will
-not fit in the margin.
-Step 8 keeps the first line of a repeated chorus (exact line/segment
-equality), and step 9 places small chord symbols inline before their lyric
-segments. Every candidate retries at the same body size. When fit fails,
-`frame_scrolled` lays out the full song as one column and selects complete
-chord/lyric line groups for the viewport. The macOS host owns the offset and
-handles arrow, Page Up/Down, Home, and End keys. Paged and timed scroll modes,
-diagram and pill reductions, and normalised input events in the proposal
-are not implemented yet. The default config is embedded
-at build time; hot reload has not landed.
+`frame` asks `cpl_layout::solve` for the least-reduced page that fits the
+content box (inside the margins, above the status strip) and composes it in
+points; the ladder order and its skip rules are in [layout](layout.md). An
+unfit candidate draws no lyrics. When fit fails, `frame_scrolled` lays the
+full song out as one column of unbounded height, falling back to inline
+chords only if a line is too wide, and selects complete chord/lyric line
+groups for the viewport. The macOS host owns the offset and handles arrow,
+Page Up/Down, Home, and End keys. Paged and timed scroll modes, diagram and
+pill reductions, per-step on/off/auto pins, and normalised input events in
+the proposal are not implemented yet. The default config is embedded at
+build time; hot reload has not landed.

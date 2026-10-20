@@ -1,7 +1,7 @@
 //! Headless song-page composition. No window or GPU types cross this boundary.
 
 pub use cpl_layout::{Face, Measure};
-use cpl_layout::{MeasuredSection, MeasuredSong, Metrics, Role};
+use cpl_layout::{MeasuredSong, Metrics, Options, PageMetrics, Role, Solution, Viewport};
 use cpl_song::{SectionKind, Song};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +65,11 @@ pub struct Config {
     pub inline_chord_size: f32,
     pub inline_chord_gap: f32,
     pub column_gutter: f32,
+    pub header_inline_gap: f32,
+    pub byline_leading: f32,
+    pub side_label_inset: f32,
+    pub status_height: f32,
+    pub max_columns: f32,
 }
 
 impl Default for Config {
@@ -137,6 +142,11 @@ impl Config {
             inline_chord_size: take!("inline_chord_size"),
             inline_chord_gap: take!("inline_chord_gap"),
             column_gutter: take!("column_gutter"),
+            header_inline_gap: take!("header_inline_gap"),
+            byline_leading: take!("byline_leading"),
+            side_label_inset: take!("side_label_inset"),
+            status_height: take!("status_height"),
+            max_columns: take!("max_columns"),
         };
         if let Some(key) = values.keys().next() {
             return Err(format!("unknown page key: {key}"));
@@ -147,6 +157,9 @@ impl Config {
             || config.inline_lyric_baseline >= config.inline_line_height
         {
             return Err("invalid chord/lyric baseline order".into());
+        }
+        if config.max_columns.fract() != 0.0 {
+            return Err("max_columns must be a whole number".into());
         }
         Ok(config)
     }
@@ -175,18 +188,6 @@ pub struct App {
     pub polarity: Polarity,
 }
 
-#[derive(Clone, Copy)]
-struct Candidate {
-    section_gap: f32,
-    side_labels: bool,
-    collapsed_header: bool,
-    fold_tabs: bool,
-    hide_title: bool,
-    collapse_repeats: bool,
-    inline_chords: bool,
-    ladder_step: u8,
-}
-
 impl App {
     /// Measures the song once. Every frame after this is arithmetic over that
     /// measurement, so resizing, scrolling and polarity never call the host.
@@ -208,6 +209,35 @@ impl App {
         &self.config
     }
 
+    fn page_metrics(&self) -> PageMetrics {
+        let c = &self.config;
+        PageMetrics {
+            title_size: c.title_size,
+            subtitle_size: c.subtitle_size,
+            byline_leading: c.byline_leading,
+            header_gap: c.header_gap,
+            header_inline_gap: c.header_inline_gap,
+            section_gap: c.section_gap,
+            label_height: c.label_height,
+            label_gap: c.label_gap,
+            line_height: c.line_height,
+            inline_line_height: c.inline_line_height,
+            column_gutter: c.column_gutter,
+            side_label_room: c.margin_x.min(c.column_gutter * c.body_size) / c.body_size
+                - c.side_label_inset,
+            max_columns: c.max_columns as usize,
+        }
+    }
+
+    /// The content box inside the margins and above the status strip, in em.
+    fn viewport(&self, width: f32, height: f32) -> Viewport {
+        let c = &self.config;
+        Viewport {
+            width: (width - 2.0 * c.margin_x) / c.body_size,
+            height: (height - c.margin_top - c.margin_bottom) / c.body_size - c.status_height,
+        }
+    }
+
     /// Keeps the full song at the configured body size when fit mode cannot hold it.
     /// The caller owns the offset so navigation never changes the song model.
     pub fn frame_scrolled(&self, width: f32, height: f32, offset: f32) -> (Frame, f32) {
@@ -217,39 +247,19 @@ impl App {
         }
         let c = &self.config;
         let body = c.body_size;
-        let line_count: usize = self
-            .measured
-            .sections
-            .iter()
-            .map(|section| section.lines.len())
-            .sum();
-        let long_height = c.margin_top
-            + (line_count as f32 * c.line_height
-                + self.measured.sections.len() as f32
-                    * (c.label_height + c.label_gap + c.section_gap)
-                + 20.0)
-                * body;
-        let full = Candidate {
-            section_gap: c.section_gap,
-            side_labels: false,
-            collapsed_header: false,
-            fold_tabs: false,
-            hide_title: false,
-            collapse_repeats: false,
-            inline_chords: false,
-            ladder_step: 0,
+        let metrics = self.page_metrics();
+        // One unbounded column; the scroll viewport windows over it.
+        let tall = Viewport {
+            height: f32::INFINITY,
+            ..self.viewport(width, height)
         };
-        let mut long = self.frame_candidate(width, long_height, full);
+        let mut long = cpl_layout::layout(&self.measured, &metrics, tall, Options::default(), 0);
         if !long.fits {
-            long = self.frame_candidate(
-                width,
-                long_height,
-                Candidate {
-                    inline_chords: true,
-                    ladder_step: 9,
-                    ..full
-                },
-            );
+            let inline = Options {
+                inline_chords: true,
+                ..Options::default()
+            };
+            long = cpl_layout::layout(&self.measured, &metrics, tall, inline, 9);
         }
         if !long.fits {
             for item in &mut fit.text {
@@ -261,8 +271,9 @@ impl App {
             }
             return (fit, 0.0);
         }
+        let mut long = self.compose(width, height, &long);
         long.text.pop(); // the long page's status strip belongs below its viewport
-        let content_end = height - c.margin_bottom - body * 1.5;
+        let content_end = height - c.margin_bottom - c.status_height * body;
         let last_baseline = long
             .text
             .iter()
@@ -294,28 +305,17 @@ impl App {
                 frame.text.push(item);
             }
         }
+        let more = if offset < max_offset {
+            "  ·  MORE ↓"
+        } else {
+            ""
+        };
         frame.text.push(Text {
             group: usize::MAX,
             content: if width < 500.0 {
-                format!(
-                    "SCROLL  ·  {} pt{}",
-                    body,
-                    if offset < max_offset {
-                        "  ·  MORE ↓"
-                    } else {
-                        ""
-                    }
-                )
+                format!("SCROLL  ·  {body} pt{more}")
             } else {
-                format!(
-                    "SCROLL  ·  stand {} pt  ·  ↑ ↓ / Page Up Down{}",
-                    body,
-                    if offset < max_offset {
-                        "  ·  MORE ↓"
-                    } else {
-                        ""
-                    }
-                )
+                format!("SCROLL  ·  stand {body} pt  ·  ↑ ↓ / Page Up Down{more}")
             },
             x: c.margin_x,
             baseline: height - c.margin_bottom * 0.5,
@@ -327,251 +327,89 @@ impl App {
         (frame, max_offset)
     }
 
+    /// The least-reduced page that fits, or the most-reduced candidate marked unfit.
     pub fn frame(&self, width: f32, height: f32) -> Frame {
-        let full_options = Candidate {
-            section_gap: self.config.section_gap,
-            side_labels: false,
-            collapsed_header: false,
-            fold_tabs: false,
-            hide_title: false,
-            collapse_repeats: false,
-            inline_chords: false,
-            ladder_step: 0,
-        };
-        let full = self.frame_candidate(width, height, full_options);
-        if full.fits {
-            return full;
-        }
-        let compact_options = Candidate {
-            section_gap: 0.0,
-            ladder_step: 1,
-            ..full_options
-        };
-        let compact = self.frame_candidate(width, height, compact_options);
-        if compact.fits {
-            return compact;
-        }
-        let side_allowed = self.labels_fit_side();
-        let side_options = Candidate {
-            side_labels: side_allowed,
-            ladder_step: 2,
-            ..compact_options
-        };
-        if side_allowed {
-            let side = self.frame_candidate(width, height, side_options);
-            if side.fits {
-                return side;
-            }
-        }
-        let header_options = Candidate {
-            collapsed_header: true,
-            ladder_step: 3,
-            ..side_options
-        };
-        let header = self.frame_candidate(width, height, header_options);
-        if header.fits {
-            return header;
-        }
-        let tabs_options = Candidate {
-            fold_tabs: true,
-            ladder_step: 5,
-            ..header_options
-        };
-        if self
-            .measured
-            .sections
-            .iter()
-            .any(|section| section.kind == SectionKind::Tab)
-        {
-            let tabs = self.frame_candidate(width, height, tabs_options);
-            if tabs.fits {
-                return tabs;
-            }
-        }
-        let no_title = Candidate {
-            hide_title: true,
-            ladder_step: 7,
-            ..tabs_options
-        };
-        let title_dropped = self.frame_candidate(width, height, no_title);
-        if title_dropped.fits {
-            return title_dropped;
-        }
-        let repeated = self.frame_candidate(
-            width,
-            height,
-            Candidate {
-                collapse_repeats: true,
-                ladder_step: 8,
-                ..no_title
-            },
+        let solution = cpl_layout::solve(
+            &self.measured,
+            &self.page_metrics(),
+            self.viewport(width, height),
         );
-        if repeated.fits {
-            return repeated;
-        }
-        self.frame_candidate(
-            width,
-            height,
-            Candidate {
-                inline_chords: true,
-                ladder_step: 9,
-                collapse_repeats: true,
-                ..no_title
-            },
-        )
+        self.compose(width, height, &solution)
     }
 
-    fn labels_fit_side(&self) -> bool {
+    /// Places a solved candidate in points. Draws no lyric unless it fits.
+    fn compose(&self, width: f32, height: f32, solution: &Solution) -> Frame {
         let c = &self.config;
         let body = c.body_size;
-        let room = c.margin_x.min(c.column_gutter * body) - body * 0.25;
-        self.measured
-            .sections
-            .iter()
-            .all(|section| section.label_width * body <= room)
-    }
-
-    fn frame_candidate(&self, width: f32, height: f32, candidate: Candidate) -> Frame {
-        let Candidate {
-            section_gap,
-            side_labels,
-            collapsed_header,
-            fold_tabs,
-            hide_title,
-            collapse_repeats,
-            inline_chords,
-            ladder_step,
-        } = candidate;
-        let c = &self.config;
-        let body = c.body_size;
+        let o = solution.options;
+        let m = self.page_metrics();
+        let header = &self.measured.header;
         let mut frame = Frame {
             width,
             height,
             polarity: self.polarity,
             text: Vec::new(),
-            fits: true,
-            columns: 0,
-            ladder_step,
+            fits: solution.fits,
+            columns: if solution.fits {
+                solution.fit.columns.len()
+            } else {
+                0
+            },
+            ladder_step: solution.step,
         };
-        let header = &self.measured.header;
-        let title_size = c.title_size * body;
-        let mut y = c.margin_top;
-        if !hide_title {
-            y += title_size;
+        if let Some(baseline) = solution.header.title_baseline {
             frame.text.push(Text {
                 group: 0,
                 content: header.title.clone(),
                 x: c.margin_x,
-                baseline: y,
-                size: title_size,
+                baseline: c.margin_top + baseline * body,
+                size: c.title_size * body,
                 weight: 600,
                 face: Face::System,
                 ink: Ink::Strong,
             });
         }
-        if let Some(artist) = &header.artist {
-            let artist_x = if collapsed_header && !hide_title {
-                c.margin_x + header.title_width * body + body * 0.8
-            } else {
-                y += if hide_title {
-                    c.subtitle_size * body
-                } else {
-                    c.subtitle_size * body * 1.8
-                };
-                c.margin_x
-            };
+        if let (Some(artist), Some((x, baseline))) = (&header.artist, solution.header.artist) {
             frame.text.push(Text {
                 group: 0,
                 content: artist.clone(),
-                x: artist_x,
-                baseline: y,
+                x: c.margin_x + x * body,
+                baseline: c.margin_top + baseline * body,
                 size: c.subtitle_size * body,
                 weight: 400,
                 face: Face::System,
                 ink: Ink::Soft,
             });
         }
-        y += c.header_gap * body;
-        let content_end = height - c.margin_bottom - body * 1.5;
-        let blocks: Vec<cpl_layout::Block> = self
-            .measured
-            .sections
-            .iter()
-            .map(|section| {
-                let visible = visible_lines(section, fold_tabs, collapse_repeats);
-                let line_width = section
-                    .lines
-                    .iter()
-                    .take(visible)
-                    .map(|line| line.width(inline_chords))
-                    .fold(0.0, f32::max);
-                let label_height = if section.label.is_empty() || side_labels {
-                    0.0
-                } else {
-                    c.label_height + c.label_gap
-                };
-                let line_height = if inline_chords && section.kind != SectionKind::Tab {
-                    c.inline_line_height
-                } else {
-                    c.line_height
-                };
-                cpl_layout::Block {
-                    width: if side_labels {
-                        line_width
-                    } else {
-                        section.label_width.max(line_width)
-                    },
-                    height: label_height + line_height * visible as f32,
-                }
-            })
-            .collect();
-        let base_options = cpl_layout::FitOptions {
-            available_width: ((width - 2.0 * c.margin_x) / body).max(0.0),
-            available_height: ((content_end - y) / body).max(0.0),
-            header_height: 0.0,
-            header_gap: 0.0,
-            section_gap,
-            column_gutter: c.column_gutter,
-            max_columns: 4,
-            max_body_size: 1.0,
-            floor: 1.0,
-        };
-        let fit = cpl_layout::fit(&blocks, base_options);
-        frame.fits = fit.meets_floor;
-        if side_labels {
-            frame.fits &= self.labels_fit_side();
-        }
-        if collapsed_header && !hide_title && header.artist.is_some() {
-            frame.fits &= header.title_width * body + header.artist_width * body + body * 0.8
-                <= width - 2.0 * c.margin_x;
-        }
-        frame.columns = if frame.fits { fit.columns.len() } else { 0 };
+        let y = c.margin_top + solution.header.height * body;
+        let content_end = height - c.margin_bottom - c.status_height * body;
         if frame.fits {
             let metrics = c.metrics();
             let mut column_x = c.margin_x;
             let mut line_group = 1;
-            for range in &fit.columns {
+            for range in &solution.fit.columns {
                 let mut section_y = y;
                 for (offset, index) in range.clone().enumerate() {
                     let section = &self.measured.sections[index];
                     if offset > 0 {
-                        section_y += section_gap * body;
+                        section_y += o.section_gap(&m) * body;
                     }
+                    let inline = o.inline(section);
                     if !section.label.is_empty() {
-                        if !side_labels {
+                        if !o.side_labels {
                             section_y += c.label_height * body;
                         }
                         frame.text.push(Text {
                             group: line_group,
                             content: section.label.clone(),
-                            x: if side_labels {
-                                column_x - section.label_width * body - body * 0.25
+                            x: if o.side_labels {
+                                column_x - (section.label_width + c.side_label_inset) * body
                             } else {
                                 column_x
                             },
-                            baseline: if side_labels {
+                            baseline: if o.side_labels {
                                 section_y
-                                    + (if inline_chords {
+                                    + (if inline {
                                         c.inline_lyric_baseline
                                     } else {
                                         c.lyric_baseline
@@ -588,13 +426,11 @@ impl App {
                             face: Face::Monospace,
                             ink: Ink::Soft,
                         });
-                        if !side_labels {
+                        if !o.side_labels {
                             section_y += c.label_gap * body;
                         }
                     }
-                    let visible = visible_lines(section, fold_tabs, collapse_repeats);
-                    // Tablature keeps its own monospaced rows in every candidate.
-                    let inline = inline_chords && section.kind != SectionKind::Tab;
+                    let visible = o.visible_lines(section);
                     for line in section.lines.iter().take(visible) {
                         for run in line.runs(inline) {
                             let style = metrics.style(run.role);
@@ -615,25 +451,21 @@ impl App {
                                 ink,
                             });
                         }
-                        section_y += if inline {
-                            c.inline_line_height * body
-                        } else {
-                            c.line_height * body
-                        };
+                        section_y += o.line_height(section, &m) * body;
                         line_group += 1;
                     }
                     if visible == 0 {
+                        section_y += o.label_row(section, &m) * body;
                         line_group += 1;
                     }
                 }
-                let column_width = blocks[range.clone()]
+                let column_width = solution.blocks[range.clone()]
                     .iter()
                     .map(|b| b.width)
                     .fold(0.0, f32::max);
                 column_x += (column_width + c.column_gutter) * body;
             }
-        }
-        if !frame.fits {
+        } else {
             frame.text.push(Text {
                 group: usize::MAX,
                 content: "Song needs paging at this readable size".into(),
@@ -678,16 +510,6 @@ impl App {
     }
 }
 
-fn visible_lines(section: &MeasuredSection, fold_tabs: bool, collapse_repeats: bool) -> usize {
-    if fold_tabs && section.kind == SectionKind::Tab {
-        0
-    } else if collapse_repeats && section.repeats_earlier {
-        section.lines.len().min(1)
-    } else {
-        section.lines.len()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -699,25 +521,53 @@ mod tests {
         }
     }
 
+    fn app(source: &str) -> App {
+        App::new(
+            cpl_song::parse(source).song,
+            Config::default(),
+            Polarity::Light,
+            &Fixed,
+        )
+    }
+
+    /// The tallest window at this width whose page needs exactly `step`.
+    /// Searching heights keeps these tests independent of the vertical em table.
+    fn at_step(app: &App, width: f32, step: u8) -> Frame {
+        (40..1600)
+            .rev()
+            .map(|height| app.frame(width, height as f32))
+            .find(|frame| frame.fits && frame.ladder_step == step)
+            .unwrap_or_else(|| panic!("no height at width {width} needs step {step}"))
+    }
+
+    fn find<'a>(frame: &'a Frame, content: &str) -> &'a Text {
+        frame
+            .text
+            .iter()
+            .find(|item| item.content == content)
+            .unwrap_or_else(|| panic!("{content:?} not drawn"))
+    }
+
+    fn count(frame: &Frame, content: &str) -> usize {
+        frame.text.iter().filter(|t| t.content == content).count()
+    }
+
     #[test]
     fn song_chords_precede_their_lyrics() {
-        let song = cpl_song::parse(
-            "{title: Test}\n{start_of_verse: Verse 1}\n[C]Hello [G]world\n{end_of_verse}",
-        )
-        .song;
-        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let app =
+            app("{title: Test}\n{start_of_verse: Verse 1}\n[C]Hello [G]world\n{end_of_verse}");
         let frame = app.frame(900.0, 600.0);
         assert!(frame.fits);
-        let chord = frame.text.iter().find(|t| t.content == "C").unwrap();
-        let lyric = frame.text.iter().find(|t| t.content == "Hello ").unwrap();
+        assert_eq!(frame.ladder_step, 0);
+        let chord = find(&frame, "C");
+        let lyric = find(&frame, "Hello ");
         assert!(chord.baseline < lyric.baseline);
         assert_eq!(chord.x, lyric.x);
     }
 
     #[test]
     fn never_draws_overflowing_lyrics_under_the_floor() {
-        let song = cpl_song::parse("{title: Test}\n[C]Hello").song;
-        let app = App::new(song, Config::default(), Polarity::Dark, &Fixed);
+        let app = app("{title: Test}\n[C]Hello");
         let frame = app.frame(100.0, 90.0);
         assert!(!frame.fits);
         assert!(!frame.text.iter().any(|t| t.content == "Hello"));
@@ -725,164 +575,101 @@ mod tests {
 
     #[test]
     fn sections_flow_into_columns_without_shrinking_lyrics() {
-        let song = cpl_song::parse(
+        let app = app(
             "{title: Test}\n{start_of_verse: One}\n[C]Alpha\n{end_of_verse}\n{start_of_chorus: Two}\n[G]Bravo\n{end_of_chorus}\n{start_of_verse: Three}\n[Am]Charlie\n{end_of_verse}",
-        ).song;
-        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
-        let frame = app.frame(900.0, 230.0);
-        assert!(frame.fits);
-        let lyrics: Vec<_> = frame
-            .text
+        );
+        let frame = (40..1600)
+            .rev()
+            .map(|h| app.frame(900.0, h as f32))
+            .find(|f| f.fits && f.columns == 3 && f.ladder_step == 0)
+            .expect("a height where three columns fit the full page");
+        let lyrics: Vec<_> = ["Alpha", "Bravo", "Charlie"]
             .iter()
-            .filter(|t| ["Alpha", "Bravo", "Charlie"].contains(&t.content.as_str()))
+            .map(|l| find(&frame, l))
             .collect();
-        assert_eq!(lyrics.len(), 3);
         assert!(lyrics.windows(2).all(|pair| pair[0].x < pair[1].x));
         assert!(lyrics.iter().all(|item| item.size == 17.0));
     }
 
     #[test]
-    fn removes_section_gap_before_falling_back_to_paging() {
-        let song = cpl_song::parse(
+    fn removes_section_gap_before_anything_else() {
+        let app = app(
             "{title: Test}\n{start_of_verse: Verse 1}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: Verse 2}\n[G]Bravo\n{end_of_verse}",
-        ).song;
-        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
-        let frame = app.frame(190.0, 285.0);
-        assert!(frame.fits);
-        assert_eq!(frame.columns, 1);
-        assert_eq!(frame.ladder_step, 1);
-        assert!(
-            frame
-                .text
-                .iter()
-                .any(|t| t.content == "Bravo" && t.size == 17.0)
         );
+        let frame = at_step(&app, 190.0, 1);
+        assert_eq!(frame.columns, 1);
+        assert_eq!(find(&frame, "Bravo").size, 17.0);
+        assert_eq!(find(&frame, "Test").size, 17.0 * 1.7);
     }
 
     #[test]
     fn moves_short_labels_to_side_after_spacing_compacts() {
-        let song = cpl_song::parse(
+        let app = app(
             "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: B}\n[G]Bravo\n{end_of_verse}",
-        ).song;
-        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
-        let frame = app.frame(190.0, 245.0);
-        assert!(frame.fits);
-        assert_eq!(frame.ladder_step, 2);
-        let label = frame.text.iter().find(|item| item.content == "A").unwrap();
-        let lyric = frame
-            .text
-            .iter()
-            .find(|item| item.content == "Alpha")
-            .unwrap();
+        );
+        let frame = at_step(&app, 190.0, 2);
+        let label = find(&frame, "A");
+        let lyric = find(&frame, "Alpha");
         assert!(label.x < lyric.x);
+        assert_eq!(label.baseline, lyric.baseline);
     }
 
     #[test]
     fn collapses_header_after_side_labels() {
-        let song = cpl_song::parse(
+        let app = app(
             "{title: Test}\n{artist: Ada}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: B}\n[G]Bravo\n{end_of_verse}",
-        ).song;
-        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
-        let frame = app.frame(190.0, 210.0);
-        assert!(frame.fits);
-        assert_eq!(frame.ladder_step, 3);
-        let title = frame
-            .text
-            .iter()
-            .find(|item| item.content == "Test")
-            .unwrap();
-        let artist = frame
-            .text
-            .iter()
-            .find(|item| item.content == "Ada")
-            .unwrap();
-        assert_eq!(title.baseline, artist.baseline);
+        );
+        let frame = at_step(&app, 190.0, 3);
+        assert_eq!(find(&frame, "Test").baseline, find(&frame, "Ada").baseline);
     }
 
     #[test]
     fn long_labels_skip_side_margin_but_allow_header_collapse() {
-        let song = cpl_song::parse(
+        let app = app(
             "{title: Test}\n{artist: Ada}\n{start_of_verse: Verse One}\n[C]Alpha\n{end_of_verse}",
-        )
-        .song;
-        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
-        let frame = app.frame(190.0, 205.0);
-        assert!(frame.fits);
-        assert_eq!(frame.ladder_step, 3);
-        let label = frame
-            .text
-            .iter()
-            .find(|item| item.content == "VERSE ONE")
-            .unwrap();
-        let lyric = frame
-            .text
-            .iter()
-            .find(|item| item.content == "Alpha")
-            .unwrap();
-        assert_eq!(label.x, lyric.x);
+        );
+        assert!((40..1600).all(|h| app.frame(190.0, h as f32).ladder_step != 2));
+        let frame = at_step(&app, 190.0, 3);
+        assert_eq!(find(&frame, "VERSE ONE").x, find(&frame, "Alpha").x);
+    }
+
+    #[test]
+    fn a_long_header_still_lets_tablature_fold_before_the_title_drops() {
+        let app = app(
+            "{title: A Rather Long Title}\n{artist: Somebody Famous}\n{start_of_tab: Intro}\ne|--3---|\nB|--1---|\nG|--0---|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
+        );
+        assert!((40..1600).all(|h| app.frame(320.0, h as f32).ladder_step != 3));
+        let frame = at_step(&app, 320.0, 5);
+        assert_eq!(count(&frame, "A Rather Long Title"), 1);
+        assert_eq!(count(&frame, "e|--3---|"), 0);
     }
 
     #[test]
     fn title_drops_only_after_earlier_candidates_fail() {
-        let song =
-            cpl_song::parse("{title: Test}\n{start_of_verse: Verse One}\n[C]Alpha\n{end_of_verse}")
-                .song;
-        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
-        let frame = app.frame(190.0, 180.0);
-        assert!(frame.fits);
-        assert_eq!(frame.ladder_step, 7);
-        assert!(!frame.text.iter().any(|item| item.content == "Test"));
-        assert!(
-            frame
-                .text
-                .iter()
-                .any(|item| item.content == "Alpha" && item.size == 17.0)
-        );
+        let app = app("{title: Test}\n{start_of_verse: Verse One}\n[C]Alpha\n{end_of_verse}");
+        let frame = at_step(&app, 190.0, 7);
+        assert_eq!(count(&frame, "Test"), 0);
+        assert_eq!(find(&frame, "Alpha").size, 17.0);
     }
 
     #[test]
     fn repeat_chorus_keeps_its_first_line_at_step_eight() {
-        let song = cpl_song::parse(
+        let app = app(
             "{title: Test}\n{start_of_chorus: A}\n[C]Echo\n[G]Again\n{end_of_chorus}\n{start_of_chorus: A}\n[C]Echo\n[G]Again\n{end_of_chorus}",
-        ).song;
-        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
-        let frame = app.frame(190.0, 235.0);
-        assert!(frame.fits);
-        assert_eq!(frame.ladder_step, 8);
-        assert_eq!(
-            frame
-                .text
-                .iter()
-                .filter(|item| item.content == "Echo")
-                .count(),
-            2
         );
-        assert_eq!(
-            frame
-                .text
-                .iter()
-                .filter(|item| item.content == "Again")
-                .count(),
-            1
-        );
+        let frame = at_step(&app, 190.0, 8);
+        assert_eq!(count(&frame, "Echo"), 2);
+        assert_eq!(count(&frame, "Again"), 1);
     }
 
     #[test]
     fn inline_chords_are_last_fit_that_keeps_lyrics_readable() {
-        let song = cpl_song::parse(
+        let app = app(
             "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n[G]Bravo\n[Am]Charlie\n{end_of_verse}",
-        )
-        .song;
-        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
-        let frame = app.frame(300.0, 200.0);
-        assert!(frame.fits);
-        assert_eq!(frame.ladder_step, 9);
-        let chord = frame.text.iter().find(|item| item.content == "C").unwrap();
-        let lyric = frame
-            .text
-            .iter()
-            .find(|item| item.content == "Alpha")
-            .unwrap();
+        );
+        let frame = at_step(&app, 300.0, 9);
+        let chord = find(&frame, "C");
+        let lyric = find(&frame, "Alpha");
         assert!(chord.baseline < lyric.baseline);
         assert!(chord.x < lyric.x);
         assert_eq!(lyric.size, 17.0);
@@ -890,25 +677,37 @@ mod tests {
 
     #[test]
     fn tab_is_monospaced_and_folds_at_step_five() {
-        let song = cpl_song::parse(
+        let app = app(
             "{title: Test}\n{start_of_tab: Intro}\ne|--[3]---|\nB|---1----|\nG|---0----|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
-        )
-        .song;
-        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
-        let full = app.frame(320.0, 600.0);
-        let tab = full
-            .text
-            .iter()
-            .find(|item| item.content == "e|--[3]---|")
-            .unwrap();
-        assert_eq!(tab.face, Face::Monospace);
-        let folded = (170..450)
-            .map(|height| app.frame(320.0, height as f32))
-            .find(|frame| frame.fits && frame.ladder_step == 5)
-            .expect("a viewport where folding tab makes the page fit");
-        assert!(folded.text.iter().any(|item| item.content == "INTRO"));
-        assert!(!folded.text.iter().any(|item| item.content == "e|--[3]---|"));
-        assert!(folded.text.iter().any(|item| item.content == "Alpha"));
+        );
+        assert_eq!(
+            find(&app.frame(320.0, 600.0), "e|--[3]---|").face,
+            Face::Monospace
+        );
+        let folded = at_step(&app, 320.0, 5);
+        assert_eq!(count(&folded, "INTRO"), 1);
+        assert_eq!(count(&folded, "e|--[3]---|"), 0);
+        assert_eq!(count(&folded, "Alpha"), 1);
+    }
+
+    #[test]
+    fn a_folded_tab_side_label_keeps_its_own_row() {
+        let app = app(
+            "{title: Test}\n{start_of_tab: T}\ne|--3--|\nB|--1--|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
+        );
+        let frame = at_step(&app, 190.0, 5);
+        let tab = find(&frame, "T");
+        let next = find(&frame, "Alpha");
+        assert!(tab.x < next.x, "labels are in the side margin");
+        let row = app.config().line_height * app.config().body_size;
+        assert!(next.baseline - tab.baseline >= row - 0.01);
+    }
+
+    #[test]
+    fn a_song_with_no_sections_fits() {
+        let frame = app("{title: Only a title}").frame(600.0, 400.0);
+        assert!(frame.fits);
+        assert_eq!(frame.ladder_step, 0);
     }
 
     #[test]
@@ -918,27 +717,22 @@ mod tests {
             source.push_str(&format!("[C]Line {index}\n"));
         }
         source.push_str("{end_of_verse}");
-        let app = App::new(
-            cpl_song::parse(&source).song,
-            Config::default(),
-            Polarity::Light,
-            &Fixed,
-        );
+        let app = app(&source);
         let (first, max_offset) = app.frame_scrolled(450.0, 260.0, 0.0);
         assert_eq!(first.ladder_step, 10);
         assert!(max_offset > 0.0);
-        assert!(first.text.iter().any(|item| item.content == "Line 0"));
-        assert!(!first.text.iter().any(|item| item.content == "Line 17"));
+        assert_eq!(count(&first, "Line 0"), 1);
+        assert_eq!(count(&first, "Line 17"), 0);
         for chord in first.text.iter().filter(|item| item.content == "C") {
             assert!(
                 first
                     .text
                     .iter()
-                    .any(|item| { item.group == chord.group && item.content.starts_with("Line ") })
+                    .any(|item| item.group == chord.group && item.content.starts_with("Line "))
             );
         }
         let (last, _) = app.frame_scrolled(450.0, 260.0, max_offset);
-        assert!(last.text.iter().any(|item| item.content == "Line 17"));
+        assert_eq!(count(&last, "Line 17"), 1);
         assert!(
             last.text
                 .iter()

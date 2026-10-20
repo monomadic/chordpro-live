@@ -17,18 +17,22 @@ from `chordpro-tui/internal/pdf/layout.go`. For each column count it computes
 the largest body size allowed by the available width and height, then reports
 the best split and whether that split meets the configured floor.
 
-`cpl-app` currently calls the fitter with a maximum and floor equal to the
-17 pt stand body size. It builds blocks from the measured runs and draws the
-chosen columns at that fixed size, placing each run at its measured offset. If the full
-section gap fails, it tries zero gap as ladder step 1. The app then tries
-short labels in the side margin (step 2) and a single-line header (step 3).
-The side-label choice is skipped when a label is too wide, so the collapsed
-header can still be tried. Step 5 folds tablature to its label; steps 4 and 6
-have no rendered content yet. Step 7 removes the title after the earlier
-applicable choices fail.
-Step 8 collapses a repeated chorus to its first line, and step 9 uses inline
-chords with a shorter line block. The lyric face stays at the body floor in
-every candidate. A song that still cannot fit vertically is laid out as one
-long column, with whole chord/lyric line groups selected for the scroll
-viewport. Width overflow still needs a solution. Point-size presets and
-paged mode remain unimplemented.
+The reduction ladder lives here too. `Options` holds one choice per step, and
+its methods give the em geometry each choice implies: the header layout,
+each section's block, visible lines and line height. `layout` lays out one
+candidate; `solve` tries the full page, then each `LADDER` step in order,
+cumulatively, and returns the first that fits or the last one tried. Each
+step carries an `applies` test, so a step that cannot change this song's
+page (no tablature, no repeated chorus, a header too wide for one line,
+labels too wide for the margin, a single section) is skipped rather than
+tried, and never leaves a failing option on for the steps after it:
+
+1. section gaps close; 2. labels move to the side margin; 3. title and
+byline share one line; 5. tablature folds to its label; 7. the title drops;
+8. a repeated chorus keeps only its first line; 9. chords go inline.
+
+Steps 4 and 6 (diagrams, metadata pills) have nothing to remove yet. A side
+label beside a section with every line hidden keeps one row. A song with no
+sections fits. `fit` is called with a maximum and floor equal to the body
+size, so every candidate is drawn at the stand size; point-size presets,
+width overflow inside a line and paged mode are still to come.
