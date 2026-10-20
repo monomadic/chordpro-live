@@ -17,5 +17,7 @@ have no rendered content yet. Step 7 removes the title after the earlier
 applicable choices fail.
 Step 8 collapses a repeated chorus to its first line, and step 9 uses inline
 chords with a shorter line block. The lyric face stays at the body floor in
-every candidate. A song that still cannot fit shows a paging-needed message.
-Point-size presets, scroll and page fallback remain unimplemented.
+every candidate. A song that still cannot fit vertically is laid out as one
+long column, with whole chord/lyric line groups selected for the scroll
+viewport. Width overflow still needs a solution. Point-size presets and
+paged mode remain unimplemented.

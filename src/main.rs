@@ -12,6 +12,7 @@ use winit::{
 const SAMPLE: &str = "{title: The Long Road Home}\n{artist: Sample song}\n{start_of_verse: Verse 1}\n[C]Morning light is [G]falling on the [Am]road\n[F]Every step is [C]bringing us back [G]home\n{end_of_verse}\n{start_of_chorus: Chorus}\n[F]Carry on, [C]carry on\n[G]We can hear the [Am]morning song\n{end_of_chorus}\n{start_of_verse: Verse 2}\n[C]When the night is [G]quiet we will [Am]know\n[F]All the roads we [C]travel lead us [G]home\n{end_of_verse}";
 const INLINE_SAMPLE: &str =
     "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n[G]Bravo\n[Am]Charlie\n{end_of_verse}";
+const SCROLL_SAMPLE: &str = "{title: The Long Road Home}\n{artist: Sample song}\n{start_of_verse: Verse 1}\n[C]Morning light is [G]falling on the [Am]road\n[F]Every step is [C]bringing us back [G]home\n{end_of_verse}\n{start_of_chorus: Chorus}\n[F]Carry on, [C]carry on\n[G]We can hear the [Am]morning song\n{end_of_chorus}\n{start_of_verse: Verse 2}\n[C]When the night is [G]quiet we will [Am]know\n[F]All the roads we [C]travel lead us [G]home\n{end_of_verse}\n{start_of_chorus: Chorus}\n[F]Carry on, [C]carry on\n[G]We can hear the [Am]morning song\n{end_of_chorus}";
 
 fn block_on<F: Future>(future: F) -> F::Output {
     let mut context = std::task::Context::from_waker(Waker::noop());
@@ -27,6 +28,8 @@ fn block_on<F: Future>(future: F) -> F::Output {
 struct Viewer {
     app: App,
     initial_size: (f64, f64),
+    scroll_offset: f32,
+    scroll_max: f32,
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
 }
@@ -37,11 +40,25 @@ impl Viewer {
         };
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
-        let frame = self.app.frame(
+        let (mut frame, max_offset) = self.app.frame_scrolled(
             size.width as f32 / scale,
             size.height as f32 / scale,
             &CoreText,
+            self.scroll_offset,
         );
+        self.scroll_max = max_offset;
+        if self.scroll_offset > max_offset {
+            self.scroll_offset = max_offset;
+            frame = self
+                .app
+                .frame_scrolled(
+                    size.width as f32 / scale,
+                    size.height as f32 / scale,
+                    &CoreText,
+                    self.scroll_offset,
+                )
+                .0;
+        }
         gpu.upload(&frame, scale);
         window.request_redraw();
     }
@@ -105,6 +122,38 @@ impl ApplicationHandler for Viewer {
                     };
                     self.update_page();
                 }
+                Key::Named(NamedKey::ArrowDown) => {
+                    self.scroll_offset = (self.scroll_offset
+                        + self.app.config.line_height * self.app.config.body_size)
+                        .min(self.scroll_max);
+                    self.update_page();
+                }
+                Key::Named(NamedKey::ArrowUp) => {
+                    self.scroll_offset = (self.scroll_offset
+                        - self.app.config.line_height * self.app.config.body_size)
+                        .max(0.0);
+                    self.update_page();
+                }
+                Key::Named(NamedKey::PageDown) => {
+                    let height = self.window.as_ref().unwrap().inner_size().height as f32
+                        / self.window.as_ref().unwrap().scale_factor() as f32;
+                    self.scroll_offset = (self.scroll_offset + height * 0.8).min(self.scroll_max);
+                    self.update_page();
+                }
+                Key::Named(NamedKey::PageUp) => {
+                    let height = self.window.as_ref().unwrap().inner_size().height as f32
+                        / self.window.as_ref().unwrap().scale_factor() as f32;
+                    self.scroll_offset = (self.scroll_offset - height * 0.8).max(0.0);
+                    self.update_page();
+                }
+                Key::Named(NamedKey::Home) => {
+                    self.scroll_offset = 0.0;
+                    self.update_page();
+                }
+                Key::Named(NamedKey::End) => {
+                    self.scroll_offset = self.scroll_max;
+                    self.update_page();
+                }
                 _ => {}
             },
             WindowEvent::RedrawRequested => {
@@ -129,12 +178,15 @@ fn main() -> ExitCode {
         path => (false, path.map(str::to_owned)),
     };
     if args.next().is_some() || (!view && path.is_none()) {
-        eprintln!("usage: cpl [--view [page|page-dark|page-inline]] <song.cho>");
+        eprintln!("usage: cpl [--view [page|page-dark|page-inline|page-scroll]] <song.cho>");
         return ExitCode::FAILURE;
     }
     let dark = path.as_deref() == Some("page-dark");
     let inline = path.as_deref() == Some("page-inline");
-    let source = if view && inline {
+    let scroll = path.as_deref() == Some("page-scroll");
+    let source = if view && scroll {
+        SCROLL_SAMPLE.to_owned()
+    } else if view && inline {
         INLINE_SAMPLE.to_owned()
     } else if view && (path.is_none() || matches!(path.as_deref(), Some("page" | "page-dark"))) {
         SAMPLE.to_owned()
@@ -179,9 +231,13 @@ fn main() -> ExitCode {
         },
         initial_size: if inline {
             (300.0, 200.0)
+        } else if scroll {
+            (560.0, 340.0)
         } else {
             (980.0, 720.0)
         },
+        scroll_offset: 0.0,
+        scroll_max: 0.0,
         window: None,
         gpu: None,
     };

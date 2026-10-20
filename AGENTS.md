@@ -12,7 +12,7 @@ An initial macOS viewer is built. `cpl-song` parses a small ChordPro slice;
 `cpl-layout` fits whole sections into columns at the stand-size floor;
 `cpl-app` composes the page; `cpl-render` composites CoreText
 rasters into a wgpu texture; `src/main.rs` hosts the winit window. The
-diagram and metadata-pill reduction steps, scrolling/paging, library, full
+diagram and metadata-pill reduction steps, paged mode, library, full
 ChordPro 6 conformance, text atlas, and iOS host are still planned. Do not describe
 these as implemented.
 
@@ -30,9 +30,11 @@ and keep these notes as specifications rather than history.
 Build with `cargo build --workspace`. Check with `cargo test --workspace`
 and `cargo clippy --workspace --all-targets -- -D warnings`. Run the
 sample macOS page with `cargo run -- --view page` (or `page-dark`),
-and inspect inline chords with `cargo run -- --view page-inline`,
-or open a song with `cargo run -- --view song.cho`. Press `i` for polarity
-and Escape to close. `cargo run -- song.cho` prints the parsed lyrics.
+inspect inline chords with `cargo run -- --view page-inline`, and inspect
+overflow with `cargo run -- --view page-scroll`; or open a song with
+`cargo run -- --view song.cho`. Press `i` for polarity and Escape to close.
+Arrow keys, Page Up/Down, Home, and End navigate an overflowing song.
+`cargo run -- song.cho` prints the parsed lyrics.
 
 ## Design source
 
@@ -65,9 +67,9 @@ the commit message.
   directives are accepted and ignored by design; everything else must be
   honoured. Generate the conformance note's status table; never hand-edit it.
 - **The page is always readable.** Body text never drops below the
-  readability floor. The current page shows a paging-needed message when
-  it overflows after trying the currently applicable reduction steps
-  (1–3, 5, 7–9). Complete diagram and pill steps 4 and 6 before switching mode.
+  readability floor. After steps 1–3, 5, and 7–9 fail, the window scrolls
+  the full song at that size. Lines too wide for the window still need a
+  layout solution. Diagram and pill steps 4 and 6 are not built yet.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. The current renderer rasterises on
   page updates inside the window callback; move that work off the frame

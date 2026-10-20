@@ -2,6 +2,7 @@
 
 *Status: implementation started, 2026-10-20. A partial parser and a
 multi-column macOS viewer exist; reduction steps 1–3, 5 and 7–9 are built.
+Keyboard scroll fallback is built for songs whose lines fit the window width.
 Diagram and pill steps 4 and 6, the library, conformance work, and iOS host
 remain proposed. Where a decision is settled it says so; where
 it is an unknown it says what will settle it.*

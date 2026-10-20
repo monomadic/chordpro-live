@@ -28,6 +28,8 @@ pub enum Ink {
 #[derive(Debug, Clone)]
 pub struct Text {
     pub content: String,
+    /// Items sharing a lyric line remain visible or hidden together in scroll mode.
+    pub group: usize,
     pub x: f32,
     pub baseline: f32,
     pub size: f32,
@@ -177,6 +179,131 @@ struct Candidate {
 }
 
 impl App {
+    /// Keeps the full song at the configured body size when fit mode cannot hold it.
+    /// The caller owns the offset so navigation never changes the song model.
+    pub fn frame_scrolled(
+        &self,
+        width: f32,
+        height: f32,
+        measure: &impl Measure,
+        offset: f32,
+    ) -> (Frame, f32) {
+        let mut fit = self.frame(width, height, measure);
+        if fit.fits {
+            return (fit, 0.0);
+        }
+        let c = &self.config;
+        let body = c.body_size;
+        let line_count: usize = self
+            .song
+            .sections
+            .iter()
+            .map(|section| section.lines.len())
+            .sum();
+        let long_height = c.margin_top
+            + (line_count as f32 * c.line_height
+                + self.song.sections.len() as f32 * (c.label_height + c.label_gap + c.section_gap)
+                + 20.0)
+                * body;
+        let full = Candidate {
+            section_gap: c.section_gap,
+            side_labels: false,
+            collapsed_header: false,
+            fold_tabs: false,
+            hide_title: false,
+            collapse_repeats: false,
+            inline_chords: false,
+            ladder_step: 0,
+        };
+        let mut long = self.frame_candidate(width, long_height, measure, full);
+        if !long.fits {
+            long = self.frame_candidate(
+                width,
+                long_height,
+                measure,
+                Candidate {
+                    inline_chords: true,
+                    ladder_step: 9,
+                    ..full
+                },
+            );
+        }
+        if !long.fits {
+            for item in &mut fit.text {
+                if item.content == "Song needs paging at this readable size" {
+                    item.content = "Widen window to show this song".into();
+                } else if item.content.starts_with("PAGE NEEDED") {
+                    item.content = format!("WIDTH NEEDED  ·  stand {} pt", body);
+                }
+            }
+            return (fit, 0.0);
+        }
+        long.text.pop(); // the long page's status strip belongs below its viewport
+        let content_end = height - c.margin_bottom - body * 1.5;
+        let last_baseline = long
+            .text
+            .iter()
+            .map(|item| item.baseline)
+            .fold(c.margin_top, f32::max);
+        let max_offset = (last_baseline + body * 0.5 - content_end).max(0.0);
+        let offset = offset.clamp(0.0, max_offset);
+        let mut frame = Frame {
+            width,
+            height,
+            polarity: self.polarity,
+            text: Vec::new(),
+            fits: false,
+            columns: 1,
+            ladder_step: 10,
+        };
+        let mut group_bounds = std::collections::BTreeMap::<usize, (f32, f32)>::new();
+        for item in &long.text {
+            let bounds = group_bounds
+                .entry(item.group)
+                .or_insert((f32::INFINITY, f32::NEG_INFINITY));
+            bounds.0 = bounds.0.min(item.baseline - item.size);
+            bounds.1 = bounds.1.max(item.baseline + item.size * 0.25);
+        }
+        for mut item in long.text {
+            let (top, bottom) = group_bounds[&item.group];
+            item.baseline -= offset;
+            if top - offset >= c.margin_top && bottom - offset <= content_end {
+                frame.text.push(item);
+            }
+        }
+        frame.text.push(Text {
+            group: usize::MAX,
+            content: if width < 500.0 {
+                format!(
+                    "SCROLL  ·  {} pt{}",
+                    body,
+                    if offset < max_offset {
+                        "  ·  MORE ↓"
+                    } else {
+                        ""
+                    }
+                )
+            } else {
+                format!(
+                    "SCROLL  ·  stand {} pt  ·  ↑ ↓ / Page Up Down{}",
+                    body,
+                    if offset < max_offset {
+                        "  ·  MORE ↓"
+                    } else {
+                        ""
+                    }
+                )
+            },
+            x: c.margin_x,
+            baseline: height - c.margin_bottom * 0.5,
+            size: body * 0.7,
+            weight: 400,
+            face: Face::Monospace,
+            ink: Ink::Faint,
+        });
+        (frame, max_offset)
+    }
+
     pub fn frame(&self, width: f32, height: f32, measure: &impl Measure) -> Frame {
         let full_options = Candidate {
             section_gap: self.config.section_gap,
@@ -329,6 +456,7 @@ impl App {
         if !hide_title {
             y += title_size;
             frame.text.push(Text {
+                group: 0,
                 content: title.into(),
                 x: c.margin_x,
                 baseline: y,
@@ -350,6 +478,7 @@ impl App {
                 c.margin_x
             };
             frame.text.push(Text {
+                group: 0,
                 content: artist.into(),
                 x: artist_x,
                 baseline: y,
@@ -404,7 +533,9 @@ impl App {
                         0.0
                     } else {
                         c.label_height + c.label_gap
-                    }) + (if fold_tabs && section.kind == SectionKind::Tab && side_labels {
+                    }) + (if fold_tabs && section.kind == SectionKind::Tab {
+                        if side_labels { c.line_height } else { 0.0 }
+                    } else if section.kind == SectionKind::Tab {
                         c.line_height
                     } else if inline_chords {
                         c.inline_line_height
@@ -441,6 +572,7 @@ impl App {
         frame.columns = if frame.fits { fit.columns.len() } else { 0 };
         if frame.fits {
             let mut column_x = c.margin_x;
+            let mut line_group = 1;
             for range in &fit.columns {
                 let mut section_y = y;
                 for (offset, index) in range.clone().enumerate() {
@@ -459,6 +591,7 @@ impl App {
                             Face::Monospace,
                         );
                         frame.text.push(Text {
+                            group: line_group,
                             content: section.label.to_uppercase(),
                             x: if side_labels {
                                 column_x - label_width - body * 0.25
@@ -498,6 +631,7 @@ impl App {
                     for line in section.lines.iter().take(visible_lines) {
                         if section.kind == SectionKind::Tab {
                             frame.text.push(Text {
+                                group: line_group,
                                 content: line.lyrics(),
                                 x: column_x,
                                 baseline: section_y + c.lyric_baseline * body,
@@ -507,6 +641,7 @@ impl App {
                                 ink: Ink::Strong,
                             });
                             section_y += c.line_height * body;
+                            line_group += 1;
                             continue;
                         }
                         if inline_chords {
@@ -514,6 +649,7 @@ impl App {
                             for segment in &line.segments {
                                 if let Some(chord) = &segment.chord {
                                     frame.text.push(Text {
+                                        group: line_group,
                                         content: chord.clone(),
                                         x,
                                         baseline: section_y + c.inline_chord_baseline * body,
@@ -531,6 +667,7 @@ impl App {
                                 }
                                 if !segment.lyric.is_empty() {
                                     frame.text.push(Text {
+                                        group: line_group,
                                         content: segment.lyric.clone(),
                                         x,
                                         baseline: section_y + c.inline_lyric_baseline * body,
@@ -543,6 +680,7 @@ impl App {
                                 }
                             }
                             section_y += c.inline_line_height * body;
+                            line_group += 1;
                             continue;
                         }
                         let chord_y = section_y + c.chord_baseline * body;
@@ -553,6 +691,7 @@ impl App {
                             if let Some(chord) = &segment.chord {
                                 chord_x = chord_x.max(lyric_x);
                                 frame.text.push(Text {
+                                    group: line_group,
                                     content: chord.clone(),
                                     x: chord_x,
                                     baseline: chord_y,
@@ -567,6 +706,7 @@ impl App {
                             }
                             if !segment.lyric.is_empty() {
                                 frame.text.push(Text {
+                                    group: line_group,
                                     content: segment.lyric.clone(),
                                     x: lyric_x,
                                     baseline: lyric_y,
@@ -580,6 +720,10 @@ impl App {
                             lyric_x = lyric_x.max(chord_x - c.chord_gap * body);
                         }
                         section_y += c.line_height * body;
+                        line_group += 1;
+                    }
+                    if visible_lines == 0 {
+                        line_group += 1;
                     }
                 }
                 let column_width = blocks[range.clone()]
@@ -591,6 +735,7 @@ impl App {
         }
         if !frame.fits {
             frame.text.push(Text {
+                group: usize::MAX,
                 content: "Song needs paging at this readable size".into(),
                 x: c.margin_x,
                 baseline: (y + body).min(content_end),
@@ -601,6 +746,7 @@ impl App {
             });
         }
         frame.text.push(Text {
+            group: usize::MAX,
             content: if frame.fits && width < 500.0 {
                 format!("FIT  ·  {body} pt  ·  step {}", frame.ladder_step)
             } else if frame.fits {
@@ -938,6 +1084,41 @@ mod tests {
         assert!(folded.text.iter().any(|item| item.content == "INTRO"));
         assert!(!folded.text.iter().any(|item| item.content == "e|--[3]---|"));
         assert!(folded.text.iter().any(|item| item.content == "Alpha"));
+    }
+
+    #[test]
+    fn overflow_scrolls_to_the_last_lyric_at_the_readability_floor() {
+        let mut source = String::from("{title: Test}\n{start_of_verse: A}\n");
+        for index in 0..18 {
+            source.push_str(&format!("[C]Line {index}\n"));
+        }
+        source.push_str("{end_of_verse}");
+        let app = App {
+            song: cpl_song::parse(&source).song,
+            config: Config::default(),
+            polarity: Polarity::Light,
+        };
+        let (first, max_offset) = app.frame_scrolled(450.0, 260.0, &Fixed, 0.0);
+        assert_eq!(first.ladder_step, 10);
+        assert!(max_offset > 0.0);
+        assert!(first.text.iter().any(|item| item.content == "Line 0"));
+        assert!(!first.text.iter().any(|item| item.content == "Line 17"));
+        for chord in first.text.iter().filter(|item| item.content == "C") {
+            assert!(
+                first
+                    .text
+                    .iter()
+                    .any(|item| { item.group == chord.group && item.content.starts_with("Line ") })
+            );
+        }
+        let (last, _) = app.frame_scrolled(450.0, 260.0, &Fixed, max_offset);
+        assert!(last.text.iter().any(|item| item.content == "Line 17"));
+        assert!(
+            last.text
+                .iter()
+                .filter(|item| item.content.starts_with("Line "))
+                .all(|item| item.size == 17.0)
+        );
     }
 
     #[test]
