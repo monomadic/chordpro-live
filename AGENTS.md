@@ -12,8 +12,8 @@ An initial macOS viewer is built. `cpl-song` parses a small ChordPro slice;
 `cpl-layout` fits whole sections into columns at the stand-size floor;
 `cpl-app` composes the page; `cpl-render` composites CoreText
 rasters into a wgpu texture; `src/main.rs` hosts the winit window. The
-parser-dependent reduction steps, scrolling/paging, library, full ChordPro 6
-conformance, text atlas, and iOS host are still planned. Do not describe
+diagram and metadata-pill reduction steps, scrolling/paging, library, full
+ChordPro 6 conformance, text atlas, and iOS host are still planned. Do not describe
 these as implemented.
 
 [PROPOSAL.md](PROPOSAL.md) remains the source of truth for design decisions,
@@ -67,7 +67,7 @@ the commit message.
 - **The page is always readable.** Body text never drops below the
   readability floor. The current page shows a paging-needed message when
   it overflows after trying the currently applicable reduction steps
-  (1–3, 7–9). Complete parser-dependent steps 4–6 before switching mode.
+  (1–3, 5, 7–9). Complete diagram and pill steps 4 and 6 before switching mode.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. The current renderer rasterises on
   page updates inside the window callback; move that work off the frame

@@ -169,6 +169,7 @@ struct Candidate {
     section_gap: f32,
     side_labels: bool,
     collapsed_header: bool,
+    fold_tabs: bool,
     hide_title: bool,
     collapse_repeats: bool,
     inline_chords: bool,
@@ -181,6 +182,7 @@ impl App {
             section_gap: self.config.section_gap,
             side_labels: false,
             collapsed_header: false,
+            fold_tabs: false,
             hide_title: false,
             collapse_repeats: false,
             inline_chords: false,
@@ -220,10 +222,26 @@ impl App {
         if header.fits {
             return header;
         }
+        let tabs_options = Candidate {
+            fold_tabs: true,
+            ladder_step: 5,
+            ..header_options
+        };
+        if self
+            .song
+            .sections
+            .iter()
+            .any(|section| section.kind == SectionKind::Tab)
+        {
+            let tabs = self.frame_candidate(width, height, measure, tabs_options);
+            if tabs.fits {
+                return tabs;
+            }
+        }
         let no_title = Candidate {
             hide_title: true,
             ladder_step: 7,
-            ..header_options
+            ..tabs_options
         };
         let title_dropped = self.frame_candidate(width, height, measure, no_title);
         if title_dropped.fits {
@@ -288,6 +306,7 @@ impl App {
             section_gap,
             side_labels,
             collapsed_header,
+            fold_tabs,
             hide_title,
             collapse_repeats,
             inline_chords,
@@ -348,7 +367,9 @@ impl App {
             .iter()
             .enumerate()
             .map(|(index, section)| {
-                let visible_lines = if collapse_repeats && self.is_repeated_chorus(index) {
+                let visible_lines = if fold_tabs && section.kind == SectionKind::Tab {
+                    0
+                } else if collapse_repeats && self.is_repeated_chorus(index) {
                     section.lines.len().min(1)
                 } else {
                     section.lines.len()
@@ -363,7 +384,15 @@ impl App {
                     .lines
                     .iter()
                     .take(visible_lines)
-                    .map(|line| line_width(line, c, measure, inline_chords) / body)
+                    .map(|line| {
+                        line_width(
+                            line,
+                            c,
+                            measure,
+                            inline_chords,
+                            section.kind == SectionKind::Tab,
+                        ) / body
+                    })
                     .fold(0.0, f32::max);
                 cpl_layout::Block {
                     width: if side_labels {
@@ -375,7 +404,9 @@ impl App {
                         0.0
                     } else {
                         c.label_height + c.label_gap
-                    }) + (if inline_chords {
+                    }) + (if fold_tabs && section.kind == SectionKind::Tab && side_labels {
+                        c.line_height
+                    } else if inline_chords {
                         c.inline_line_height
                     } else {
                         c.line_height
@@ -457,12 +488,27 @@ impl App {
                             section_y += c.label_gap * body;
                         }
                     }
-                    let visible_lines = if collapse_repeats && self.is_repeated_chorus(index) {
+                    let visible_lines = if fold_tabs && section.kind == SectionKind::Tab {
+                        0
+                    } else if collapse_repeats && self.is_repeated_chorus(index) {
                         section.lines.len().min(1)
                     } else {
                         section.lines.len()
                     };
                     for line in section.lines.iter().take(visible_lines) {
+                        if section.kind == SectionKind::Tab {
+                            frame.text.push(Text {
+                                content: line.lyrics(),
+                                x: column_x,
+                                baseline: section_y + c.lyric_baseline * body,
+                                size: body,
+                                weight: 400,
+                                face: Face::Monospace,
+                                ink: Ink::Strong,
+                            });
+                            section_y += c.line_height * body;
+                            continue;
+                        }
                         if inline_chords {
                             let mut x = column_x;
                             for segment in &line.segments {
@@ -586,7 +632,16 @@ impl App {
     }
 }
 
-fn line_width(line: &cpl_song::Line, c: &Config, measure: &impl Measure, inline: bool) -> f32 {
+fn line_width(
+    line: &cpl_song::Line,
+    c: &Config,
+    measure: &impl Measure,
+    inline: bool,
+    tab: bool,
+) -> f32 {
+    if tab {
+        return measure.width(&line.lyrics(), c.body_size, 400, Face::Monospace);
+    }
     if inline {
         return line
             .segments
@@ -856,6 +911,33 @@ mod tests {
         assert!(chord.baseline < lyric.baseline);
         assert!(chord.x < lyric.x);
         assert_eq!(lyric.size, 17.0);
+    }
+
+    #[test]
+    fn tab_is_monospaced_and_folds_at_step_five() {
+        let song = cpl_song::parse(
+            "{title: Test}\n{start_of_tab: Intro}\ne|--[3]---|\nB|---1----|\nG|---0----|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
+        )
+        .song;
+        let app = App {
+            song,
+            config: Config::default(),
+            polarity: Polarity::Light,
+        };
+        let full = app.frame(320.0, 600.0, &Fixed);
+        let tab = full
+            .text
+            .iter()
+            .find(|item| item.content == "e|--[3]---|")
+            .unwrap();
+        assert_eq!(tab.face, Face::Monospace);
+        let folded = (170..450)
+            .map(|height| app.frame(320.0, height as f32, &Fixed))
+            .find(|frame| frame.fits && frame.ladder_step == 5)
+            .expect("a viewport where folding tab makes the page fit");
+        assert!(folded.text.iter().any(|item| item.content == "INTRO"));
+        assert!(!folded.text.iter().any(|item| item.content == "e|--[3]---|"));
+        assert!(folded.text.iter().any(|item| item.content == "Alpha"));
     }
 
     #[test]

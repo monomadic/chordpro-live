@@ -12,8 +12,9 @@ implementation and draws the chosen columns at that fixed size. If the full
 section gap fails, it tries zero gap as ladder step 1. The app then tries
 short labels in the side margin (step 2) and a single-line header (step 3).
 The side-label choice is skipped when a label is too wide, so the collapsed
-header can still be tried. Step 7 removes the title after the earlier
-applicable choices fail; steps 4–6 have no rendered content yet.
+header can still be tried. Step 5 folds tablature to its label; steps 4 and 6
+have no rendered content yet. Step 7 removes the title after the earlier
+applicable choices fail.
 Step 8 collapses a repeated chorus to its first line, and step 9 uses inline
 chords with a shorter line block. The lyric face stays at the body floor in
 every candidate. A song that still cannot fit shows a paging-needed message.

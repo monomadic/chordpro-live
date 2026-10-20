@@ -26,6 +26,7 @@ pub enum SectionKind {
     Verse,
     Chorus,
     Bridge,
+    Tab,
     Unlabelled,
 }
 
@@ -73,10 +74,15 @@ pub fn parse(source: &str) -> ParseResult {
         let number = index + 1;
         let text = raw.trim_end_matches('\r');
         let trimmed = text.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        let in_tab = active
+            .as_ref()
+            .is_some_and(|section| section.kind == SectionKind::Tab);
+        if !in_tab && (trimmed.is_empty() || trimmed.starts_with('#')) {
             continue;
         }
-        if let Some(body) = trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+        if (!in_tab || trimmed == "{end_of_tab}")
+            && let Some(body) = trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}'))
+        {
             let (name, value) = body
                 .split_once(':')
                 .map_or((body.trim(), ""), |(n, v)| (n.trim(), v.trim()));
@@ -91,7 +97,7 @@ pub fn parse(source: &str) -> ParseResult {
                 other => other,
             };
             match name {
-                "start_of_verse" | "start_of_chorus" | "start_of_bridge" => {
+                "start_of_verse" | "start_of_chorus" | "start_of_bridge" | "start_of_tab" => {
                     if let Some(section) = active.take() {
                         song.sections.push(section);
                         diagnostics.push(Diagnostic {
@@ -102,15 +108,20 @@ pub fn parse(source: &str) -> ParseResult {
                     let kind = match name {
                         "start_of_verse" => SectionKind::Verse,
                         "start_of_chorus" => SectionKind::Chorus,
+                        "start_of_tab" => SectionKind::Tab,
                         _ => SectionKind::Bridge,
                     };
                     active = Some(Section {
                         kind,
-                        label: value.into(),
+                        label: if kind == SectionKind::Tab && value.is_empty() {
+                            "Tab".into()
+                        } else {
+                            value.into()
+                        },
                         lines: Vec::new(),
                     });
                 }
-                "end_of_verse" | "end_of_chorus" | "end_of_bridge" => {
+                "end_of_verse" | "end_of_chorus" | "end_of_bridge" | "end_of_tab" => {
                     if let Some(section) = active.take() {
                         song.sections.push(section);
                     } else {
@@ -135,7 +146,16 @@ pub fn parse(source: &str) -> ParseResult {
             }
             continue;
         }
-        let line = parse_line(text, number, &mut diagnostics);
+        let line = if in_tab {
+            Line {
+                segments: vec![Segment {
+                    chord: None,
+                    lyric: text.into(),
+                }],
+            }
+        } else {
+            parse_line(text, number, &mut diagnostics)
+        };
         active
             .get_or_insert_with(|| Section {
                 kind: SectionKind::Unlabelled,
@@ -227,5 +247,14 @@ mod tests {
         assert!(result.diagnostics.is_empty());
         assert_eq!(result.song.first_meta("title"), Some("Café"));
         assert_eq!(result.song.sections[0].lines[0].lyrics(), "Crème");
+    }
+
+    #[test]
+    fn tab_keeps_brackets_and_spacing_verbatim() {
+        let result = parse("{start_of_tab: Intro}\ne|--[3]---  |\n{end_of_tab}");
+        assert!(result.diagnostics.is_empty());
+        assert_eq!(result.song.sections[0].kind, SectionKind::Tab);
+        assert_eq!(result.song.sections[0].lines[0].lyrics(), "e|--[3]---  |");
+        assert_eq!(result.song.sections[0].lines[0].segments[0].chord, None);
     }
 }
