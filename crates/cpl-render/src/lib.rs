@@ -157,7 +157,7 @@ impl Gpu {
         let rasterizer = CoreText;
         for item in &frame.text {
             let Some(raster) =
-                rasterizer.rasterize(&item.content, item.size * scale, item.weight, item.face)
+                rasterizer.rasterize(&item.content, item.size, scale, item.weight, item.face)
             else {
                 continue;
             };

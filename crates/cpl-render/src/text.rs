@@ -5,6 +5,7 @@ unsafe extern "C" {
     fn sb_text_rasterize(
         utf8: *const c_char,
         size: f64,
+        scale: f64,
         weight: c_int,
         max_width: f64,
         tnum: c_int,
@@ -32,13 +33,22 @@ pub struct Raster {
 pub struct CoreText;
 
 impl CoreText {
-    pub fn rasterize(&self, text: &str, size_px: f32, weight: u16, face: Face) -> Option<Raster> {
+    /// Draws `text` set at `size_pt` into a bitmap of `scale` pixels per point.
+    pub fn rasterize(
+        &self,
+        text: &str,
+        size_pt: f32,
+        scale: f32,
+        weight: u16,
+        face: Face,
+    ) -> Option<Raster> {
         let text = CString::new(text).ok()?;
         let (mut width, mut height, mut baseline) = (0, 0, 0);
         let pointer = unsafe {
             sb_text_rasterize(
                 text.as_ptr(),
-                size_px as f64,
+                size_pt as f64,
+                scale as f64,
                 weight as c_int,
                 0.0,
                 0,
@@ -89,7 +99,7 @@ mod tests {
     #[test]
     fn coretext_raster_has_ink_and_transparent_margin() {
         let raster = CoreText
-            .rasterize("Hello", 24.0, 400, Face::System)
+            .rasterize("Hello", 24.0, 1.0, 400, Face::System)
             .unwrap();
         assert!(raster.width > 20);
         assert!(raster.height > 10);
@@ -105,13 +115,29 @@ mod tests {
     fn width_matches_the_raster_and_counts_trailing_space() {
         let width = CoreText.width("Hello", 24.0, 400, Face::System);
         let raster = CoreText
-            .rasterize("Hello", 24.0, 400, Face::System)
+            .rasterize("Hello", 24.0, 1.0, 400, Face::System)
             .unwrap();
         // The raster is the advance rounded up plus one pixel of slack per side.
         assert!(raster.width as f32 - 2.0 - width >= 0.0);
         assert!(raster.width as f32 - 2.0 - width < 1.0);
         assert!(CoreText.width("Hello ", 24.0, 400, Face::System) > width + 3.0);
         assert_eq!(CoreText.width("", 24.0, 400, Face::System), 0.0);
+    }
+
+    #[test]
+    fn retina_raster_keeps_the_measured_point_width() {
+        // SF Pro at 34 pt is ~5% narrower than twice 17 pt; drawing at 2x must
+        // keep the 17 pt advance the layout measured.
+        let text = "Morning light is ";
+        let width = CoreText.width(text, 17.0, 400, Face::System);
+        let raster = CoreText
+            .rasterize(text, 17.0, 2.0, 400, Face::System)
+            .unwrap();
+        let drawn = (raster.width as f32 - 2.0) / 2.0;
+        assert!(
+            (drawn - width).abs() < 1.0,
+            "drawn {drawn} pt, measured {width} pt"
+        );
     }
 
     #[test]

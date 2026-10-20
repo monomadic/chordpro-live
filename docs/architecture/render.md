@@ -17,6 +17,10 @@ in `config/default.toml`.
 trailing spaces included, with no bitmap drawn. A raster carries one pixel of
 slack on each side (`RASTER_PAD`); compositing places the glyph origin, not
 the bitmap's edge, at the item's `x`.
+Text is rasterised with the font at its point size on a context scaled to
+the display, never as a larger font: SF Pro's tracking and optical size
+depend on the point size, so a 17 pt run requested as 34 pt for a 2x display
+draws about 5% narrower than measured.
 
 The CoreText shim is copied from
 `switchblade/crates/sb-window/src/text_shim.m`. This starter does not yet

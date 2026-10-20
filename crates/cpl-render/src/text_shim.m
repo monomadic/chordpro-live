@@ -56,8 +56,13 @@ double sb_text_width(const char *utf8, double size, int weight, int mono) {
     }
 }
 
-// Rasterize `utf8` at `size` points (already scaled to physical pixels by the
-// caller) and weight `weight` (CSS-ish: 400 regular, 600 semibold).
+// Rasterize `utf8` at `size` points and weight `weight` (CSS-ish: 400 regular,
+// 600 semibold) into a bitmap of `scale` pixels per point.
+//
+// The font is always created at its POINT size and the context is scaled,
+// never the font enlarged: SF Pro's tracking and optical size depend on the
+// point size, so a 17 pt line requested as a 34 pt font is about 5% narrower
+// than the layout measured, and gaps open between separately drawn runs.
 //
 // `max_width` > 0 truncates with a trailing ellipsis. `tnum` selects tabular
 // (fixed-advance) figures so columns of digits don't shimmy as they change.
@@ -76,12 +81,13 @@ double sb_text_width(const char *utf8, double size, int weight, int mono) {
 // highlight redraws a clipped slice of the very same bitmap between two of
 // them (so there is no second raster to misregister against the first).
 // Free with sb_text_free_f.
-unsigned char *sb_text_rasterize(const char *utf8, double size, int weight,
+unsigned char *sb_text_rasterize(const char *utf8, double size, double scale, int weight,
                                  double max_width, int tnum, int mono,
                                  int *out_w, int *out_h, int *out_baseline,
                                  float **out_adv, int *out_adv_n) {
     @autoreleasepool {
         if (!utf8 || !out_w || !out_h || size <= 0.0) return NULL;
+        if (!(scale > 0.0)) scale = 1.0;
         if (out_adv) *out_adv = NULL;
         if (out_adv_n) *out_adv_n = 0;
         NSString *s = [NSString stringWithUTF8String:utf8];
@@ -137,8 +143,8 @@ unsigned char *sb_text_rasterize(const char *utf8, double size, int weight,
         // outside the typographic box (overshoot, italic sidebearing, the
         // ellipsis) and a clipped edge is far more visible than a dead column.
         int pad = 1;
-        int w = (int)ceil(width) + pad * 2;
-        int h = (int)ceil(ascent + descent) + pad * 2;
+        int w = (int)ceil(width * scale) + pad * 2;
+        int h = (int)ceil((ascent + descent) * scale) + pad * 2;
         if (w <= 0 || h <= 0 || w > 8192 || h > 8192) {
             CFRelease(line);
             return NULL;
@@ -159,7 +165,9 @@ unsigned char *sb_text_rasterize(const char *utf8, double size, int weight,
         }
         CGContextSetShouldAntialias(ctx, true);
         CGContextSetShouldSmoothFonts(ctx, false);  // grayscale AA, never subpixel
-        CGContextSetTextPosition(ctx, (CGFloat)pad, (CGFloat)pad + descent);
+        CGContextTranslateCTM(ctx, (CGFloat)pad, (CGFloat)pad);
+        CGContextScaleCTM(ctx, (CGFloat)scale, (CGFloat)scale);
+        CGContextSetTextPosition(ctx, 0, descent);
         CTLineDraw(line, ctx);
         CGContextRelease(ctx);
         // Kept alive past the draw: the offsets below must be measured on
@@ -168,7 +176,7 @@ unsigned char *sb_text_rasterize(const char *utf8, double size, int weight,
 
         *out_w = w;
         *out_h = h;
-        if (out_baseline) *out_baseline = (int)lround(ascent) + pad;
+        if (out_baseline) *out_baseline = (int)lround(ascent * scale) + pad;
         // One offset per UTF-16 boundary, measured on the SAME line that was
         // just drawn — including its truncation, so an index past the
         // ellipsis simply lands on the clamped end rather than somewhere the
@@ -182,7 +190,7 @@ unsigned char *sb_text_rasterize(const char *utf8, double size, int weight,
                     CGFloat off = CTLineGetOffsetForStringIndex(line2, (CFIndex)i, NULL);
                     if (off < 0) off = 0;
                     if (off > width) off = width;
-                    adv[i] = (float)(off + pad);
+                    adv[i] = (float)(off * scale + pad);
                 }
                 *out_adv = adv;
                 *out_adv_n = n;
