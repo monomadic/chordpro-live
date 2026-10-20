@@ -11,6 +11,9 @@ size through `Metrics::style`, so measurement and drawing cannot disagree.
 Text is measured at the body size rather than an abstract 1 em, because
 system-font tracking changes with point size. Equal strings in one role are
 measured once per candidate.
+Measured lines distinguish chord-only progressions from sung lines. A
+progression keeps its full chord runs at step 9 and contributes the compact
+inline row height to its section block.
 
 Section blocks are built from those widths in body-size units. `fit` packs
 whole sections into up to four columns with the greedy rising-target method

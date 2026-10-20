@@ -518,7 +518,9 @@ impl App {
                             },
                             baseline: if o.side_labels {
                                 section_y
-                                    + (if inline {
+                                    + (if section.lines.first().is_some_and(|line| line.chord_only)
+                                        || inline
+                                    {
                                         c.inline_lyric_baseline
                                     } else {
                                         c.lyric_baseline
@@ -542,8 +544,17 @@ impl App {
                     let visible = o.visible_lines(section);
                     for line in section.lines.iter().take(visible) {
                         for run in line.runs(inline) {
+                            if line.chord_only
+                                && run.role == Role::Lyric
+                                && run.text.trim().is_empty()
+                            {
+                                continue;
+                            }
                             let style = metrics.style(run.role);
                             let (baseline, ink) = match run.role {
+                                Role::Chord if line.chord_only => {
+                                    (c.inline_lyric_baseline, Ink::Soft)
+                                }
                                 Role::Chord => (c.chord_baseline, Ink::Soft),
                                 Role::InlineChord => (c.inline_chord_baseline, Ink::Soft),
                                 Role::Lyric if inline => (c.inline_lyric_baseline, Ink::Strong),
@@ -562,7 +573,7 @@ impl App {
                                 ink,
                             });
                         }
-                        section_y += o.line_height(section, &m) * body;
+                        section_y += o.line_height(section, line, &m) * body;
                         line_group += 1;
                     }
                     if visible == 0 {
@@ -835,6 +846,24 @@ mod tests {
     }
 
     #[test]
+    fn first_scroll_view_shows_the_intro_after_a_hidden_tab() {
+        let mut source = String::from(
+            "{title: Test}\n{start_of_tab: Tab}\ne|--3---|\n{end_of_tab}\n{start_of_verse: Intro}\n[G] [Am] [C] [G]\n{end_of_verse}\n{start_of_verse: Verse 1}\n",
+        );
+        for index in 0..18 {
+            source.push_str(&format!("[C]Line {index}\n"));
+        }
+        source.push_str("{end_of_verse}");
+        let app = app(&source);
+        let (first, max_offset) = app.frame_scrolled(450.0, 260.0, 0.0);
+        assert!(max_offset > 0.0);
+        assert_eq!(count(&first, "INTRO"), 1);
+        assert_eq!(count(&first, "Am"), 1);
+        assert_eq!(count(&first, "e|--3---|"), 0);
+        assert!(!first.text.iter().any(|item| item.content.trim().is_empty()));
+    }
+
+    #[test]
     fn comments_draw_in_the_soft_ink_on_the_lyric_baseline() {
         let app = app("{title: Test}\n{sov: A}\n[C]Alpha\n{c: Repeat x2}\n{eov}");
         let frame = app.frame(600.0, 600.0);
@@ -845,6 +874,23 @@ mod tests {
         assert_eq!(comment.x, lyric.x);
         let row = app.config().line_height * lyric.size;
         assert!((comment.baseline - lyric.baseline - row).abs() < 0.01);
+    }
+
+    #[test]
+    fn chord_only_intro_uses_a_compact_row_before_the_lyric() {
+        let app = app("{title: Test}\n{sov: Intro}\n[G] [Am] [C] [G]\n[C]Hello\n{eov}");
+        let frame = app.frame(900.0, 600.0);
+        let g = find(&frame, "G");
+        let am = find(&frame, "Am");
+        let lyric = find(&frame, "Hello");
+        let body = lyric.size;
+        assert_eq!(g.baseline, am.baseline);
+        assert_eq!(g.size, app.config.chord_size * body);
+        assert!(!frame.text.iter().any(|item| item.content == " "));
+        let expected = (app.config.inline_line_height + app.config.lyric_baseline
+            - app.config.inline_lyric_baseline)
+            * body;
+        assert!((lyric.baseline - g.baseline - expected).abs() < 0.01);
     }
 
     #[test]

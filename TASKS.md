@@ -21,8 +21,9 @@ automated checks.
   appears without its lyric line and no visible line is needlessly withheld.
 - [ ] Check chord-only lines and section labels in real songs. An `Intro` with
   only chords should read as intentional musical structure, not as a lyric
-  line with missing words. Preserve verse/chorus hierarchy when the page
-  compacts or scrolls.
+  line with missing words. Compact chord-only rows and headless tests landed;
+  verify them with the supplied song. Preserve verse/chorus hierarchy when
+  the page compacts or scrolls.
 - [ ] Verify the title displayed in the screenshot. Determine whether the
   quotation marks are authored in the ChordPro title or introduced by parsing;
   only change parsing if a minimal fixture proves the latter.

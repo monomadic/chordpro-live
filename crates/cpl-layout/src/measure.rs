@@ -87,15 +87,21 @@ pub struct MeasuredLine {
     /// Small chords set inline before their lyric segment (ladder step 9).
     pub inline: Vec<Run>,
     pub inline_width: f32,
+    /// A chord progression with no sung words, such as an intro or turnaround.
+    pub chord_only: bool,
 }
 
 impl MeasuredLine {
     pub fn runs(&self, inline: bool) -> &[Run] {
-        if inline { &self.inline } else { &self.above }
+        if inline && !self.chord_only {
+            &self.inline
+        } else {
+            &self.above
+        }
     }
 
     pub fn width(&self, inline: bool) -> f32 {
-        if inline {
+        if inline && !self.chord_only {
             self.inline_width
         } else {
             self.above_width
@@ -222,10 +228,16 @@ impl<M: Measure> Measurer<'_, M> {
             above_width: width,
             inline: vec![run],
             inline_width: width,
+            chord_only: false,
         }
     }
 
     fn line(&mut self, line: &Line) -> MeasuredLine {
+        let chord_only = line.segments.iter().any(|segment| segment.chord.is_some())
+            && line
+                .segments
+                .iter()
+                .all(|segment| segment.lyric.trim().is_empty());
         let gap = self.metrics.chord_gap;
         let mut above = Vec::new();
         let (mut lyric_x, mut chord_x) = (0.0_f32, 0.0_f32);
@@ -270,6 +282,7 @@ impl<M: Measure> Measurer<'_, M> {
             above_width,
             inline,
             inline_width: x,
+            chord_only,
         }
     }
 }
@@ -376,6 +389,17 @@ mod tests {
         let (_, calls) = measured("[C]la[C]la[C]la\n[C]la[C]la");
         // "C" as chord and as inline chord, "la" as lyric, then title "Untitled".
         assert_eq!(calls, 4);
+    }
+
+    #[test]
+    fn chord_only_line_retains_full_chords_at_the_inline_reduction_step() {
+        let (song, _) = measured("[G] [Am] [C] [G]\n[C]Hello");
+        let progression = &song.sections[0].lines[0];
+        let lyric = &song.sections[0].lines[1];
+        assert!(progression.chord_only);
+        assert!(!lyric.chord_only);
+        assert_eq!(progression.runs(true), progression.above);
+        assert_eq!(progression.width(true), progression.above_width);
     }
 
     #[test]

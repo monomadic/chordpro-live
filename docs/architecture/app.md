@@ -15,6 +15,9 @@ section labels have their own gap. All page dimensions are in
 `config/default.toml`; font sizes are points and the other values are in
 body-size units except margins, which are points. A song crossing the bottom
 margin scrolls at the same body size. Width overflow still needs a solution.
+Chord-only progressions sit on one compact row at full chord size. Whitespace
+used to separate their chords is measured for alignment but not drawn as
+an empty lyric run.
 
 `frame` asks `cpl_layout::solve` for the least-reduced page that fits the
 content box (inside the margins, above the status strip) and composes it in

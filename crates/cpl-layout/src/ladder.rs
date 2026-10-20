@@ -77,8 +77,13 @@ impl Options {
         }
     }
 
-    pub fn line_height(&self, section: &MeasuredSection, m: &PageMetrics) -> f32 {
-        if self.inline(section) {
+    pub fn line_height(
+        &self,
+        section: &MeasuredSection,
+        line: &crate::MeasuredLine,
+        m: &PageMetrics,
+    ) -> f32 {
+        if line.chord_only || self.inline(section) {
             m.inline_line_height
         } else {
             m.line_height
@@ -116,7 +121,12 @@ impl Options {
                 section.label_width.max(line_width)
             },
             height: label
-                + self.line_height(section, m) * visible as f32
+                + section
+                    .lines
+                    .iter()
+                    .take(visible)
+                    .map(|line| self.line_height(section, line, m))
+                    .sum::<f32>()
                 + self.label_row(section, m),
         }
     }

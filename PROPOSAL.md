@@ -213,6 +213,9 @@ collapsed, pins the step. Step 10 is the behaviour the brief asks for in
 a line: when a lyric run and a chord run compete for width, the chord row
 shrinks to its own floor (0.8 of body) before the lyric does, and chord
 overhang pushes later lyrics right rather than compressing them.
+Chord-only progressions, such as an intro, use one compact row at the normal
+chord size; they do not reserve an empty lyric row or shrink at the inline
+chord step.
 
 The output of fit is a **`Page`**: a list of positioned items in points (text
 runs with face, size, byte range and role; hairlines; diagram primitives) plus

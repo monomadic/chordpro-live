@@ -6,6 +6,10 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-20
 
+- **Chord-only progressions use a compact row.** Lines without sung words now
+  keep normal-size chords and avoid drawing an empty lyric run, including at
+  the inline reduction step. Headless layout and page tests passed; the
+  affected real song still needs a window capture.
 - **Tablature hidden from the macOS performance page.** `cpl-app` now measures
   and fits a display song without `Tab` sections while retaining the complete
   parsed song. Headless tests cover fit and scroll output. This responds to a
