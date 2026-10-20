@@ -322,8 +322,13 @@ dependencies = [
 name = "cpl-app"
 version = "0.1.0"
 dependencies = [
+ "cpl-layout",
  "cpl-song",
 ]
+
+[[package]]
+name = "cpl-layout"
+version = "0.1.0"
 
 [[package]]
 name = "cpl-render"

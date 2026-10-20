@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cpl-song", "crates/cpl-app", "crates/cpl-render"]
+members = ["crates/cpl-song", "crates/cpl-layout", "crates/cpl-app", "crates/cpl-render"]
 resolver = "3"
 
 [package]

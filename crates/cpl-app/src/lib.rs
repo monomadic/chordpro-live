@@ -36,6 +36,7 @@ pub struct Frame {
     pub polarity: Polarity,
     pub text: Vec<Text>,
     pub fits: bool,
+    pub columns: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +55,7 @@ pub struct Config {
     pub chord_baseline: f32,
     pub lyric_baseline: f32,
     pub label_height: f32,
+    pub label_gap: f32,
     pub chord_gap: f32,
     pub column_gutter: f32,
 }
@@ -120,6 +122,7 @@ impl Config {
             chord_baseline: take!("chord_baseline"),
             lyric_baseline: take!("lyric_baseline"),
             label_height: take!("label_height"),
+            label_gap: take!("label_gap"),
             chord_gap: take!("chord_gap"),
             column_gutter: take!("column_gutter"),
         };
@@ -151,6 +154,7 @@ impl App {
             polarity: self.polarity,
             text: Vec::new(),
             fits: true,
+            columns: 0,
         };
         let title = self.song.first_meta("title").unwrap_or("Untitled");
         let title_size = c.title_size * body;
@@ -176,74 +180,116 @@ impl App {
         }
         y += c.header_gap * body;
         let content_end = height - c.margin_bottom - body * 1.5;
-        let right = width - c.margin_x;
-
-        for (section_index, section) in self.song.sections.iter().enumerate() {
-            if section_index > 0 {
-                y += c.section_gap * body;
-            }
-            if !section.label.is_empty() {
-                y += c.label_height * body;
-                frame.text.push(Text {
-                    content: section.label.to_uppercase(),
-                    x: c.margin_x,
-                    baseline: y,
-                    size: c.label_size * body,
-                    weight: if section.kind == SectionKind::Chorus {
-                        700
+        let blocks: Vec<cpl_layout::Block> = self
+            .song
+            .sections
+            .iter()
+            .map(|section| {
+                let label_width =
+                    measure.width(&section.label.to_uppercase(), c.label_size * body, 700) / body;
+                let line_width = section
+                    .lines
+                    .iter()
+                    .map(|line| line_width(line, c, measure) / body)
+                    .fold(0.0, f32::max);
+                cpl_layout::Block {
+                    width: label_width.max(line_width),
+                    height: (if section.label.is_empty() {
+                        0.0
                     } else {
-                        600
-                    },
-                    ink: Ink::Soft,
-                });
-            }
-            for line in &section.lines {
-                let top = y;
-                let chord_y = top + c.chord_baseline * body;
-                let lyric_y = top + c.lyric_baseline * body;
-                let mut lyric_x = c.margin_x;
-                let mut chord_x = lyric_x;
-                for segment in &line.segments {
-                    if let Some(chord) = &segment.chord {
-                        chord_x = chord_x.max(lyric_x);
+                        c.label_height + c.label_gap
+                    }) + c.line_height * section.lines.len() as f32,
+                }
+            })
+            .collect();
+        let fit = cpl_layout::fit(
+            &blocks,
+            cpl_layout::FitOptions {
+                available_width: ((width - 2.0 * c.margin_x) / body).max(0.0),
+                available_height: ((content_end - y) / body).max(0.0),
+                header_height: 0.0,
+                header_gap: 0.0,
+                section_gap: c.section_gap,
+                column_gutter: c.column_gutter,
+                max_columns: 4,
+                max_body_size: 1.0,
+                floor: 1.0,
+            },
+        );
+        frame.fits = fit.meets_floor;
+        frame.columns = if frame.fits { fit.columns.len() } else { 0 };
+        if frame.fits {
+            let mut column_x = c.margin_x;
+            for range in &fit.columns {
+                let mut section_y = y;
+                for (offset, index) in range.clone().enumerate() {
+                    let section = &self.song.sections[index];
+                    if offset > 0 {
+                        section_y += c.section_gap * body;
+                    }
+                    if !section.label.is_empty() {
+                        section_y += c.label_height * body;
                         frame.text.push(Text {
-                            content: chord.clone(),
-                            x: chord_x,
-                            baseline: chord_y,
-                            size: c.chord_size * body,
-                            weight: 600,
+                            content: section.label.to_uppercase(),
+                            x: column_x,
+                            baseline: section_y,
+                            size: c.label_size * body,
+                            weight: if section.kind == SectionKind::Chorus {
+                                700
+                            } else {
+                                600
+                            },
                             ink: Ink::Soft,
                         });
-                        chord_x +=
-                            measure.width(chord, c.chord_size * body, 600) + c.chord_gap * body;
+                        section_y += c.label_gap * body;
                     }
-                    if !segment.lyric.is_empty() {
-                        frame.text.push(Text {
-                            content: segment.lyric.clone(),
-                            x: lyric_x,
-                            baseline: lyric_y,
-                            size: body,
-                            weight: 400,
-                            ink: Ink::Strong,
-                        });
-                        lyric_x += measure.width(&segment.lyric, body, 400);
+                    for line in &section.lines {
+                        let chord_y = section_y + c.chord_baseline * body;
+                        let lyric_y = section_y + c.lyric_baseline * body;
+                        let mut lyric_x = column_x;
+                        let mut chord_x = column_x;
+                        for segment in &line.segments {
+                            if let Some(chord) = &segment.chord {
+                                chord_x = chord_x.max(lyric_x);
+                                frame.text.push(Text {
+                                    content: chord.clone(),
+                                    x: chord_x,
+                                    baseline: chord_y,
+                                    size: c.chord_size * body,
+                                    weight: 600,
+                                    ink: Ink::Soft,
+                                });
+                                chord_x += measure.width(chord, c.chord_size * body, 600)
+                                    + c.chord_gap * body;
+                            }
+                            if !segment.lyric.is_empty() {
+                                frame.text.push(Text {
+                                    content: segment.lyric.clone(),
+                                    x: lyric_x,
+                                    baseline: lyric_y,
+                                    size: body,
+                                    weight: 400,
+                                    ink: Ink::Strong,
+                                });
+                                lyric_x += measure.width(&segment.lyric, body, 400);
+                            }
+                            lyric_x = lyric_x.max(chord_x - c.chord_gap * body);
+                        }
+                        section_y += c.line_height * body;
                     }
-                    lyric_x = lyric_x.max(chord_x - c.chord_gap * body);
                 }
-                if lyric_x > right || lyric_y > content_end {
-                    frame.fits = false;
-                }
-                y += c.line_height * body;
+                let column_width = blocks[range.clone()]
+                    .iter()
+                    .map(|b| b.width)
+                    .fold(0.0, f32::max);
+                column_x += (column_width + c.column_gutter) * body;
             }
         }
         if !frame.fits {
-            frame
-                .text
-                .retain(|item| item.baseline < c.margin_top + title_size + c.header_gap * body);
             frame.text.push(Text {
                 content: "Song needs paging at this readable size".into(),
                 x: c.margin_x,
-                baseline: y.min(content_end),
+                baseline: (y + body).min(content_end),
                 size: body,
                 weight: 600,
                 ink: Ink::Soft,
@@ -251,11 +297,19 @@ impl App {
         }
         frame.text.push(Text {
             content: if frame.fits {
-                "FIT  ·  stand 17 pt"
+                format!(
+                    "FIT  ·  {} {}  ·  stand {} pt",
+                    frame.columns,
+                    if frame.columns == 1 {
+                        "column"
+                    } else {
+                        "columns"
+                    },
+                    body
+                )
             } else {
-                "PAGE NEEDED  ·  stand 17 pt"
-            }
-            .into(),
+                format!("PAGE NEEDED  ·  stand {} pt", body)
+            },
             x: c.margin_x,
             baseline: height - c.margin_bottom * 0.5,
             size: body * 0.7,
@@ -264,6 +318,21 @@ impl App {
         });
         frame
     }
+}
+
+fn line_width(line: &cpl_song::Line, c: &Config, measure: &impl Measure) -> f32 {
+    let mut lyric_x: f32 = 0.0;
+    let mut chord_x: f32 = 0.0;
+    for segment in &line.segments {
+        if let Some(chord) = &segment.chord {
+            chord_x = chord_x.max(lyric_x)
+                + measure.width(chord, c.chord_size * c.body_size, 600)
+                + c.chord_gap * c.body_size;
+        }
+        lyric_x += measure.width(&segment.lyric, c.body_size, 400);
+        lyric_x = lyric_x.max(chord_x - c.chord_gap * c.body_size);
+    }
+    lyric_x.max(chord_x - c.chord_gap * c.body_size)
 }
 
 #[cfg(test)]
@@ -307,6 +376,28 @@ mod tests {
         let frame = app.frame(100.0, 90.0, &Fixed);
         assert!(!frame.fits);
         assert!(!frame.text.iter().any(|t| t.content == "Hello"));
+    }
+
+    #[test]
+    fn sections_flow_into_columns_without_shrinking_lyrics() {
+        let song = cpl_song::parse(
+            "{title: Test}\n{start_of_verse: One}\n[C]Alpha\n{end_of_verse}\n{start_of_chorus: Two}\n[G]Bravo\n{end_of_chorus}\n{start_of_verse: Three}\n[Am]Charlie\n{end_of_verse}",
+        ).song;
+        let app = App {
+            song,
+            config: Config::default(),
+            polarity: Polarity::Light,
+        };
+        let frame = app.frame(900.0, 230.0, &Fixed);
+        assert!(frame.fits);
+        let lyrics: Vec<_> = frame
+            .text
+            .iter()
+            .filter(|t| ["Alpha", "Bravo", "Charlie"].contains(&t.content.as_str()))
+            .collect();
+        assert_eq!(lyrics.len(), 3);
+        assert!(lyrics.windows(2).all(|pair| pair[0].x < pair[1].x));
+        assert!(lyrics.iter().all(|item| item.size == 17.0));
     }
 
     #[test]

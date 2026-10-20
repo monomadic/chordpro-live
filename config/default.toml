@@ -13,5 +13,6 @@ line_height = 2.55
 chord_baseline = 0.72
 lyric_baseline = 1.75
 label_height = 1.5
+label_gap = 0.45
 chord_gap = 0.38
 column_gutter = 2.8

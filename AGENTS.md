@@ -9,7 +9,8 @@ It is not an editor and never writes a `.cho` file.
 ## Status
 
 An initial macOS viewer is built. `cpl-song` parses a small ChordPro slice;
-`cpl-app` lays out a single-column page; `cpl-render` composites CoreText
+`cpl-layout` fits whole sections into columns at the stand-size floor;
+`cpl-app` composes the page; `cpl-render` composites CoreText
 rasters into a wgpu texture; `src/main.rs` hosts the winit window. The
 fit ladder, scrolling/paging, library, full ChordPro 6 conformance, text
 atlas, and iOS host are still planned. Do not describe these as implemented.
@@ -20,7 +21,8 @@ work; do not re-litigate a settled decision without the user. When a
 decision changes, change the proposal in the same commit.
 
 Architecture notes: [song](docs/architecture/chordpro.md),
-[app](docs/architecture/app.md), [render](docs/architecture/render.md).
+[layout](docs/architecture/layout.md), [app](docs/architecture/app.md),
+[render](docs/architecture/render.md).
 Add a `docs/architecture/<subsystem>.md` note as each subsystem lands,
 and keep these notes as specifications rather than history.
 

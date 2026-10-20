@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 cpl-song = { path = "../cpl-song" }
+cpl-layout = { path = "../cpl-layout" }
