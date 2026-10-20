@@ -6,6 +6,11 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-20
 
+- **Measured ink against page bounds.** A macOS integration test now rasterises
+  every positioned item on fitted pages through CoreText at 1x and 2x and
+  checks its actual ink against the content bounds. The tested title, byline,
+  labels, lyrics, and long chords stayed inside. This is a focused regression
+  check, not a claim about every song or font fallback.
 - **Scroll status retains section context.** The status strip now names the
   section containing the top visible song line, including after a label
   scrolls away. A focused headless test passed, and the built-in scroll

@@ -43,7 +43,9 @@ automated checks.
 - [ ] Add paged mode for songs that cannot fit and need a predictable page turn.
   Keep whole chord/lyric pairs together and make the current page obvious.
 - [ ] Check actual CoreText extents at 1x and 2x against fit bounds, including
-  title, byline, labels, and long chords. Add a regression for any mismatch.
+  title, byline, labels, and long chords. A real-raster page-bound test now
+  covers three viewport sizes at both scales with no mismatch; expand it when
+  a failing real-song case appears and verify a 1x window visually.
 - [ ] Add a visual regression path for `--view` sample pages at known logical
   sizes. Verify light and dark polarity and the 17–28 pt type range on macOS.
 

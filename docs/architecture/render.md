@@ -23,6 +23,9 @@ Text is rasterised with the font at its point size on a context scaled to
 the display, never as a larger font: SF Pro's tracking and optical size
 depend on the point size, so a 17 pt run requested as 34 pt for a 2x display
 draws about 5% narrower than measured.
+`tests/page_bounds.rs` checks actual nonzero CoreText coverage against fitted
+page bounds at 1x and 2x for several viewport sizes. It includes header,
+section label, lyric and chord runs.
 
 The CoreText shim is copied from
 `switchblade/crates/sb-window/src/text_shim.m`. This starter does not yet
