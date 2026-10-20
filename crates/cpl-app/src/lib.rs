@@ -152,8 +152,69 @@ pub struct App {
     pub polarity: Polarity,
 }
 
+#[derive(Clone, Copy)]
+struct Candidate {
+    section_gap: f32,
+    side_labels: bool,
+    collapsed_header: bool,
+    ladder_step: u8,
+}
+
 impl App {
     pub fn frame(&self, width: f32, height: f32, measure: &impl Measure) -> Frame {
+        let full_options = Candidate {
+            section_gap: self.config.section_gap,
+            side_labels: false,
+            collapsed_header: false,
+            ladder_step: 0,
+        };
+        let full = self.frame_candidate(width, height, measure, full_options);
+        if full.fits {
+            return full;
+        }
+        let compact_options = Candidate {
+            section_gap: 0.0,
+            ladder_step: 1,
+            ..full_options
+        };
+        let compact = self.frame_candidate(width, height, measure, compact_options);
+        if compact.fits {
+            return compact;
+        }
+        let side_options = Candidate {
+            side_labels: true,
+            ladder_step: 2,
+            ..compact_options
+        };
+        let side = self.frame_candidate(width, height, measure, side_options);
+        if side.fits {
+            return side;
+        }
+        self.frame_candidate(
+            width,
+            height,
+            measure,
+            Candidate {
+                collapsed_header: true,
+                ladder_step: 3,
+                ..side_options
+            },
+        )
+    }
+
+    fn frame_candidate(
+        &self,
+        width: f32,
+        height: f32,
+        measure: &impl Measure,
+        candidate: Candidate,
+    ) -> Frame {
+        let Candidate {
+            section_gap,
+            side_labels,
+            collapsed_header,
+            ladder_step,
+        } = candidate;
         let c = &self.config;
         let body = c.body_size;
         let mut frame = Frame {
@@ -163,7 +224,7 @@ impl App {
             text: Vec::new(),
             fits: true,
             columns: 0,
-            ladder_step: 0,
+            ladder_step,
         };
         let title = self.song.first_meta("title").unwrap_or("Untitled");
         let title_size = c.title_size * body;
@@ -178,10 +239,15 @@ impl App {
             ink: Ink::Strong,
         });
         if let Some(artist) = self.song.first_meta("artist") {
-            y += c.subtitle_size * body * 1.8;
+            let artist_x = if collapsed_header {
+                c.margin_x + measure.width(title, title_size, 600, Face::System) + body * 0.8
+            } else {
+                y += c.subtitle_size * body * 1.8;
+                c.margin_x
+            };
             frame.text.push(Text {
                 content: artist.into(),
-                x: c.margin_x,
+                x: artist_x,
                 baseline: y,
                 size: c.subtitle_size * body,
                 weight: 400,
@@ -208,8 +274,12 @@ impl App {
                     .map(|line| line_width(line, c, measure) / body)
                     .fold(0.0, f32::max);
                 cpl_layout::Block {
-                    width: label_width.max(line_width),
-                    height: (if section.label.is_empty() {
+                    width: if side_labels {
+                        line_width
+                    } else {
+                        label_width.max(line_width)
+                    },
+                    height: (if section.label.is_empty() || side_labels {
                         0.0
                     } else {
                         c.label_height + c.label_gap
@@ -222,29 +292,30 @@ impl App {
             available_height: ((content_end - y) / body).max(0.0),
             header_height: 0.0,
             header_gap: 0.0,
-            section_gap: c.section_gap,
+            section_gap,
             column_gutter: c.column_gutter,
             max_columns: 4,
             max_body_size: 1.0,
             floor: 1.0,
         };
-        let mut fit = cpl_layout::fit(&blocks, base_options);
-        let mut section_gap = c.section_gap;
-        if !fit.meets_floor {
-            let compact = cpl_layout::fit(
-                &blocks,
-                cpl_layout::FitOptions {
-                    section_gap: 0.0,
-                    ..base_options
-                },
-            );
-            if compact.meets_floor {
-                fit = compact;
-                section_gap = 0.0;
-                frame.ladder_step = 1;
-            }
-        }
+        let fit = cpl_layout::fit(&blocks, base_options);
         frame.fits = fit.meets_floor;
+        if side_labels {
+            let room = c.margin_x.min(c.column_gutter * body) - body * 0.25;
+            frame.fits &= self.song.sections.iter().all(|section| {
+                measure.width(
+                    &section.label.to_uppercase(),
+                    c.label_size * body,
+                    700,
+                    Face::Monospace,
+                ) <= room
+            });
+        }
+        if collapsed_header && let Some(artist) = self.song.first_meta("artist") {
+            let title_width = measure.width(title, title_size, 600, Face::System);
+            let artist_width = measure.width(artist, c.subtitle_size * body, 400, Face::System);
+            frame.fits &= title_width + artist_width + body * 0.8 <= width - 2.0 * c.margin_x;
+        }
         frame.columns = if frame.fits { fit.columns.len() } else { 0 };
         if frame.fits {
             let mut column_x = c.margin_x;
@@ -256,11 +327,27 @@ impl App {
                         section_y += section_gap * body;
                     }
                     if !section.label.is_empty() {
-                        section_y += c.label_height * body;
+                        if !side_labels {
+                            section_y += c.label_height * body;
+                        }
+                        let label_width = measure.width(
+                            &section.label.to_uppercase(),
+                            c.label_size * body,
+                            700,
+                            Face::Monospace,
+                        );
                         frame.text.push(Text {
                             content: section.label.to_uppercase(),
-                            x: column_x,
-                            baseline: section_y,
+                            x: if side_labels {
+                                column_x - label_width - body * 0.25
+                            } else {
+                                column_x
+                            },
+                            baseline: if side_labels {
+                                section_y + c.label_size * body
+                            } else {
+                                section_y
+                            },
                             size: c.label_size * body,
                             weight: if section.kind == SectionKind::Chorus {
                                 700
@@ -270,7 +357,9 @@ impl App {
                             face: Face::Monospace,
                             ink: Ink::Soft,
                         });
-                        section_y += c.label_gap * body;
+                        if !side_labels {
+                            section_y += c.label_gap * body;
+                        }
                     }
                     for line in &section.lines {
                         let chord_y = section_y + c.chord_baseline * body;
@@ -339,10 +428,10 @@ impl App {
                         "columns"
                     },
                     body
-                ) + if frame.ladder_step == 1 {
-                    "  ·  compact 1"
+                ) + &if frame.ladder_step > 0 {
+                    format!("  ·  compact {}", frame.ladder_step)
                 } else {
-                    ""
+                    String::new()
                 }
             } else {
                 format!("PAGE NEEDED  ·  stand {} pt", body)
@@ -458,6 +547,54 @@ mod tests {
                 .iter()
                 .any(|t| t.content == "Bravo" && t.size == 17.0)
         );
+    }
+
+    #[test]
+    fn moves_short_labels_to_side_after_spacing_compacts() {
+        let song = cpl_song::parse(
+            "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: B}\n[G]Bravo\n{end_of_verse}",
+        ).song;
+        let app = App {
+            song,
+            config: Config::default(),
+            polarity: Polarity::Light,
+        };
+        let frame = app.frame(190.0, 245.0, &Fixed);
+        assert!(frame.fits);
+        assert_eq!(frame.ladder_step, 2);
+        let label = frame.text.iter().find(|item| item.content == "A").unwrap();
+        let lyric = frame
+            .text
+            .iter()
+            .find(|item| item.content == "Alpha")
+            .unwrap();
+        assert!(label.x < lyric.x);
+    }
+
+    #[test]
+    fn collapses_header_after_side_labels() {
+        let song = cpl_song::parse(
+            "{title: Test}\n{artist: Ada}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: B}\n[G]Bravo\n{end_of_verse}",
+        ).song;
+        let app = App {
+            song,
+            config: Config::default(),
+            polarity: Polarity::Light,
+        };
+        let frame = app.frame(190.0, 210.0, &Fixed);
+        assert!(frame.fits);
+        assert_eq!(frame.ladder_step, 3);
+        let title = frame
+            .text
+            .iter()
+            .find(|item| item.content == "Test")
+            .unwrap();
+        let artist = frame
+            .text
+            .iter()
+            .find(|item| item.content == "Ada")
+            .unwrap();
+        assert_eq!(title.baseline, artist.baseline);
     }
 
     #[test]
