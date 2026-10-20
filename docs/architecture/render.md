@@ -6,6 +6,8 @@ On page changes it rasterises whole strings through the CoreText shim,
 composites a monochrome RGBA page, and uploads that texture to wgpu. Ordinary
 redraws only draw and present a fullscreen triangle. Resize and the `i`
 polarity key rebuild the page; Escape closes the window.
+Coverage rasters are cached by text, face, weight, size and display scale,
+with a 32 MiB cap. Scrolling still composites and uploads the visible page.
 
 The page uses the system proportional face for title, byline and lyrics,
 and the system monospaced face for chord symbols, section labels and status.

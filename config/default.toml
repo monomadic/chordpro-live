@@ -7,6 +7,7 @@ subtitle_size = 0.76
 label_size = 0.68
 chord_size = 0.82
 body_size = 17
+max_body_size = 28
 header_gap = 0.8
 section_gap = 1.2
 line_height = 2.55

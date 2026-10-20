@@ -143,16 +143,20 @@ continuous version, and its scheme is adopted whole:
 **Every dimension is in em units**, multiples of the body size. Line heights,
 gutters, insets, chord gap, label size, diagram geometry are constants in em
 (the exporter's `layout.go` table is the starting set). A song is measured
-**once per (song, font set)** into blocks of lines of runs, each
+**at the floor and at each whole-point candidate up to the configured maximum**
+into blocks of lines of runs, each
 run with an x offset and a width in em, chords pushed right of their syllable where
 they overhang exactly as the TUI does. Measurement is the only part that needs
 the OS, through a one-method `Measure` trait. Font advances scale nearly
-linearly with size under CoreText, so one measurement serves every candidate
-size. They are not exactly linear for the system font, whose tracking and
+linearly with size under CoreText, but are not exactly linear for the system font, whose tracking and
 optical size change with point size (about 5% narrower at 34 pt than twice
-17 pt), so the song is measured at the body floor, where fit is tightest.
+17 pt). Candidate measurement at the actual drawn size prevents that difference
+from accepting a page that overflows. The initial implementation does this
+synchronously on song load; worker preparation remains future work.
 
-**The fit search is then arithmetic.** For each column count 1..=N,
+**The fit search is then arithmetic.** The ladder is chosen at the readability
+floor. Within that ladder step, the largest measured candidate that fits is
+drawn. For each column count 1..=N,
 `pack_into` balances the blocks (chordpro-tui's greedy fill with a rising
 target, floats instead of rows), and the scale that fills the viewport is
 `min(avail_w / layout_w, avail_h / (header_h + gap + max_col_h))`. The count

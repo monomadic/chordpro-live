@@ -1,6 +1,7 @@
 # Column fit
 
-`cpl-layout` measures a song once with `measure_song` into a `MeasuredSong`:
+`cpl-layout` measures a song with `measure_song` into a `MeasuredSong` at
+each candidate size, from the body floor to the configured maximum:
 the header, each section's upper-cased label, and for every line two run
 lists with em offsets and widths, one with chords above the lyric and one
 with inline chords. A chord wider than its syllable pushes the next lyric past
@@ -9,7 +10,7 @@ that calls the host's `Measure`. A run's `Role` fixes its face, weight and em
 size through `Metrics::style`, so measurement and drawing cannot disagree.
 Text is measured at the body size rather than an abstract 1 em, because
 system-font tracking changes with point size. Equal strings in one role are
-measured once.
+measured once per candidate.
 
 Section blocks are built from those widths in body-size units. `fit` packs
 whole sections into up to four columns with the greedy rising-target method
@@ -33,6 +34,8 @@ byline share one line; 5. tablature folds to its label; 7. the title drops;
 
 Steps 4 and 6 (diagrams, metadata pills) have nothing to remove yet. A side
 label beside a section with every line hidden keeps one row. A song with no
-sections fits. `fit` is called with a maximum and floor equal to the body
-size, so every candidate is drawn at the stand size; point-size presets,
-width overflow inside a line and paged mode are still to come.
+sections fits. The app selects the ladder step at the floor, then checks
+larger premeasured sizes in descending order and draws the largest that fits.
+Each candidate is checked using font advances measured at its actual point
+size. A viewport's prepared scroll page stays at the floor. Point-size
+presets and paged mode are still to come.

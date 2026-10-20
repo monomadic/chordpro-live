@@ -52,6 +52,7 @@ pub struct Config {
     pub label_size: f32,
     pub chord_size: f32,
     pub body_size: f32,
+    pub max_body_size: f32,
     pub header_gap: f32,
     pub section_gap: f32,
     pub line_height: f32,
@@ -129,6 +130,7 @@ impl Config {
             label_size: take!("label_size"),
             chord_size: take!("chord_size"),
             body_size: take!("body_size"),
+            max_body_size: take!("max_body_size"),
             header_gap: take!("header_gap"),
             section_gap: take!("section_gap"),
             line_height: take!("line_height"),
@@ -162,15 +164,22 @@ impl Config {
         if config.max_columns.fract() != 0.0 {
             return Err("max_columns must be a whole number".into());
         }
+        if config.max_body_size < config.body_size {
+            return Err("max_body_size must meet the body_size floor".into());
+        }
         Ok(config)
     }
 }
 
 impl Config {
-    /// The type scale a song is measured with, once, at the body size.
+    /// The type scale at the configured readability floor.
     pub fn metrics(&self) -> Metrics {
+        self.metrics_at(self.body_size)
+    }
+
+    fn metrics_at(&self, body_size: f32) -> Metrics {
         Metrics {
-            reference_size: self.body_size,
+            reference_size: body_size,
             title_size: self.title_size,
             subtitle_size: self.subtitle_size,
             label_size: self.label_size,
@@ -186,6 +195,7 @@ pub struct App {
     song: Song,
     config: Config,
     measured: MeasuredSong,
+    larger: Vec<(f32, MeasuredSong)>,
     prepared: RefCell<Option<(u32, u32, Arc<PreparedPage>)>>,
     pub polarity: Polarity,
 }
@@ -201,14 +211,34 @@ enum PreparedPage {
 }
 
 impl App {
-    /// Measures the song once. Every frame after this is arithmetic over that
-    /// measurement, so resizing, scrolling and polarity never call the host.
+    /// Measures the floor and each whole-point candidate up to the configured
+    /// maximum. Resizing, scrolling and polarity then need no host measurement.
     pub fn new(song: Song, config: Config, polarity: Polarity, measure: &impl Measure) -> Self {
         let measured = cpl_layout::measure_song(&song, &config.metrics(), measure);
+        let mut larger = Vec::new();
+        let mut size = config.body_size.floor() + 1.0;
+        while size <= config.max_body_size {
+            larger.push((
+                size,
+                cpl_layout::measure_song(&song, &config.metrics_at(size), measure),
+            ));
+            size += 1.0;
+        }
+        if config.max_body_size > config.body_size
+            && larger
+                .last()
+                .is_none_or(|(size, _)| *size < config.max_body_size)
+        {
+            larger.push((
+                config.max_body_size,
+                cpl_layout::measure_song(&song, &config.metrics_at(config.max_body_size), measure),
+            ));
+        }
         Self {
             song,
             config,
             measured,
+            larger,
             prepared: RefCell::new(None),
             polarity,
         }
@@ -222,7 +252,7 @@ impl App {
         &self.config
     }
 
-    fn page_metrics(&self) -> PageMetrics {
+    fn page_metrics(&self, body: f32) -> PageMetrics {
         let c = &self.config;
         PageMetrics {
             title_size: c.title_size,
@@ -236,18 +266,17 @@ impl App {
             line_height: c.line_height,
             inline_line_height: c.inline_line_height,
             column_gutter: c.column_gutter,
-            side_label_room: c.margin_x.min(c.column_gutter * c.body_size) / c.body_size
-                - c.side_label_inset,
+            side_label_room: c.margin_x.min(c.column_gutter * body) / body - c.side_label_inset,
             max_columns: c.max_columns as usize,
         }
     }
 
     /// The content box inside the margins and above the status strip, in em.
-    fn viewport(&self, width: f32, height: f32) -> Viewport {
+    fn viewport(&self, width: f32, height: f32, body: f32) -> Viewport {
         let c = &self.config;
         Viewport {
-            width: (width - 2.0 * c.margin_x) / c.body_size,
-            height: (height - c.margin_top - c.margin_bottom) / c.body_size - c.status_height,
+            width: (width - 2.0 * c.margin_x) / body,
+            height: (height - c.margin_top - c.margin_bottom) / body - c.status_height,
         }
     }
 
@@ -323,11 +352,11 @@ impl App {
         }
         let c = &self.config;
         let body = c.body_size;
-        let metrics = self.page_metrics();
+        let metrics = self.page_metrics(body);
         // One unbounded column; the scroll viewport windows over it.
         let tall = Viewport {
             height: f32::INFINITY,
-            ..self.viewport(width, height)
+            ..self.viewport(width, height, body)
         };
         let mut long = cpl_layout::layout(&self.measured, &metrics, tall, Options::default(), 0);
         if !long.fits {
@@ -347,7 +376,7 @@ impl App {
             }
             return PreparedPage::NeedsWidth(fit);
         }
-        let mut long = self.compose(width, height, &long);
+        let mut long = self.compose(width, height, body, &self.measured, &long);
         long.text.pop(); // the long page's status strip belongs below its viewport
         let content_end = height - c.margin_bottom - c.status_height * body;
         let last_baseline = long
@@ -373,21 +402,42 @@ impl App {
 
     /// The least-reduced page that fits, or the most-reduced candidate marked unfit.
     pub fn frame(&self, width: f32, height: f32) -> Frame {
+        let floor = self.config.body_size;
         let solution = cpl_layout::solve(
             &self.measured,
-            &self.page_metrics(),
-            self.viewport(width, height),
+            &self.page_metrics(floor),
+            self.viewport(width, height, floor),
         );
-        self.compose(width, height, &solution)
+        if solution.fits {
+            for (body, measured) in self.larger.iter().rev() {
+                let larger = cpl_layout::layout(
+                    measured,
+                    &self.page_metrics(*body),
+                    self.viewport(width, height, *body),
+                    solution.options,
+                    solution.step,
+                );
+                if larger.fits {
+                    return self.compose(width, height, *body, measured, &larger);
+                }
+            }
+        }
+        self.compose(width, height, floor, &self.measured, &solution)
     }
 
     /// Places a solved candidate in points. Draws no lyric unless it fits.
-    fn compose(&self, width: f32, height: f32, solution: &Solution) -> Frame {
+    fn compose(
+        &self,
+        width: f32,
+        height: f32,
+        body: f32,
+        measured: &MeasuredSong,
+        solution: &Solution,
+    ) -> Frame {
         let c = &self.config;
-        let body = c.body_size;
         let o = solution.options;
-        let m = self.page_metrics();
-        let header = &self.measured.header;
+        let m = self.page_metrics(body);
+        let header = &measured.header;
         let mut frame = Frame {
             width,
             height,
@@ -434,7 +484,7 @@ impl App {
             for range in &solution.fit.columns {
                 let mut section_y = y;
                 for (offset, index) in range.clone().enumerate() {
-                    let section = &self.measured.sections[index];
+                    let section = &measured.sections[index];
                     if offset > 0 {
                         section_y += o.section_gap(&m) * body;
                     }
@@ -620,6 +670,31 @@ mod tests {
     }
 
     #[test]
+    fn larger_type_is_checked_with_its_actual_font_width() {
+        struct WiderAtLargeSizes;
+        impl Measure for WiderAtLargeSizes {
+            fn width(&self, text: &str, size: f32, _: u16, _: Face) -> f32 {
+                text.chars().count() as f32 * size * 0.5 * if size > 17.0 { 1.5 } else { 1.0 }
+            }
+        }
+        let song = cpl_song::parse("Hello world").song;
+        let app = App::new(song, Config::default(), Polarity::Light, &WiderAtLargeSizes);
+        let frame = app.frame(260.0, 600.0);
+        let lyric = find(&frame, "Hello world");
+        assert!(frame.fits);
+        assert!(lyric.size > 17.0 && lyric.size < 28.0);
+        let width = WiderAtLargeSizes.width(&lyric.content, lyric.size, lyric.weight, lyric.face);
+        assert!(lyric.x + width <= frame.width - app.config.margin_x);
+    }
+
+    #[test]
+    fn roomy_page_uses_the_configured_maximum() {
+        let frame = app("Hello").frame(900.0, 600.0);
+        assert!(frame.fits);
+        assert_eq!(find(&frame, "Hello").size, 28.0);
+    }
+
+    #[test]
     fn sections_flow_into_columns_without_shrinking_lyrics() {
         let app = app(
             "{title: Test}\n{start_of_verse: One}\n[C]Alpha\n{end_of_verse}\n{start_of_chorus: Two}\n[G]Bravo\n{end_of_chorus}\n{start_of_verse: Three}\n[Am]Charlie\n{end_of_verse}",
@@ -634,7 +709,8 @@ mod tests {
             .map(|l| find(&frame, l))
             .collect();
         assert!(lyrics.windows(2).all(|pair| pair[0].x < pair[1].x));
-        assert!(lyrics.iter().all(|item| item.size == 17.0));
+        assert!(lyrics.iter().all(|item| item.size >= 17.0));
+        assert!(lyrics.iter().all(|item| item.size == lyrics[0].size));
     }
 
     #[test]
@@ -644,8 +720,9 @@ mod tests {
         );
         let frame = at_step(&app, 190.0, 1);
         assert_eq!(frame.columns, 1);
-        assert_eq!(find(&frame, "Bravo").size, 17.0);
-        assert_eq!(find(&frame, "Test").size, 17.0 * 1.7);
+        let body = find(&frame, "Bravo").size;
+        assert!(body >= 17.0);
+        assert_eq!(find(&frame, "Test").size, body * 1.7);
     }
 
     #[test]
@@ -698,7 +775,7 @@ mod tests {
         let app = app("{title: Test}\n{start_of_verse: Verse One}\n[C]Alpha\n{end_of_verse}");
         let frame = at_step(&app, 190.0, 7);
         assert_eq!(count(&frame, "Test"), 0);
-        assert_eq!(find(&frame, "Alpha").size, 17.0);
+        assert!(find(&frame, "Alpha").size >= 17.0);
     }
 
     #[test]
@@ -721,7 +798,7 @@ mod tests {
         let lyric = find(&frame, "Alpha");
         assert!(chord.baseline < lyric.baseline);
         assert!(chord.x < lyric.x);
-        assert_eq!(lyric.size, 17.0);
+        assert!(lyric.size >= 17.0);
     }
 
     #[test]
@@ -741,15 +818,28 @@ mod tests {
 
     #[test]
     fn a_folded_tab_side_label_keeps_its_own_row() {
-        let app = app(
-            "{title: Test}\n{start_of_tab: T}\ne|--3--|\nB|--1--|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
+        let config = Config {
+            max_columns: 1.0,
+            ..Config::default()
+        };
+        let app = App::new(
+            cpl_song::parse("{title: Test}\n{start_of_tab: T}\ne|--3--|\nB|--1--|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}").song,
+            config,
+            Polarity::Light,
+            &Fixed,
         );
         let frame = at_step(&app, 190.0, 5);
         let tab = find(&frame, "T");
         let next = find(&frame, "Alpha");
         assert!(tab.x < next.x, "labels are in the side margin");
-        let row = app.config().line_height * app.config().body_size;
-        assert!(next.baseline - tab.baseline >= row - 0.01);
+        let row = app.config().line_height * next.size;
+        assert!(
+            next.baseline - tab.baseline >= row - 0.01,
+            "gap={} row={} size={}",
+            next.baseline - tab.baseline,
+            row,
+            next.size
+        );
     }
 
     #[test]
@@ -761,7 +851,7 @@ mod tests {
         assert_eq!(comment.ink, Ink::Soft);
         assert_eq!(comment.size, lyric.size);
         assert_eq!(comment.x, lyric.x);
-        let row = app.config().line_height * app.config().body_size;
+        let row = app.config().line_height * lyric.size;
         assert!((comment.baseline - lyric.baseline - row).abs() < 0.01);
     }
 
