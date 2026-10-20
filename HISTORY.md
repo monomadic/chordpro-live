@@ -6,6 +6,17 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **Epic closed: P0 — make the song page usable.** Six tasks, all checked
+  against the supplied “What's Up” source in a 1960×1504 px Retina window
+  (`--view <song> --size 980x720`): tablature blocks hidden from the page but
+  kept in the parsed song and the file; the screenshot reproduced at a fixed
+  window size with focused regression tests for hidden tab, chord-only Intro,
+  section context and post-tab text; the first viewport coherent, with no
+  orphaned chord row at startup or after Page Down; chord-only lines drawn as
+  compact rows; the title's quotation marks confirmed as authored; text after
+  a hidden tab kept visible, since the viewer cannot tell a legend from an
+  instruction. Unverified: a 1x window, and songs other than the supplied one.
+
 - **Prepared complete pages on a worker.** The macOS callback now sends
   viewport requests; a worker owns song measurement, layout and CoreText page
   composition. A generation check discards stale resize or scroll results,

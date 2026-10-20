@@ -24,8 +24,19 @@ describe these as implemented.
 ranked unknowns, and phases. Read the relevant section before structural
 work; do not re-litigate a settled decision without the user. When a
 decision changes, change the proposal in the same commit.
-[TASKS.md](TASKS.md) orders the remaining work; [HISTORY.md](HISTORY.md)
-records shipped changes and the checks that support them.
+## Working from the task list
+
+**[TASKS.md](TASKS.md) is where work comes from.** When you need something
+to do, take the first unchecked task in the highest open epic there; do not
+invent work the list does not name without the user. A task is checked off
+only after the real window check and the automated checks it names have
+passed. **When every task in an epic is checked, remove the epic from
+TASKS.md and record it in [HISTORY.md](HISTORY.md)** as one dated entry that
+names the epic, what shipped, what was checked, and anything left
+unverified. HISTORY.md is the record of shipped work; TASKS.md holds only
+open work, so a finished epic never lingers there. New work discovered while
+doing a task goes into TASKS.md under the right epic, not into the commit
+message alone.
 
 Architecture notes: [song](docs/architecture/chordpro.md),
 [layout](docs/architecture/layout.md), [app](docs/architecture/app.md),

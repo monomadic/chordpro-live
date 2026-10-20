@@ -3,41 +3,8 @@
 Ordered by impact on a singer using the macOS viewer. `PROPOSAL.md` holds the
 product decisions; this file tracks the work needed to make the current build
 meet them. A task is complete only after a real window check and the relevant
-automated checks.
-
-## P0 — make the song page usable
-
-- [x] Temporarily hide tablature blocks in the viewer. Keep them in the parsed
-  `Song` and the `.cho` file. Do not let a hidden tab consume fit or scroll
-  space. Headless tests and the real-song macOS window check passed.
-- [x] Reproduce the supplied **“What's Up”** screenshot with the source song
-  and a fixed `--view` window size. Capture fit and scroll states; check title,
-  intro, verse, chorus, chord alignment, margins, and the bottom edge. Keep a
-  small, redistributable regression fixture or equivalent test case. Use
-  `--view <song> --size 980x720` for the 1960×1504 px Retina window. The
-  initial and Page Down positions were inspected; focused synthetic tests
-  cover hidden tab, chord-only Intro, section context and post-tab plain text.
-- [x] Make the first viewport show a coherent part of the song. The screenshot
-  shows an isolated chord row near the bottom and a large gap above it. Audit
-  scroll group bounds, section breaks, and clipping so a chord row never
-  appears without its lyric line and no visible line is needlessly withheld.
-  The real-song window now shows the Intro, the complete first verse lines,
-  and no orphaned chord row; Page Down also preserves pairs.
-- [x] Check chord-only lines and section labels in real songs. An `Intro` with
-  only chords should read as intentional musical structure, not as a lyric
-  line with missing words. Compact chord-only rows and headless tests landed;
-  the supplied song shows a compact Intro chord row and Verse 1 label. After
-  Page Down, the status says CHORUS while its label is off screen.
-- [x] Verify the title displayed in the screenshot. Determine whether the
-  quotation marks are authored in the ChordPro title or introduced by parsing;
-  only change parsing if a minimal fixture proves the latter. The source
-  explicitly contains `{title: "What's Up"}`.
-- [x] Decide how the viewer should handle notation legends immediately after
-  hidden tab blocks. The supplied song has a technique key after `{end_of_tab}`
-  as ordinary text, and it currently appears as a large lyric line. Keep text
-  outside a tab block visible; it may be a performance instruction. Authors
-  can put tab-only notation inside the block to hide it with the tab. The app
-  never changes the source file.
+automated checks. When every task in an epic is checked, the epic moves to
+`HISTORY.md` (see AGENTS.md, "Working from the task list").
 
 ## P1 — dependable performance behavior
 
