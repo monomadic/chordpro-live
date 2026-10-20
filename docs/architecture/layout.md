@@ -1,14 +1,24 @@
 # Column fit
 
-`cpl-layout` receives measured section blocks in body-size units. It packs
+`cpl-layout` measures a song once with `measure_song` into a `MeasuredSong`:
+the header, each section's upper-cased label, and for every line two run
+lists with em offsets and widths, one with chords above the lyric (overhang
+pushing later lyrics right) and one with inline chords. It is the only stage
+that calls the host's `Measure`. A run's `Role` fixes its face, weight and em
+size through `Metrics::style`, so measurement and drawing cannot disagree.
+Text is measured at the body size rather than an abstract 1 em, because
+system-font tracking changes with point size. Equal strings in one role are
+measured once.
+
+Section blocks are built from those widths in body-size units. `fit` packs
 whole sections into up to four columns with the greedy rising-target method
 from `chordpro-tui/internal/pdf/layout.go`. For each column count it computes
 the largest body size allowed by the available width and height, then reports
 the best split and whether that split meets the configured floor.
 
 `cpl-app` currently calls the fitter with a maximum and floor equal to the
-17 pt stand body size. It measures each section through the host's `Measure`
-implementation and draws the chosen columns at that fixed size. If the full
+17 pt stand body size. It builds blocks from the measured runs and draws the
+chosen columns at that fixed size, placing each run at its measured offset. If the full
 section gap fails, it tries zero gap as ladder step 1. The app then tries
 short labels in the side margin (step 2) and a single-line header (step 3).
 The side-label choice is skipped when a label is too wide, so the collapsed

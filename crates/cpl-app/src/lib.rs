@@ -1,16 +1,8 @@
 //! Headless song-page composition. No window or GPU types cross this boundary.
 
+pub use cpl_layout::{Face, Measure};
+use cpl_layout::{MeasuredSection, MeasuredSong, Metrics, Role};
 use cpl_song::{SectionKind, Song};
-
-pub trait Measure {
-    fn width(&self, text: &str, size_pt: f32, weight: u16, face: Face) -> f32;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Face {
-    System,
-    Monospace,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Polarity {
@@ -160,9 +152,26 @@ impl Config {
     }
 }
 
+impl Config {
+    /// The type scale a song is measured with, once, at the body size.
+    pub fn metrics(&self) -> Metrics {
+        Metrics {
+            reference_size: self.body_size,
+            title_size: self.title_size,
+            subtitle_size: self.subtitle_size,
+            label_size: self.label_size,
+            chord_size: self.chord_size,
+            chord_gap: self.chord_gap,
+            inline_chord_size: self.inline_chord_size,
+            inline_chord_gap: self.inline_chord_gap,
+        }
+    }
+}
+
 pub struct App {
-    pub song: Song,
-    pub config: Config,
+    song: Song,
+    config: Config,
+    measured: MeasuredSong,
     pub polarity: Polarity,
 }
 
@@ -179,30 +188,45 @@ struct Candidate {
 }
 
 impl App {
+    /// Measures the song once. Every frame after this is arithmetic over that
+    /// measurement, so resizing, scrolling and polarity never call the host.
+    pub fn new(song: Song, config: Config, polarity: Polarity, measure: &impl Measure) -> Self {
+        let measured = cpl_layout::measure_song(&song, &config.metrics(), measure);
+        Self {
+            song,
+            config,
+            measured,
+            polarity,
+        }
+    }
+
+    pub fn song(&self) -> &Song {
+        &self.song
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
     /// Keeps the full song at the configured body size when fit mode cannot hold it.
     /// The caller owns the offset so navigation never changes the song model.
-    pub fn frame_scrolled(
-        &self,
-        width: f32,
-        height: f32,
-        measure: &impl Measure,
-        offset: f32,
-    ) -> (Frame, f32) {
-        let mut fit = self.frame(width, height, measure);
+    pub fn frame_scrolled(&self, width: f32, height: f32, offset: f32) -> (Frame, f32) {
+        let mut fit = self.frame(width, height);
         if fit.fits {
             return (fit, 0.0);
         }
         let c = &self.config;
         let body = c.body_size;
         let line_count: usize = self
-            .song
+            .measured
             .sections
             .iter()
             .map(|section| section.lines.len())
             .sum();
         let long_height = c.margin_top
             + (line_count as f32 * c.line_height
-                + self.song.sections.len() as f32 * (c.label_height + c.label_gap + c.section_gap)
+                + self.measured.sections.len() as f32
+                    * (c.label_height + c.label_gap + c.section_gap)
                 + 20.0)
                 * body;
         let full = Candidate {
@@ -215,12 +239,11 @@ impl App {
             inline_chords: false,
             ladder_step: 0,
         };
-        let mut long = self.frame_candidate(width, long_height, measure, full);
+        let mut long = self.frame_candidate(width, long_height, full);
         if !long.fits {
             long = self.frame_candidate(
                 width,
                 long_height,
-                measure,
                 Candidate {
                     inline_chords: true,
                     ladder_step: 9,
@@ -304,7 +327,7 @@ impl App {
         (frame, max_offset)
     }
 
-    pub fn frame(&self, width: f32, height: f32, measure: &impl Measure) -> Frame {
+    pub fn frame(&self, width: f32, height: f32) -> Frame {
         let full_options = Candidate {
             section_gap: self.config.section_gap,
             side_labels: false,
@@ -315,7 +338,7 @@ impl App {
             inline_chords: false,
             ladder_step: 0,
         };
-        let full = self.frame_candidate(width, height, measure, full_options);
+        let full = self.frame_candidate(width, height, full_options);
         if full.fits {
             return full;
         }
@@ -324,18 +347,18 @@ impl App {
             ladder_step: 1,
             ..full_options
         };
-        let compact = self.frame_candidate(width, height, measure, compact_options);
+        let compact = self.frame_candidate(width, height, compact_options);
         if compact.fits {
             return compact;
         }
-        let side_allowed = self.labels_fit_side(measure);
+        let side_allowed = self.labels_fit_side();
         let side_options = Candidate {
             side_labels: side_allowed,
             ladder_step: 2,
             ..compact_options
         };
         if side_allowed {
-            let side = self.frame_candidate(width, height, measure, side_options);
+            let side = self.frame_candidate(width, height, side_options);
             if side.fits {
                 return side;
             }
@@ -345,7 +368,7 @@ impl App {
             ladder_step: 3,
             ..side_options
         };
-        let header = self.frame_candidate(width, height, measure, header_options);
+        let header = self.frame_candidate(width, height, header_options);
         if header.fits {
             return header;
         }
@@ -355,12 +378,12 @@ impl App {
             ..header_options
         };
         if self
-            .song
+            .measured
             .sections
             .iter()
             .any(|section| section.kind == SectionKind::Tab)
         {
-            let tabs = self.frame_candidate(width, height, measure, tabs_options);
+            let tabs = self.frame_candidate(width, height, tabs_options);
             if tabs.fits {
                 return tabs;
             }
@@ -370,14 +393,13 @@ impl App {
             ladder_step: 7,
             ..tabs_options
         };
-        let title_dropped = self.frame_candidate(width, height, measure, no_title);
+        let title_dropped = self.frame_candidate(width, height, no_title);
         if title_dropped.fits {
             return title_dropped;
         }
         let repeated = self.frame_candidate(
             width,
             height,
-            measure,
             Candidate {
                 collapse_repeats: true,
                 ladder_step: 8,
@@ -390,7 +412,6 @@ impl App {
         self.frame_candidate(
             width,
             height,
-            measure,
             Candidate {
                 inline_chords: true,
                 ladder_step: 9,
@@ -400,35 +421,17 @@ impl App {
         )
     }
 
-    fn is_repeated_chorus(&self, index: usize) -> bool {
-        let section = &self.song.sections[index];
-        section.kind == SectionKind::Chorus
-            && self.song.sections[..index].iter().any(|earlier| {
-                earlier.kind == SectionKind::Chorus && earlier.lines == section.lines
-            })
-    }
-
-    fn labels_fit_side(&self, measure: &impl Measure) -> bool {
+    fn labels_fit_side(&self) -> bool {
         let c = &self.config;
         let body = c.body_size;
         let room = c.margin_x.min(c.column_gutter * body) - body * 0.25;
-        self.song.sections.iter().all(|section| {
-            measure.width(
-                &section.label.to_uppercase(),
-                c.label_size * body,
-                700,
-                Face::Monospace,
-            ) <= room
-        })
+        self.measured
+            .sections
+            .iter()
+            .all(|section| section.label_width * body <= room)
     }
 
-    fn frame_candidate(
-        &self,
-        width: f32,
-        height: f32,
-        measure: &impl Measure,
-        candidate: Candidate,
-    ) -> Frame {
+    fn frame_candidate(&self, width: f32, height: f32, candidate: Candidate) -> Frame {
         let Candidate {
             section_gap,
             side_labels,
@@ -450,14 +453,14 @@ impl App {
             columns: 0,
             ladder_step,
         };
-        let title = self.song.first_meta("title").unwrap_or("Untitled");
+        let header = &self.measured.header;
         let title_size = c.title_size * body;
         let mut y = c.margin_top;
         if !hide_title {
             y += title_size;
             frame.text.push(Text {
                 group: 0,
-                content: title.into(),
+                content: header.title.clone(),
                 x: c.margin_x,
                 baseline: y,
                 size: title_size,
@@ -466,9 +469,9 @@ impl App {
                 ink: Ink::Strong,
             });
         }
-        if let Some(artist) = self.song.first_meta("artist") {
+        if let Some(artist) = &header.artist {
             let artist_x = if collapsed_header && !hide_title {
-                c.margin_x + measure.width(title, title_size, 600, Face::System) + body * 0.8
+                c.margin_x + header.title_width * body + body * 0.8
             } else {
                 y += if hide_title {
                     c.subtitle_size * body
@@ -479,7 +482,7 @@ impl App {
             };
             frame.text.push(Text {
                 group: 0,
-                content: artist.into(),
+                content: artist.clone(),
                 x: artist_x,
                 baseline: y,
                 size: c.subtitle_size * body,
@@ -491,57 +494,34 @@ impl App {
         y += c.header_gap * body;
         let content_end = height - c.margin_bottom - body * 1.5;
         let blocks: Vec<cpl_layout::Block> = self
-            .song
+            .measured
             .sections
             .iter()
-            .enumerate()
-            .map(|(index, section)| {
-                let visible_lines = if fold_tabs && section.kind == SectionKind::Tab {
-                    0
-                } else if collapse_repeats && self.is_repeated_chorus(index) {
-                    section.lines.len().min(1)
-                } else {
-                    section.lines.len()
-                };
-                let label_width = measure.width(
-                    &section.label.to_uppercase(),
-                    c.label_size * body,
-                    700,
-                    Face::Monospace,
-                ) / body;
+            .map(|section| {
+                let visible = visible_lines(section, fold_tabs, collapse_repeats);
                 let line_width = section
                     .lines
                     .iter()
-                    .take(visible_lines)
-                    .map(|line| {
-                        line_width(
-                            line,
-                            c,
-                            measure,
-                            inline_chords,
-                            section.kind == SectionKind::Tab,
-                        ) / body
-                    })
+                    .take(visible)
+                    .map(|line| line.width(inline_chords))
                     .fold(0.0, f32::max);
+                let label_height = if section.label.is_empty() || side_labels {
+                    0.0
+                } else {
+                    c.label_height + c.label_gap
+                };
+                let line_height = if inline_chords && section.kind != SectionKind::Tab {
+                    c.inline_line_height
+                } else {
+                    c.line_height
+                };
                 cpl_layout::Block {
                     width: if side_labels {
                         line_width
                     } else {
-                        label_width.max(line_width)
+                        section.label_width.max(line_width)
                     },
-                    height: (if section.label.is_empty() || side_labels {
-                        0.0
-                    } else {
-                        c.label_height + c.label_gap
-                    }) + (if fold_tabs && section.kind == SectionKind::Tab {
-                        if side_labels { c.line_height } else { 0.0 }
-                    } else if section.kind == SectionKind::Tab {
-                        c.line_height
-                    } else if inline_chords {
-                        c.inline_line_height
-                    } else {
-                        c.line_height
-                    }) * visible_lines as f32,
+                    height: label_height + line_height * visible as f32,
                 }
             })
             .collect();
@@ -559,24 +539,21 @@ impl App {
         let fit = cpl_layout::fit(&blocks, base_options);
         frame.fits = fit.meets_floor;
         if side_labels {
-            frame.fits &= self.labels_fit_side(measure);
+            frame.fits &= self.labels_fit_side();
         }
-        if collapsed_header
-            && !hide_title
-            && let Some(artist) = self.song.first_meta("artist")
-        {
-            let title_width = measure.width(title, title_size, 600, Face::System);
-            let artist_width = measure.width(artist, c.subtitle_size * body, 400, Face::System);
-            frame.fits &= title_width + artist_width + body * 0.8 <= width - 2.0 * c.margin_x;
+        if collapsed_header && !hide_title && header.artist.is_some() {
+            frame.fits &= header.title_width * body + header.artist_width * body + body * 0.8
+                <= width - 2.0 * c.margin_x;
         }
         frame.columns = if frame.fits { fit.columns.len() } else { 0 };
         if frame.fits {
+            let metrics = c.metrics();
             let mut column_x = c.margin_x;
             let mut line_group = 1;
             for range in &fit.columns {
                 let mut section_y = y;
                 for (offset, index) in range.clone().enumerate() {
-                    let section = &self.song.sections[index];
+                    let section = &self.measured.sections[index];
                     if offset > 0 {
                         section_y += section_gap * body;
                     }
@@ -584,27 +561,21 @@ impl App {
                         if !side_labels {
                             section_y += c.label_height * body;
                         }
-                        let label_width = measure.width(
-                            &section.label.to_uppercase(),
-                            c.label_size * body,
-                            700,
-                            Face::Monospace,
-                        );
                         frame.text.push(Text {
                             group: line_group,
-                            content: section.label.to_uppercase(),
+                            content: section.label.clone(),
                             x: if side_labels {
-                                column_x - label_width - body * 0.25
+                                column_x - section.label_width * body - body * 0.25
                             } else {
                                 column_x
                             },
                             baseline: if side_labels {
                                 section_y
-                                    + if inline_chords {
+                                    + (if inline_chords {
                                         c.inline_lyric_baseline
                                     } else {
                                         c.lyric_baseline
-                                    } * body
+                                    }) * body
                             } else {
                                 section_y
                             },
@@ -621,108 +592,37 @@ impl App {
                             section_y += c.label_gap * body;
                         }
                     }
-                    let visible_lines = if fold_tabs && section.kind == SectionKind::Tab {
-                        0
-                    } else if collapse_repeats && self.is_repeated_chorus(index) {
-                        section.lines.len().min(1)
-                    } else {
-                        section.lines.len()
-                    };
-                    for line in section.lines.iter().take(visible_lines) {
-                        if section.kind == SectionKind::Tab {
+                    let visible = visible_lines(section, fold_tabs, collapse_repeats);
+                    // Tablature keeps its own monospaced rows in every candidate.
+                    let inline = inline_chords && section.kind != SectionKind::Tab;
+                    for line in section.lines.iter().take(visible) {
+                        for run in line.runs(inline) {
+                            let style = metrics.style(run.role);
+                            let (baseline, ink) = match run.role {
+                                Role::Chord => (c.chord_baseline, Ink::Soft),
+                                Role::InlineChord => (c.inline_chord_baseline, Ink::Soft),
+                                Role::Lyric if inline => (c.inline_lyric_baseline, Ink::Strong),
+                                _ => (c.lyric_baseline, Ink::Strong),
+                            };
                             frame.text.push(Text {
                                 group: line_group,
-                                content: line.lyrics(),
-                                x: column_x,
-                                baseline: section_y + c.lyric_baseline * body,
-                                size: body,
-                                weight: 400,
-                                face: Face::Monospace,
-                                ink: Ink::Strong,
+                                content: run.text.clone(),
+                                x: column_x + run.x * body,
+                                baseline: section_y + baseline * body,
+                                size: style.size * body,
+                                weight: style.weight,
+                                face: style.face,
+                                ink,
                             });
-                            section_y += c.line_height * body;
-                            line_group += 1;
-                            continue;
                         }
-                        if inline_chords {
-                            let mut x = column_x;
-                            for segment in &line.segments {
-                                if let Some(chord) = &segment.chord {
-                                    frame.text.push(Text {
-                                        group: line_group,
-                                        content: chord.clone(),
-                                        x,
-                                        baseline: section_y + c.inline_chord_baseline * body,
-                                        size: c.inline_chord_size * body,
-                                        weight: 600,
-                                        face: Face::Monospace,
-                                        ink: Ink::Soft,
-                                    });
-                                    x += measure.width(
-                                        chord,
-                                        c.inline_chord_size * body,
-                                        600,
-                                        Face::Monospace,
-                                    ) + c.inline_chord_gap * body;
-                                }
-                                if !segment.lyric.is_empty() {
-                                    frame.text.push(Text {
-                                        group: line_group,
-                                        content: segment.lyric.clone(),
-                                        x,
-                                        baseline: section_y + c.inline_lyric_baseline * body,
-                                        size: body,
-                                        weight: 400,
-                                        face: Face::System,
-                                        ink: Ink::Strong,
-                                    });
-                                    x += measure.width(&segment.lyric, body, 400, Face::System);
-                                }
-                            }
-                            section_y += c.inline_line_height * body;
-                            line_group += 1;
-                            continue;
-                        }
-                        let chord_y = section_y + c.chord_baseline * body;
-                        let lyric_y = section_y + c.lyric_baseline * body;
-                        let mut lyric_x = column_x;
-                        let mut chord_x = column_x;
-                        for segment in &line.segments {
-                            if let Some(chord) = &segment.chord {
-                                chord_x = chord_x.max(lyric_x);
-                                frame.text.push(Text {
-                                    group: line_group,
-                                    content: chord.clone(),
-                                    x: chord_x,
-                                    baseline: chord_y,
-                                    size: c.chord_size * body,
-                                    weight: 600,
-                                    face: Face::Monospace,
-                                    ink: Ink::Soft,
-                                });
-                                chord_x +=
-                                    measure.width(chord, c.chord_size * body, 600, Face::Monospace)
-                                        + c.chord_gap * body;
-                            }
-                            if !segment.lyric.is_empty() {
-                                frame.text.push(Text {
-                                    group: line_group,
-                                    content: segment.lyric.clone(),
-                                    x: lyric_x,
-                                    baseline: lyric_y,
-                                    size: body,
-                                    weight: 400,
-                                    face: Face::System,
-                                    ink: Ink::Strong,
-                                });
-                                lyric_x += measure.width(&segment.lyric, body, 400, Face::System);
-                            }
-                            lyric_x = lyric_x.max(chord_x - c.chord_gap * body);
-                        }
-                        section_y += c.line_height * body;
+                        section_y += if inline {
+                            c.inline_line_height * body
+                        } else {
+                            c.line_height * body
+                        };
                         line_group += 1;
                     }
-                    if visible_lines == 0 {
+                    if visible == 0 {
                         line_group += 1;
                     }
                 }
@@ -778,45 +678,14 @@ impl App {
     }
 }
 
-fn line_width(
-    line: &cpl_song::Line,
-    c: &Config,
-    measure: &impl Measure,
-    inline: bool,
-    tab: bool,
-) -> f32 {
-    if tab {
-        return measure.width(&line.lyrics(), c.body_size, 400, Face::Monospace);
+fn visible_lines(section: &MeasuredSection, fold_tabs: bool, collapse_repeats: bool) -> usize {
+    if fold_tabs && section.kind == SectionKind::Tab {
+        0
+    } else if collapse_repeats && section.repeats_earlier {
+        section.lines.len().min(1)
+    } else {
+        section.lines.len()
     }
-    if inline {
-        return line
-            .segments
-            .iter()
-            .map(|segment| {
-                measure.width(&segment.lyric, c.body_size, 400, Face::System)
-                    + segment.chord.as_ref().map_or(0.0, |chord| {
-                        measure.width(
-                            chord,
-                            c.inline_chord_size * c.body_size,
-                            600,
-                            Face::Monospace,
-                        ) + c.inline_chord_gap * c.body_size
-                    })
-            })
-            .sum();
-    }
-    let mut lyric_x: f32 = 0.0;
-    let mut chord_x: f32 = 0.0;
-    for segment in &line.segments {
-        if let Some(chord) = &segment.chord {
-            chord_x = chord_x.max(lyric_x)
-                + measure.width(chord, c.chord_size * c.body_size, 600, Face::Monospace)
-                + c.chord_gap * c.body_size;
-        }
-        lyric_x += measure.width(&segment.lyric, c.body_size, 400, Face::System);
-        lyric_x = lyric_x.max(chord_x - c.chord_gap * c.body_size);
-    }
-    lyric_x.max(chord_x - c.chord_gap * c.body_size)
 }
 
 #[cfg(test)]
@@ -836,12 +705,8 @@ mod tests {
             "{title: Test}\n{start_of_verse: Verse 1}\n[C]Hello [G]world\n{end_of_verse}",
         )
         .song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let frame = app.frame(900.0, 600.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let frame = app.frame(900.0, 600.0);
         assert!(frame.fits);
         let chord = frame.text.iter().find(|t| t.content == "C").unwrap();
         let lyric = frame.text.iter().find(|t| t.content == "Hello ").unwrap();
@@ -852,12 +717,8 @@ mod tests {
     #[test]
     fn never_draws_overflowing_lyrics_under_the_floor() {
         let song = cpl_song::parse("{title: Test}\n[C]Hello").song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Dark,
-        };
-        let frame = app.frame(100.0, 90.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Dark, &Fixed);
+        let frame = app.frame(100.0, 90.0);
         assert!(!frame.fits);
         assert!(!frame.text.iter().any(|t| t.content == "Hello"));
     }
@@ -867,12 +728,8 @@ mod tests {
         let song = cpl_song::parse(
             "{title: Test}\n{start_of_verse: One}\n[C]Alpha\n{end_of_verse}\n{start_of_chorus: Two}\n[G]Bravo\n{end_of_chorus}\n{start_of_verse: Three}\n[Am]Charlie\n{end_of_verse}",
         ).song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let frame = app.frame(900.0, 230.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let frame = app.frame(900.0, 230.0);
         assert!(frame.fits);
         let lyrics: Vec<_> = frame
             .text
@@ -889,12 +746,8 @@ mod tests {
         let song = cpl_song::parse(
             "{title: Test}\n{start_of_verse: Verse 1}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: Verse 2}\n[G]Bravo\n{end_of_verse}",
         ).song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let frame = app.frame(190.0, 285.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let frame = app.frame(190.0, 285.0);
         assert!(frame.fits);
         assert_eq!(frame.columns, 1);
         assert_eq!(frame.ladder_step, 1);
@@ -911,12 +764,8 @@ mod tests {
         let song = cpl_song::parse(
             "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: B}\n[G]Bravo\n{end_of_verse}",
         ).song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let frame = app.frame(190.0, 245.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let frame = app.frame(190.0, 245.0);
         assert!(frame.fits);
         assert_eq!(frame.ladder_step, 2);
         let label = frame.text.iter().find(|item| item.content == "A").unwrap();
@@ -933,12 +782,8 @@ mod tests {
         let song = cpl_song::parse(
             "{title: Test}\n{artist: Ada}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: B}\n[G]Bravo\n{end_of_verse}",
         ).song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let frame = app.frame(190.0, 210.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let frame = app.frame(190.0, 210.0);
         assert!(frame.fits);
         assert_eq!(frame.ladder_step, 3);
         let title = frame
@@ -960,12 +805,8 @@ mod tests {
             "{title: Test}\n{artist: Ada}\n{start_of_verse: Verse One}\n[C]Alpha\n{end_of_verse}",
         )
         .song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let frame = app.frame(190.0, 205.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let frame = app.frame(190.0, 205.0);
         assert!(frame.fits);
         assert_eq!(frame.ladder_step, 3);
         let label = frame
@@ -986,12 +827,8 @@ mod tests {
         let song =
             cpl_song::parse("{title: Test}\n{start_of_verse: Verse One}\n[C]Alpha\n{end_of_verse}")
                 .song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let frame = app.frame(190.0, 180.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let frame = app.frame(190.0, 180.0);
         assert!(frame.fits);
         assert_eq!(frame.ladder_step, 7);
         assert!(!frame.text.iter().any(|item| item.content == "Test"));
@@ -1008,12 +845,8 @@ mod tests {
         let song = cpl_song::parse(
             "{title: Test}\n{start_of_chorus: A}\n[C]Echo\n[G]Again\n{end_of_chorus}\n{start_of_chorus: A}\n[C]Echo\n[G]Again\n{end_of_chorus}",
         ).song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let frame = app.frame(190.0, 235.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let frame = app.frame(190.0, 235.0);
         assert!(frame.fits);
         assert_eq!(frame.ladder_step, 8);
         assert_eq!(
@@ -1040,12 +873,8 @@ mod tests {
             "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n[G]Bravo\n[Am]Charlie\n{end_of_verse}",
         )
         .song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let frame = app.frame(300.0, 200.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let frame = app.frame(300.0, 200.0);
         assert!(frame.fits);
         assert_eq!(frame.ladder_step, 9);
         let chord = frame.text.iter().find(|item| item.content == "C").unwrap();
@@ -1065,12 +894,8 @@ mod tests {
             "{title: Test}\n{start_of_tab: Intro}\ne|--[3]---|\nB|---1----|\nG|---0----|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
         )
         .song;
-        let app = App {
-            song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let full = app.frame(320.0, 600.0, &Fixed);
+        let app = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        let full = app.frame(320.0, 600.0);
         let tab = full
             .text
             .iter()
@@ -1078,7 +903,7 @@ mod tests {
             .unwrap();
         assert_eq!(tab.face, Face::Monospace);
         let folded = (170..450)
-            .map(|height| app.frame(320.0, height as f32, &Fixed))
+            .map(|height| app.frame(320.0, height as f32))
             .find(|frame| frame.fits && frame.ladder_step == 5)
             .expect("a viewport where folding tab makes the page fit");
         assert!(folded.text.iter().any(|item| item.content == "INTRO"));
@@ -1093,12 +918,13 @@ mod tests {
             source.push_str(&format!("[C]Line {index}\n"));
         }
         source.push_str("{end_of_verse}");
-        let app = App {
-            song: cpl_song::parse(&source).song,
-            config: Config::default(),
-            polarity: Polarity::Light,
-        };
-        let (first, max_offset) = app.frame_scrolled(450.0, 260.0, &Fixed, 0.0);
+        let app = App::new(
+            cpl_song::parse(&source).song,
+            Config::default(),
+            Polarity::Light,
+            &Fixed,
+        );
+        let (first, max_offset) = app.frame_scrolled(450.0, 260.0, 0.0);
         assert_eq!(first.ladder_step, 10);
         assert!(max_offset > 0.0);
         assert!(first.text.iter().any(|item| item.content == "Line 0"));
@@ -1111,7 +937,7 @@ mod tests {
                     .any(|item| { item.group == chord.group && item.content.starts_with("Line ") })
             );
         }
-        let (last, _) = app.frame_scrolled(450.0, 260.0, &Fixed, max_offset);
+        let (last, _) = app.frame_scrolled(450.0, 260.0, max_offset);
         assert!(last.text.iter().any(|item| item.content == "Line 17"));
         assert!(
             last.text

@@ -43,7 +43,6 @@ impl Viewer {
         let (mut frame, max_offset) = self.app.frame_scrolled(
             size.width as f32 / scale,
             size.height as f32 / scale,
-            &CoreText,
             self.scroll_offset,
         );
         self.scroll_max = max_offset;
@@ -54,7 +53,6 @@ impl Viewer {
                 .frame_scrolled(
                     size.width as f32 / scale,
                     size.height as f32 / scale,
-                    &CoreText,
                     self.scroll_offset,
                 )
                 .0;
@@ -124,13 +122,13 @@ impl ApplicationHandler for Viewer {
                 }
                 Key::Named(NamedKey::ArrowDown) => {
                     self.scroll_offset = (self.scroll_offset
-                        + self.app.config.line_height * self.app.config.body_size)
+                        + self.app.config().line_height * self.app.config().body_size)
                         .min(self.scroll_max);
                     self.update_page();
                 }
                 Key::Named(NamedKey::ArrowUp) => {
                     self.scroll_offset = (self.scroll_offset
-                        - self.app.config.line_height * self.app.config.body_size)
+                        - self.app.config().line_height * self.app.config().body_size)
                         .max(0.0);
                     self.update_page();
                 }
@@ -220,15 +218,16 @@ fn main() -> ExitCode {
     }
     let event_loop = EventLoop::new().expect("create event loop");
     let mut viewer = Viewer {
-        app: App {
-            song: result.song,
-            config: Config::default(),
-            polarity: if dark {
+        app: App::new(
+            result.song,
+            Config::default(),
+            if dark {
                 Polarity::Dark
             } else {
                 Polarity::Light
             },
-        },
+            &CoreText,
+        ),
         initial_size: if inline {
             (300.0, 200.0)
         } else if scroll {

@@ -9,8 +9,9 @@ It is not an editor and never writes a `.cho` file.
 ## Status
 
 An initial macOS viewer is built. `cpl-song` parses a small ChordPro slice;
-`cpl-layout` fits whole sections into columns at the stand-size floor;
-`cpl-app` composes the page; `cpl-render` composites CoreText
+`cpl-layout` measures each song once into em-unit runs and fits whole
+sections into columns at the stand-size floor; `cpl-app` composes the page
+from those runs without measuring again; `cpl-render` composites CoreText
 rasters into a wgpu texture; `src/main.rs` hosts the winit window. The
 diagram and metadata-pill reduction steps, paged mode, library, full
 ChordPro 6 conformance, text atlas, and iOS host are still planned. Do not describe

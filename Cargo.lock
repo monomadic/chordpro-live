@@ -329,6 +329,9 @@ dependencies = [
 [[package]]
 name = "cpl-layout"
 version = "0.1.0"
+dependencies = [
+ "cpl-song",
+]
 
 [[package]]
 name = "cpl-render"

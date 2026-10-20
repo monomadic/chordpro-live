@@ -1,4 +1,11 @@
-//! Pure arithmetic for fitting measured section blocks into columns.
+//! Song measurement and the pure arithmetic that fits measured blocks into columns.
+
+mod measure;
+
+pub use measure::{
+    Face, Header, Measure, MeasuredLine, MeasuredSection, MeasuredSong, Metrics, Role, Run, Style,
+    measure_song,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Block {

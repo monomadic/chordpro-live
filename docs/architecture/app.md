@@ -1,8 +1,10 @@
 # App and page composition
 
 `cpl-app` owns the current headless `App`, `Config`, and plain `Frame` data.
-The macOS host passes a parsed `Song`, logical window dimensions, and a text
-`Measure` implementation. `cpl-app` has no window or GPU dependency.
+`App::new` takes a parsed `Song` and the host's text `Measure`, and measures
+the song once. `frame` and `frame_scrolled` then take only logical window
+dimensions and the scroll offset, and never measure, so resize, scroll and
+polarity changes are arithmetic. `cpl-app` has no window or GPU dependency.
 
 The page uses up to four stand-size columns. Chords and lyrics share a
 line block: the chord baseline is immediately above the lyric baseline, and
