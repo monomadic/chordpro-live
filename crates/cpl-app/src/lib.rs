@@ -214,13 +214,24 @@ impl App {
     /// Measures the floor and each whole-point candidate up to the configured
     /// maximum. Resizing, scrolling and polarity then need no host measurement.
     pub fn new(song: Song, config: Config, polarity: Polarity, measure: &impl Measure) -> Self {
-        let measured = cpl_layout::measure_song(&song, &config.metrics(), measure);
+        // Keep the parsed source intact. Tablature is temporarily omitted from
+        // the performance page until it has a deliberate, readable layout.
+        let display_song = Song {
+            metadata: song.metadata.clone(),
+            sections: song
+                .sections
+                .iter()
+                .filter(|section| section.kind != SectionKind::Tab)
+                .cloned()
+                .collect(),
+        };
+        let measured = cpl_layout::measure_song(&display_song, &config.metrics(), measure);
         let mut larger = Vec::new();
         let mut size = config.body_size.floor() + 1.0;
         while size <= config.max_body_size {
             larger.push((
                 size,
-                cpl_layout::measure_song(&song, &config.metrics_at(size), measure),
+                cpl_layout::measure_song(&display_song, &config.metrics_at(size), measure),
             ));
             size += 1.0;
         }
@@ -231,7 +242,11 @@ impl App {
         {
             larger.push((
                 config.max_body_size,
-                cpl_layout::measure_song(&song, &config.metrics_at(config.max_body_size), measure),
+                cpl_layout::measure_song(
+                    &display_song,
+                    &config.metrics_at(config.max_body_size),
+                    measure,
+                ),
             ));
         }
         Self {
@@ -757,17 +772,17 @@ mod tests {
     }
 
     #[test]
-    fn a_long_header_still_lets_tablature_fold_before_the_title_drops() {
+    fn tablature_is_preserved_in_the_song_but_hidden_from_the_page() {
         let app = app(
-            "{title: A Rather Long Title}\n{artist: Somebody Famous}\n{start_of_tab: Intro}\ne|--3---|\nB|--1---|\nG|--0---|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
+            "{title: Test}\n{start_of_tab: Intro}\ne|--3---|\nB|--1---|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
         );
-        let width = 2.0 * app.config.margin_x
-            + app.measured.header.title_width * app.config.body_size
-            + 1.0;
-        assert!((40..1600).all(|h| app.frame(width, h as f32).ladder_step != 3));
-        let frame = at_step(&app, width, 5);
-        assert_eq!(count(&frame, "A Rather Long Title"), 1);
+        assert_eq!(app.song().sections[0].kind, SectionKind::Tab);
+        assert_eq!(app.song().sections[0].lines[0].lyrics(), "e|--3---|");
+        let frame = app.frame(900.0, 600.0);
+        assert!(frame.fits);
+        assert_eq!(count(&frame, "INTRO"), 0);
         assert_eq!(count(&frame, "e|--3---|"), 0);
+        assert_eq!(count(&frame, "Alpha"), 1);
     }
 
     #[test]
@@ -802,44 +817,21 @@ mod tests {
     }
 
     #[test]
-    fn tab_is_monospaced_and_folds_at_step_five() {
-        let app = app(
-            "{title: Test}\n{start_of_tab: Intro}\ne|--[3]---|\nB|---1----|\nG|---0----|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
+    fn tablature_stays_hidden_in_scroll_mode() {
+        let mut source = String::from(
+            "{title: Test}\n{start_of_tab: Tab}\ne|--3---|\n{end_of_tab}\n{start_of_verse: A}\n",
         );
-        assert_eq!(
-            find(&app.frame(320.0, 600.0), "e|--[3]---|").face,
-            Face::Monospace
-        );
-        let folded = at_step(&app, 320.0, 5);
-        assert_eq!(count(&folded, "INTRO"), 1);
-        assert_eq!(count(&folded, "e|--[3]---|"), 0);
-        assert_eq!(count(&folded, "Alpha"), 1);
-    }
-
-    #[test]
-    fn a_folded_tab_side_label_keeps_its_own_row() {
-        let config = Config {
-            max_columns: 1.0,
-            ..Config::default()
-        };
-        let app = App::new(
-            cpl_song::parse("{title: Test}\n{start_of_tab: T}\ne|--3--|\nB|--1--|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}").song,
-            config,
-            Polarity::Light,
-            &Fixed,
-        );
-        let frame = at_step(&app, 190.0, 5);
-        let tab = find(&frame, "T");
-        let next = find(&frame, "Alpha");
-        assert!(tab.x < next.x, "labels are in the side margin");
-        let row = app.config().line_height * next.size;
-        assert!(
-            next.baseline - tab.baseline >= row - 0.01,
-            "gap={} row={} size={}",
-            next.baseline - tab.baseline,
-            row,
-            next.size
-        );
+        for index in 0..18 {
+            source.push_str(&format!("[C]Line {index}\n"));
+        }
+        source.push_str("{end_of_verse}");
+        let app = app(&source);
+        let (first, max_offset) = app.frame_scrolled(450.0, 260.0, 0.0);
+        assert!(max_offset > 0.0);
+        assert!(first.text.iter().all(|item| item.content != "TAB"));
+        let (last, _) = app.frame_scrolled(450.0, 260.0, max_offset);
+        assert!(last.text.iter().all(|item| item.content != "e|--3---|"));
+        assert_eq!(count(&last, "Line 17"), 1);
     }
 
     #[test]

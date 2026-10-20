@@ -10,18 +10,21 @@ It is not an editor and never writes a `.cho` file.
 
 An initial macOS viewer is built. `cpl-song` parses a growing ChordPro 6 subset
 ([what it covers](docs/architecture/chordpro.md));
-`cpl-layout` measures each song once into em-unit runs and fits whole
-sections into columns at the stand-size floor; `cpl-app` composes the page
+`cpl-layout` measures each song at the floor and larger point sizes into em-unit
+runs and fits whole sections into columns; `cpl-app` composes the page
 from those runs without measuring again; `cpl-render` composites CoreText
-rasters into a wgpu texture; `src/main.rs` hosts the winit window. The
-diagram and metadata-pill reduction steps, paged mode, library, full
-ChordPro 6 conformance, text atlas, and iOS host are still planned. Do not describe
-these as implemented.
+rasters into a wgpu texture; `src/main.rs` hosts the winit window. The viewer
+currently hides tablature blocks while preserving them in the parsed song.
+The diagram and metadata-pill reduction steps, paged mode, library, full
+ChordPro 6 conformance, text atlas, and iOS host are still planned. Do not
+describe these as implemented.
 
 [PROPOSAL.md](PROPOSAL.md) remains the source of truth for design decisions,
 ranked unknowns, and phases. Read the relevant section before structural
 work; do not re-litigate a settled decision without the user. When a
 decision changes, change the proposal in the same commit.
+[TASKS.md](TASKS.md) orders the remaining work; [HISTORY.md](HISTORY.md)
+records shipped changes and the checks that support them.
 
 Architecture notes: [song](docs/architecture/chordpro.md),
 [layout](docs/architecture/layout.md), [app](docs/architecture/app.md),

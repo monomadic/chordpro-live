@@ -39,3 +39,5 @@ larger premeasured sizes in descending order and draws the largest that fits.
 Each candidate is checked using font advances measured at its actual point
 size. A viewport's prepared scroll page stays at the floor. Point-size
 presets and paged mode are still to come.
+The app currently omits tablature from the display song before measuring, so
+step 5 is inactive for the macOS viewer while the source model retains the tab.

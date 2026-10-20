@@ -1,12 +1,15 @@
 # App and page composition
 
 `cpl-app` owns the current headless `App`, `Config`, and plain `Frame` data.
-`App::new` takes a parsed `Song` and the host's text `Measure`, and measures
-the song once. `frame` and `frame_scrolled` then take only logical window
-dimensions and the scroll offset, and never measure, so resize, scroll and
-polarity changes are arithmetic. `cpl-app` has no window or GPU dependency.
+`App::new` takes a parsed `Song` and the host's text `Measure`. It keeps the
+source song intact but excludes tablature sections from the measured display
+song for now. It measures the display song at the floor and larger whole-point
+sizes up to the configured maximum. `frame` and `frame_scrolled` then take
+only logical window dimensions and the scroll offset, and never measure, so
+resize, scroll and polarity changes are arithmetic. `cpl-app` has no window
+or GPU dependency.
 
-The page uses up to four stand-size columns. Chords and lyrics share a
+The page uses up to four columns. Chords and lyrics share a
 line block: the chord baseline is immediately above the lyric baseline, and
 section labels have their own gap. All page dimensions are in
 `config/default.toml`; font sizes are points and the other values are in
