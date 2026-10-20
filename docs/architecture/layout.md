@@ -2,8 +2,9 @@
 
 `cpl-layout` measures a song once with `measure_song` into a `MeasuredSong`:
 the header, each section's upper-cased label, and for every line two run
-lists with em offsets and widths, one with chords above the lyric (overhang
-pushing later lyrics right) and one with inline chords. It is the only stage
+lists with em offsets and widths, one with chords above the lyric and one
+with inline chords. A chord wider than its syllable pushes the next lyric past
+the chord and its gap, so every chord starts exactly over the syllable it names. It is the only stage
 that calls the host's `Measure`. A run's `Role` fixes its face, weight and em
 size through `Metrics::style`, so measurement and drawing cannot disagree.
 Text is measured at the body size rather than an abstract 1 em, because

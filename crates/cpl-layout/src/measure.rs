@@ -221,22 +221,26 @@ impl<M: Measure> Measurer<'_, M> {
         let gap = self.metrics.chord_gap;
         let mut above = Vec::new();
         let (mut lyric_x, mut chord_x) = (0.0_f32, 0.0_f32);
+        let mut above_width = 0.0_f32;
         for segment in &line.segments {
             if let Some(chord) = &segment.chord {
                 chord_x = chord_x.max(lyric_x);
                 let run = self.run(Role::Chord, chord, chord_x);
                 chord_x += run.width + gap;
+                above_width = above_width.max(run.x + run.width);
                 above.push(run);
             }
             if !segment.lyric.is_empty() {
                 let run = self.run(Role::Lyric, &segment.lyric, lyric_x);
                 lyric_x += run.width;
+                above_width = above_width.max(lyric_x);
                 above.push(run);
             }
-            // A chord wider than its syllable pushes the next lyric right.
-            lyric_x = lyric_x.max(chord_x - gap);
+            // A chord wider than its syllable pushes the next lyric past the
+            // chord and its gap, which is exactly where the next chord can
+            // start, so every chord still sits over the syllable it names.
+            lyric_x = lyric_x.max(chord_x);
         }
-        let above_width = lyric_x.max(chord_x - gap);
 
         let inline_gap = self.metrics.inline_chord_gap;
         let mut inline = Vec::new();
@@ -321,10 +325,26 @@ mod tests {
         let next_lyric = runs.iter().find(|r| r.text == "bc").unwrap();
         let next_chord = runs.iter().find(|r| r.text == "G").unwrap();
         assert_eq!(next_chord.x, 3.0, "chords keep a gap between them");
-        assert!(
-            next_lyric.x >= 2.5,
-            "the lyric clears the overhanging chord"
+        assert_eq!(
+            next_lyric.x, next_chord.x,
+            "the chord stays over its syllable"
         );
+    }
+
+    #[test]
+    fn every_chord_starts_at_its_own_lyric() {
+        let (song, _) = measured("[Cmaj7]I [G]love [F#m7b5]a [D]song [E]");
+        let runs = &song.sections[0].lines[0].above;
+        for pair in runs.windows(2) {
+            if pair[0].role == Role::Chord && pair[1].role == Role::Lyric {
+                assert_eq!(
+                    pair[0].x, pair[1].x,
+                    "{} over {:?}",
+                    pair[0].text, pair[1].text
+                );
+            }
+            assert!(pair[1].x >= pair[0].x, "runs move left to right");
+        }
     }
 
     #[test]
