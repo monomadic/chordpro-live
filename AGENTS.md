@@ -62,6 +62,14 @@ rationale behind what is reused here:
 | abner (Rust) | `~/src/abner` | slim crate layout, complete-default TOML config, SDF quad pipeline, `--view` flags, chromeless window shims |
 | chordpro-library | `~/src/chordpro-library` | the local ChordPro 6 working specs |
 
+chordpro-tui is the original ChordPro app this viewer grows out of: a Go
+terminal renderer that already fits a whole song on one screen, with a fit
+search, reduction ladder, transpose, chord diagrams, a song finder, and a
+one-page PDF exporter. Most layout and product questions here were first
+answered there, so read its `README.md`, `doc/`, and `internal/` before
+designing a feature it already has, and treat its behaviour as the baseline
+this app should match or consciously improve on.
+
 When porting something, port its tests with it and name the source file in
 the commit message.
 
