@@ -173,18 +173,44 @@ usage: cpl --view <song.cho>              open a song in the viewer
        cpl --view page-dark <song.cho>    open it white on black (`i` toggles)
        cpl --view [page|page-dark|page-inline|page-scroll]
                                           open a built-in sample page
+       cpl --view <song.cho> --size 980x720
+                                          set the window size in logical points
        cpl <song.cho>                     print the parsed lyrics
 In the viewer: i polarity, arrows / Page Up / Page Down / Home / End scroll,
 Escape closes.";
 
 const SAMPLES: [&str; 4] = ["page", "page-dark", "page-inline", "page-scroll"];
 
+fn parse_size(value: &str) -> Option<(f64, f64)> {
+    let (width, height) = value.split_once('x')?;
+    let width = width.parse::<f64>().ok()?;
+    let height = height.parse::<f64>().ok()?;
+    if width.is_finite() && height.is_finite() && width >= 200.0 && height >= 200.0 {
+        Some((width, height))
+    } else {
+        None
+    }
+}
+
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let mut args: Vec<String> = env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
     }
+    let requested_size = if args.len() >= 2 && args[args.len() - 2] == "--size" {
+        let value = args.pop().unwrap();
+        args.pop();
+        match parse_size(&value) {
+            Some(size) => Some(size),
+            None => {
+                eprintln!("invalid --size {value:?}; expected WIDTHxHEIGHT (at least 200x200)");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     // (open a window, sample page name, song path)
     let (view, sample, path) = match args.as_slice() {
         [flag] if flag == "--view" => (true, "page", None),
@@ -201,6 +227,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if requested_size.is_some() && !view {
+        eprintln!("--size requires --view");
+        return ExitCode::FAILURE;
+    }
     let dark = sample == "page-dark";
     let inline = path.is_none() && sample == "page-inline";
     let scroll = path.is_none() && sample == "page-scroll";
@@ -246,13 +276,13 @@ fn main() -> ExitCode {
             },
             &CoreText,
         ),
-        initial_size: if inline {
+        initial_size: requested_size.unwrap_or(if inline {
             (300.0, 200.0)
         } else if scroll {
             (560.0, 340.0)
         } else {
             (980.0, 720.0)
-        },
+        }),
         scroll_offset: 0.0,
         scroll_max: 0.0,
         window: None,
@@ -260,4 +290,17 @@ fn main() -> ExitCode {
     };
     event_loop.run_app(&mut viewer).expect("run viewer");
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_size;
+
+    #[test]
+    fn window_size_requires_finite_reasonable_dimensions() {
+        assert_eq!(parse_size("980x720"), Some((980.0, 720.0)));
+        for value in ["980", "0x720", "199x720", "980xNaN", "980xinf", "980x720x2"] {
+            assert_eq!(parse_size(value), None, "{value}");
+        }
+    }
 }

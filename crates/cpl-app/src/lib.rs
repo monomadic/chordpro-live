@@ -913,6 +913,16 @@ mod tests {
     }
 
     #[test]
+    fn plain_text_after_a_hidden_tab_remains_visible() {
+        let app = app(
+            "{title: Test}\n{start_of_tab}\ne|--3--|\n{end_of_tab}\nSlide up on repeat\n{start_of_verse: Verse 1}\n[C]Hello\n{end_of_verse}",
+        );
+        let frame = app.frame(900.0, 600.0);
+        assert_eq!(count(&frame, "e|--3--|"), 0);
+        assert_eq!(count(&frame, "Slide up on repeat"), 1);
+    }
+
+    #[test]
     fn scroll_status_keeps_the_section_name_when_its_label_has_left_view() {
         let mut source = String::from(
             "{title: Test}\n{sov: Verse 1}\n[C]First\n[G]Second\n{eov}\n{soc: Chorus}\n[F]Echo\n[C]Again\n{eoc}\n{sov: Verse 2}\n",

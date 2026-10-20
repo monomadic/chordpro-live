@@ -4,6 +4,16 @@ This is a record of implemented work and observed checks. `TASKS.md` holds
 open work; `PROPOSAL.md` holds design decisions. Dates are local to the project
 session. A passing headless test does not stand in for a visual window check.
 
+## 2026-10-21
+
+- **Reproducible song window size.** `--view <song> --size 980x720` sets a
+  logical-point window size for the real-song visual check. The supplied song
+  was inspected again in a 1960×1504 px Retina window. The first screen keeps
+  Intro, Verse 1, and chord/lyric pairs within the page. A synthetic regression
+  test confirms that ordinary text after a hidden tab remains visible: the
+  viewer cannot reliably infer that such text is a tab legend. Put tab-only
+  notes inside the tab environment in authored source.
+
 ## 2026-10-20
 
 - **Checked the supplied “What's Up” source in the macOS window.** At a
@@ -12,7 +22,7 @@ session. A passing headless test does not stand in for a visual window check.
   After Page Down, pairs remain together and the status names CHORUS when its
   label is above the viewport. The title's quotation marks are authored in
   the ChordPro file. A notation legend outside the tab block remains visible
-  as ordinary text; the fixed-size repeatable capture task remains open.
+  as ordinary text; a fixed-size repeatable capture was added on 2026-10-21.
 - **Measured ink against page bounds.** A macOS integration test now rasterises
   every positioned item on fitted pages through CoreText at 1x and 2x and
   checks its actual ink against the content bounds. The tested title, byline,

@@ -10,12 +10,13 @@ automated checks.
 - [x] Temporarily hide tablature blocks in the viewer. Keep them in the parsed
   `Song` and the `.cho` file. Do not let a hidden tab consume fit or scroll
   space. Headless tests and the real-song macOS window check passed.
-- [ ] Reproduce the supplied **“What's Up”** screenshot with the source song
+- [x] Reproduce the supplied **“What's Up”** screenshot with the source song
   and a fixed `--view` window size. Capture fit and scroll states; check title,
   intro, verse, chorus, chord alignment, margins, and the bottom edge. Keep a
-  small, redistributable regression fixture or equivalent test case. The
-  supplied source has been checked in a 1960×1504 px Retina window at the
-  initial and Page Down positions; a repeatable fixed-size capture remains.
+  small, redistributable regression fixture or equivalent test case. Use
+  `--view <song> --size 980x720` for the 1960×1504 px Retina window. The
+  initial and Page Down positions were inspected; focused synthetic tests
+  cover hidden tab, chord-only Intro, section context and post-tab plain text.
 - [x] Make the first viewport show a coherent part of the song. The screenshot
   shows an isolated chord row near the bottom and a large gap above it. Audit
   scroll group bounds, section breaks, and clipping so a chord row never
@@ -31,11 +32,12 @@ automated checks.
   quotation marks are authored in the ChordPro title or introduced by parsing;
   only change parsing if a minimal fixture proves the latter. The source
   explicitly contains `{title: "What's Up"}`.
-- [ ] Decide how the viewer should handle notation legends immediately after
+- [x] Decide how the viewer should handle notation legends immediately after
   hidden tab blocks. The supplied song has a technique key after `{end_of_tab}`
-  as ordinary text, and it currently appears as a large lyric line. Preserve
-  source text unless a clear, general rule or explicit metadata distinguishes
-  it from sung words.
+  as ordinary text, and it currently appears as a large lyric line. Keep text
+  outside a tab block visible; it may be a performance instruction. Authors
+  can put tab-only notation inside the block to hide it with the tab. The app
+  never changes the source file.
 
 ## P1 — dependable performance behavior
 
