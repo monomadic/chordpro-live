@@ -3,7 +3,13 @@
 use cpl_song::{SectionKind, Song};
 
 pub trait Measure {
-    fn width(&self, text: &str, size_pt: f32, weight: u16) -> f32;
+    fn width(&self, text: &str, size_pt: f32, weight: u16, face: Face) -> f32;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Face {
+    System,
+    Monospace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +32,7 @@ pub struct Text {
     pub baseline: f32,
     pub size: f32,
     pub weight: u16,
+    pub face: Face,
     pub ink: Ink,
 }
 
@@ -164,7 +171,8 @@ impl App {
             x: c.margin_x,
             baseline: y,
             size: title_size,
-            weight: 700,
+            weight: 600,
+            face: Face::System,
             ink: Ink::Strong,
         });
         if let Some(artist) = self.song.first_meta("artist") {
@@ -175,6 +183,7 @@ impl App {
                 baseline: y,
                 size: c.subtitle_size * body,
                 weight: 400,
+                face: Face::System,
                 ink: Ink::Soft,
             });
         }
@@ -185,8 +194,12 @@ impl App {
             .sections
             .iter()
             .map(|section| {
-                let label_width =
-                    measure.width(&section.label.to_uppercase(), c.label_size * body, 700) / body;
+                let label_width = measure.width(
+                    &section.label.to_uppercase(),
+                    c.label_size * body,
+                    700,
+                    Face::Monospace,
+                ) / body;
                 let line_width = section
                     .lines
                     .iter()
@@ -239,6 +252,7 @@ impl App {
                             } else {
                                 600
                             },
+                            face: Face::Monospace,
                             ink: Ink::Soft,
                         });
                         section_y += c.label_gap * body;
@@ -257,10 +271,12 @@ impl App {
                                     baseline: chord_y,
                                     size: c.chord_size * body,
                                     weight: 600,
+                                    face: Face::Monospace,
                                     ink: Ink::Soft,
                                 });
-                                chord_x += measure.width(chord, c.chord_size * body, 600)
-                                    + c.chord_gap * body;
+                                chord_x +=
+                                    measure.width(chord, c.chord_size * body, 600, Face::Monospace)
+                                        + c.chord_gap * body;
                             }
                             if !segment.lyric.is_empty() {
                                 frame.text.push(Text {
@@ -269,9 +285,10 @@ impl App {
                                     baseline: lyric_y,
                                     size: body,
                                     weight: 400,
+                                    face: Face::System,
                                     ink: Ink::Strong,
                                 });
-                                lyric_x += measure.width(&segment.lyric, body, 400);
+                                lyric_x += measure.width(&segment.lyric, body, 400, Face::System);
                             }
                             lyric_x = lyric_x.max(chord_x - c.chord_gap * body);
                         }
@@ -292,6 +309,7 @@ impl App {
                 baseline: (y + body).min(content_end),
                 size: body,
                 weight: 600,
+                face: Face::System,
                 ink: Ink::Soft,
             });
         }
@@ -314,6 +332,7 @@ impl App {
             baseline: height - c.margin_bottom * 0.5,
             size: body * 0.7,
             weight: 400,
+            face: Face::Monospace,
             ink: Ink::Faint,
         });
         frame
@@ -326,10 +345,10 @@ fn line_width(line: &cpl_song::Line, c: &Config, measure: &impl Measure) -> f32 
     for segment in &line.segments {
         if let Some(chord) = &segment.chord {
             chord_x = chord_x.max(lyric_x)
-                + measure.width(chord, c.chord_size * c.body_size, 600)
+                + measure.width(chord, c.chord_size * c.body_size, 600, Face::Monospace)
                 + c.chord_gap * c.body_size;
         }
-        lyric_x += measure.width(&segment.lyric, c.body_size, 400);
+        lyric_x += measure.width(&segment.lyric, c.body_size, 400, Face::System);
         lyric_x = lyric_x.max(chord_x - c.chord_gap * c.body_size);
     }
     lyric_x.max(chord_x - c.chord_gap * c.body_size)
@@ -341,7 +360,7 @@ mod tests {
 
     struct Fixed;
     impl Measure for Fixed {
-        fn width(&self, text: &str, size_pt: f32, _: u16) -> f32 {
+        fn width(&self, text: &str, size_pt: f32, _: u16, _: Face) -> f32 {
             text.chars().count() as f32 * size_pt * 0.5
         }
     }

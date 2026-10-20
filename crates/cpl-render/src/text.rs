@@ -1,4 +1,4 @@
-use cpl_app::Measure;
+use cpl_app::{Face, Measure};
 use std::ffi::{CString, c_char, c_float, c_int, c_uchar};
 
 unsafe extern "C" {
@@ -28,7 +28,7 @@ pub struct Raster {
 pub struct CoreText;
 
 impl CoreText {
-    pub fn rasterize(&self, text: &str, size_px: f32, weight: u16) -> Option<Raster> {
+    pub fn rasterize(&self, text: &str, size_px: f32, weight: u16, face: Face) -> Option<Raster> {
         let text = CString::new(text).ok()?;
         let (mut width, mut height, mut baseline) = (0, 0, 0);
         let pointer = unsafe {
@@ -38,7 +38,7 @@ impl CoreText {
                 weight as c_int,
                 0.0,
                 0,
-                0,
+                i32::from(face == Face::Monospace),
                 &mut width,
                 &mut height,
                 &mut baseline,
@@ -62,8 +62,8 @@ impl CoreText {
 }
 
 impl Measure for CoreText {
-    fn width(&self, text: &str, size_pt: f32, weight: u16) -> f32 {
-        self.rasterize(text, size_pt, weight)
+    fn width(&self, text: &str, size_pt: f32, weight: u16, face: Face) -> f32 {
+        self.rasterize(text, size_pt, weight, face)
             .map_or(0.0, |raster| raster.width as f32 - 2.0)
     }
 }
@@ -74,7 +74,9 @@ mod tests {
 
     #[test]
     fn coretext_raster_has_ink_and_transparent_margin() {
-        let raster = CoreText.rasterize("Hello", 24.0, 400).unwrap();
+        let raster = CoreText
+            .rasterize("Hello", 24.0, 400, Face::System)
+            .unwrap();
         assert!(raster.width > 20);
         assert!(raster.height > 10);
         assert_eq!(
@@ -83,5 +85,15 @@ mod tests {
         );
         assert!(raster.coverage.iter().any(|&pixel| pixel > 0));
         assert!(raster.coverage.contains(&0));
+    }
+
+    #[test]
+    fn monospaced_face_uses_equal_advances() {
+        let mono_i = CoreText.width("iiii", 20.0, 600, Face::Monospace);
+        let mono_w = CoreText.width("WWWW", 20.0, 600, Face::Monospace);
+        let system_i = CoreText.width("iiii", 20.0, 600, Face::System);
+        let system_w = CoreText.width("WWWW", 20.0, 600, Face::System);
+        assert!((mono_i - mono_w).abs() < 1.0);
+        assert!(system_w - system_i > 10.0);
     }
 }

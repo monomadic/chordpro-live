@@ -2,12 +2,12 @@
 margin_x = 36
 margin_top = 28
 margin_bottom = 24
-title_size = 2.2
-subtitle_size = 0.85
-label_size = 0.78
-chord_size = 0.88
+title_size = 1.7
+subtitle_size = 0.76
+label_size = 0.68
+chord_size = 0.82
 body_size = 17
-header_gap = 1.7
+header_gap = 0.8
 section_gap = 1.2
 line_height = 2.55
 chord_baseline = 0.72
