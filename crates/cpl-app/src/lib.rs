@@ -445,7 +445,12 @@ impl App {
         });
         let section_prefix =
             section.map_or(String::new(), |section| format!("{}  ·  ", section.name));
-        if width < 700.0 {
+        if width < 400.0 {
+            // A phone-narrow window keeps where you are and whether there is
+            // more; the point size can wait.
+            let more = if offset < max_offset { "  ·  ↓" } else { "" };
+            format!("{section_prefix}SCROLL{more}")
+        } else if width < 700.0 {
             format!("{section_prefix}SCROLL  ·  {body} pt{more}")
         } else {
             format!("{section_prefix}SCROLL  ·  stand {body} pt  ·  ↑ ↓ / Page Up Down{more}")
@@ -1097,6 +1102,25 @@ mod tests {
                 .any(|item| item.group == usize::MAX
                     && item.content.starts_with("CHORUS  ·  SCROLL"))
         );
+    }
+
+    #[test]
+    fn a_narrow_scroll_status_fits_its_window() {
+        let mut source = String::from("{title: T}\n{sov: Verse 1}\n");
+        for index in 0..20 {
+            source.push_str(&format!("[C]Line {index}\n"));
+        }
+        source.push_str("{eov}");
+        let app = app(&source);
+        let width = 280.0;
+        let (frame, max_offset) = app.frame_scrolled(width, 420.0, 0.0);
+        assert!(max_offset > 0.0);
+        let status = frame.text.iter().find(|t| t.group == usize::MAX).unwrap();
+        assert_eq!(status.content, "VERSE 1  ·  SCROLL  ·  ↓");
+        // Fixed measures half an em per character; the monospaced face is
+        // wider in practice, so leave it a 20% margin.
+        let drawn = status.content.chars().count() as f32 * status.size * 0.5 * 1.2;
+        assert!(status.x + drawn <= width - app.config().margin_x, "{drawn}");
     }
 
     #[test]

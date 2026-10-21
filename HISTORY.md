@@ -16,9 +16,13 @@ session. A passing headless test does not stand in for a visual window check.
   continuation rows, and the app takes a larger body size only when it wraps
   no more than the floor does. The scroll page tolerates a header wider than
   the window. `WIDTH NEEDED` survives only for an unbreakable run. Workspace
-  tests (five new) and strict Clippy passed. **No window capture yet**: the
-  display was asleep; TASKS.md keeps the item open until the two narrow
-  captures are inspected.
+  tests (five new) and strict Clippy passed. Window check, 2026-10-22, at
+  2x: the scroll sample at 280×420 pt wraps "falling on the road" and
+  "bringing us back home" with Am and G following their words onto indented
+  rows; Scarborough Fair at 420×720 pt fits at step 9 with "strand" wrapped.
+  The capture showed the scroll status running off a 280 pt window, so under
+  400 pt it now reads section, SCROLL and an arrow (one more test).
+  Unverified: a 1x display, and wrapping at a column's own width.
 - **Scrolling over a retained page, and a chromeless window.** The worker
   now retains each song's positioned page per viewport and composes a slab of
   it up to three viewports tall; `cpl_app::App::page` and `App::view` give the
