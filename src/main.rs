@@ -547,7 +547,7 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
        cpl --view <song.cho> --scroll 300 open scrolled 300 points down the song
        cpl <song.cho>                     print the parsed lyrics
 In the viewer: i polarity, n / p or ← → next and previous song,
-↑ ↓ / Page Up / Page Down / Home / End scroll, Escape closes.";
+↑ ↓ / Page Up / Page Down / Home / End scroll, q or Escape closes.";
 
 const SONG_EXTENSIONS: [&str; 6] = ["cho", "chopro", "chordpro", "crd", "pro", "cp"];
 

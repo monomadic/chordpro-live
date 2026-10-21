@@ -87,6 +87,8 @@ pub struct Config {
     pub header_inline_gap: f32,
     pub byline_leading: f32,
     pub side_label_inset: f32,
+    /// Indent of a wrapped line's continuation rows, in body sizes.
+    pub wrap_indent: f32,
     pub status_height: f32,
     pub max_columns: f32,
 }
@@ -165,6 +167,7 @@ impl Config {
             header_inline_gap: take!("header_inline_gap"),
             byline_leading: take!("byline_leading"),
             side_label_inset: take!("side_label_inset"),
+            wrap_indent: take!("wrap_indent"),
             status_height: take!("status_height"),
             max_columns: take!("max_columns"),
         };
@@ -306,6 +309,7 @@ impl App {
             column_gutter: c.column_gutter,
             side_label_room: c.margin_x.min(c.column_gutter * body) / body - c.side_label_inset,
             max_columns: c.max_columns as usize,
+            wrap_indent: c.wrap_indent,
         }
     }
 
@@ -525,14 +529,20 @@ impl App {
             height: f32::INFINITY,
             ..self.viewport(width, height, body)
         };
+        // Lines wrap at the content width, so only an unbreakable run (a tab
+        // row, one enormous word) can still fail. A title wider than the
+        // window clips at the edge rather than withholding the whole song.
         let mut long = cpl_layout::layout(&self.measured, &metrics, tall, Options::default(), 0);
-        if !long.fits {
+        if !long.fit.meets_floor {
             let inline = Options {
                 inline_chords: true,
                 ..Options::default()
             };
             long = cpl_layout::layout(&self.measured, &metrics, tall, inline, 9);
         }
+        // The scroll page tolerates a header wider than the window: it
+        // clips at the edge instead of withholding the song.
+        long.fits = long.fit.meets_floor;
         if !long.fits {
             for item in &mut fit.text {
                 if item.content == "Song needs paging at this readable size" {
@@ -612,7 +622,10 @@ impl App {
                     solution.options,
                     solution.step,
                 );
-                if larger.fits {
+                // Bigger type is only better while it wraps no more lines
+                // than the floor does: a line broken in three at 28 pt reads
+                // worse than the same line whole at 20 pt.
+                if larger.fits && larger.wrapped_rows <= solution.wrapped_rows {
                     return self.compose(width, height, *body, measured, &larger);
                 }
             }
@@ -672,6 +685,7 @@ impl App {
         }
         let y = c.margin_top + solution.header.height * body;
         let content_end = height - c.margin_bottom - c.status_height * body;
+        let wrap = self.viewport(width, height, body).width;
         if frame.fits {
             let metrics = c.metrics();
             let mut column_x = c.margin_x;
@@ -723,37 +737,44 @@ impl App {
                     }
                     let visible = o.visible_lines(section);
                     for line in section.lines.iter().take(visible) {
-                        for run in line.runs(inline) {
-                            if line.chord_only
-                                && run.role == Role::Lyric
-                                && run.text.trim().is_empty()
-                            {
-                                continue;
+                        let rows = o.rows(section, line, &m, wrap);
+                        let row_height = o.row_height(section, line, &m) * body;
+                        for (row_index, row) in rows.iter().enumerate() {
+                            if row_index > 0 {
+                                section_y += row_height;
                             }
-                            let style = metrics.style(run.role);
-                            let (baseline, ink) = match run.role {
-                                Role::Chord if line.chord_only => {
-                                    (c.inline_lyric_baseline, Ink::Soft)
+                            for run in &row.runs {
+                                if line.chord_only
+                                    && run.role == Role::Lyric
+                                    && run.text.trim().is_empty()
+                                {
+                                    continue;
                                 }
-                                Role::Chord => (c.chord_baseline, Ink::Soft),
-                                Role::InlineChord => (c.inline_chord_baseline, Ink::Soft),
-                                Role::Lyric if inline => (c.inline_lyric_baseline, Ink::Strong),
-                                Role::Comment if inline => (c.inline_lyric_baseline, Ink::Soft),
-                                Role::Comment => (c.lyric_baseline, Ink::Soft),
-                                _ => (c.lyric_baseline, Ink::Strong),
-                            };
-                            frame.text.push(Text {
-                                group: line_group,
-                                content: run.text.clone(),
-                                x: column_x + run.x * body,
-                                baseline: section_y + baseline * body,
-                                size: style.size * body,
-                                weight: style.weight,
-                                face: style.face,
-                                ink,
-                            });
+                                let style = metrics.style(run.role);
+                                let (baseline, ink) = match run.role {
+                                    Role::Chord if line.chord_only => {
+                                        (c.inline_lyric_baseline, Ink::Soft)
+                                    }
+                                    Role::Chord => (c.chord_baseline, Ink::Soft),
+                                    Role::InlineChord => (c.inline_chord_baseline, Ink::Soft),
+                                    Role::Lyric if inline => (c.inline_lyric_baseline, Ink::Strong),
+                                    Role::Comment if inline => (c.inline_lyric_baseline, Ink::Soft),
+                                    Role::Comment => (c.lyric_baseline, Ink::Soft),
+                                    _ => (c.lyric_baseline, Ink::Strong),
+                                };
+                                frame.text.push(Text {
+                                    group: line_group,
+                                    content: run.text.clone(),
+                                    x: column_x + run.x * body,
+                                    baseline: section_y + baseline * body,
+                                    size: style.size * body,
+                                    weight: style.weight,
+                                    face: style.face,
+                                    ink,
+                                });
+                            }
                         }
-                        section_y += o.line_height(section, line, &m) * body;
+                        section_y += row_height;
                         line_group += 1;
                     }
                     if visible == 0 {
@@ -1193,6 +1214,74 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_wide_lyric_line_wraps_instead_of_asking_for_width() {
+        // Fixed: 0.5 em per character at 17 pt, so this line is ~290 pt wide.
+        let app = app(
+            "{title: T}\n{sov: Verse 1}\n[C]Hello there my [G]friend of old, we [Am]meet again\n{eov}",
+        );
+        // 240 pt less the margins is 168 pt: 9.9 em, so "friend " cannot
+        // follow "Hello there my " (7.5 em) on the first row.
+        let frame = app.frame(240.0, 600.0);
+        assert!(frame.fits, "the song wraps and fits");
+        assert!(!frame.text.iter().any(|t| t.content.starts_with("WIDTH")));
+        let hello = find(&frame, "Hello there my ");
+        let meet = frame
+            .text
+            .iter()
+            .find(|t| t.content.starts_with("meet"))
+            .expect("the tail of the line is drawn");
+        assert!(
+            meet.baseline > hello.baseline,
+            "the tail sits on a later row"
+        );
+        assert!(meet.x > hello.x, "continuation rows are indented");
+        let am = find(&frame, "Am");
+        assert_eq!(am.x, meet.x, "the chord follows its word onto the new row");
+        assert_eq!(am.group, hello.group, "one source line is one group");
+        let right_edge = 240.0 - app.config().margin_x + 1e-2;
+        for item in frame.text.iter().filter(|t| t.group != usize::MAX) {
+            let width = item.content.chars().count() as f32 * item.size * 0.5;
+            assert!(
+                item.x + width <= right_edge,
+                "{item:?} runs past the content box"
+            );
+        }
+    }
+
+    #[test]
+    fn only_an_unbreakable_run_still_needs_width() {
+        let app =
+            app("{title: T}\n{sov: A}\n[C]Antidisestablishmentarianismandthensomemore\n{eov}");
+        let (frame, max_offset) = app.frame_scrolled(220.0, 400.0, 0.0);
+        assert!(!frame.fits);
+        assert_eq!(max_offset, 0.0);
+        assert!(
+            frame
+                .text
+                .iter()
+                .any(|t| t.content.starts_with("WIDTH NEEDED")),
+            "{:?}",
+            frame.text.iter().map(|t| &t.content).collect::<Vec<_>>()
+        );
+        // A scrolling page with a wide title still shows the song.
+        let mut source =
+            String::from("{title: A Title Far Too Wide For This Narrow Window Indeed}\n{sov: A}\n");
+        for index in 0..30 {
+            source.push_str(&format!("[C]Line {index}\n"));
+        }
+        source.push_str("{eov}");
+        let wide_title = App::new(
+            cpl_song::parse(&source).song,
+            Config::default(),
+            Polarity::Light,
+            &Fixed,
+        );
+        let (frame, max_offset) = wide_title.frame_scrolled(220.0, 300.0, 0.0);
+        assert!(max_offset > 0.0);
+        assert_eq!(count(&frame, "Line 0"), 1);
     }
 
     #[test]

@@ -105,8 +105,9 @@ the commit message.
   honoured. Generate the conformance note's status table; never hand-edit it.
 - **The page is always readable.** Body text never drops below the
   readability floor. After steps 1–3, 5, and 7–9 fail, the window scrolls
-  the full song at that size. Lines too wide for the window still need a
-  layout solution. Diagram and pill steps 4 and 6 are not built yet.
+  the full song at that size. Lines too wide for the window wrap at word
+  boundaries; only an unbreakable run reaches the width-needed state.
+  Diagram and pill steps 4 and 6 are not built yet.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. Page measurement and CoreText
   rasterisation run on a worker, which preloads the next song while idle;

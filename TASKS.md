@@ -30,8 +30,18 @@ automated checks. When every task in an epic is checked, the epic moves to
   scroll sample. Not yet measured: a release build, a key-driven scroll run,
   and the GPU upload cost itself.
 - [ ] Handle a lyric line wider than the content box without drawing under the
-  readability floor. Decide and implement horizontal paging, wrapping, or an
-  explicit width-needed state with a useful recovery path.
+  readability floor. **Decided: wrap.** A line wider than the content box
+  breaks after a word that ends in whitespace into continuation rows with a
+  `wrap_indent` hanging indent; chords stay over their syllables, a word is
+  never split, and a larger body size is taken only if it wraps no more rows
+  than the floor does. The width-needed state remains only for an
+  unbreakable run (a tab row, one enormous word), and a scrolling page with a
+  too-wide title clips the title instead of withholding the song. Headless
+  tests cover the row flow, the no-split rule, inline wrapping, the app's
+  wrapped page and the remaining width-needed case. **Still to do: the real
+  window check** (`--view testdata/scarborough_fair.cho --size 420x720` and
+  `--view page-scroll --size 360x420`); the display was asleep when this
+  landed, so no capture was possible.
 - [ ] Add paged mode for songs that cannot fit and need a predictable page turn.
   Keep whole chord/lyric pairs together and make the current page obvious.
 - [ ] Check actual CoreText extents at 1x and 2x against fit bounds, including

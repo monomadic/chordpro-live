@@ -44,3 +44,22 @@ size. A viewport's prepared scroll page stays at the floor. Point-size
 presets and paged mode are still to come.
 The app currently omits tablature from the display song before measuring, so
 step 5 is inactive for the macOS viewer while the source model retains the tab.
+
+## Wrapping
+
+A line wider than the content box wraps. `measure_song` records every word
+of a lyric (with its trailing whitespace) as a measured `Token`, and
+`MeasuredLine::rows(inline, max_width, indent)` flows the segments into rows:
+a break may follow a token that ends in whitespace and never falls inside a
+word or at a chord's syllable split (`Or[F]leans`), a chord stays over the
+first word of its segment, consecutive words of one segment merge into one
+run, and continuation rows start at `PageMetrics::wrap_indent`. The
+unwrapped `above` and `inline` runs are the one-row flow of the same
+function, so the two cannot disagree. Tab rows are one token and never wrap;
+comments wrap by words. `Options::block` wraps at the viewport width and
+`layout` counts each candidate's continuation rows in `Solution::wrapped_rows`;
+the app accepts a larger body size only while it wraps no more rows than the
+floor. A row wider than the limit means an unbreakable token, and the fit
+reports it as not meeting the floor — the only case left for the
+width-needed state. Wrapping at a column's own width, to allow more columns,
+is not attempted yet.

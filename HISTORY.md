@@ -6,6 +6,19 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **Wide lyric lines wrap.** Measurement now records every word of a line
+  with its width, and one pure row flow (`MeasuredLine::rows`) produces both
+  the unwrapped runs and the wrapped rows: a break is allowed only after a
+  word ending in whitespace, a chord stays over the first word of its
+  segment, consecutive words of one segment merge back into a single run,
+  and continuation rows start at `wrap_indent` (new config key, 1 em). The
+  ladder's blocks wrap at the content width, each candidate counts its
+  continuation rows, and the app takes a larger body size only when it wraps
+  no more than the floor does. The scroll page tolerates a header wider than
+  the window. `WIDTH NEEDED` survives only for an unbreakable run. Workspace
+  tests (five new) and strict Clippy passed. **No window capture yet**: the
+  display was asleep; TASKS.md keeps the item open until the two narrow
+  captures are inspected.
 - **Scrolling over a retained page, and a chromeless window.** The worker
   now retains each song's positioned page per viewport and composes a slab of
   it up to three viewports tall; `cpl_app::App::page` and `App::view` give the

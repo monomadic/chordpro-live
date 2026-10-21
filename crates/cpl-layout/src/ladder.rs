@@ -23,6 +23,8 @@ pub struct PageMetrics {
     /// Width a side label may take left of its column.
     pub side_label_room: f32,
     pub max_columns: usize,
+    /// Indent of a wrapped line's continuation rows.
+    pub wrap_indent: f32,
 }
 
 /// The content box between the margins and above the status strip, in em.
@@ -77,7 +79,8 @@ impl Options {
         }
     }
 
-    pub fn line_height(
+    /// Height of one row of this line.
+    pub fn row_height(
         &self,
         section: &MeasuredSection,
         line: &crate::MeasuredLine,
@@ -90,6 +93,28 @@ impl Options {
         }
     }
 
+    /// The line flowed into rows no wider than `wrap` em where its words allow.
+    pub fn rows(
+        &self,
+        section: &MeasuredSection,
+        line: &crate::MeasuredLine,
+        m: &PageMetrics,
+        wrap: f32,
+    ) -> Vec<crate::Row> {
+        line.rows(self.inline(section), wrap, m.wrap_indent)
+    }
+
+    /// Height of the whole line, every wrapped row included.
+    pub fn line_height(
+        &self,
+        section: &MeasuredSection,
+        line: &crate::MeasuredLine,
+        m: &PageMetrics,
+        wrap: f32,
+    ) -> f32 {
+        self.row_height(section, line, m) * self.rows(section, line, m, wrap).len() as f32
+    }
+
     /// A side label beside a section with every line hidden keeps one row,
     /// so it never sits over the next section.
     pub fn label_row(&self, section: &MeasuredSection, m: &PageMetrics) -> f32 {
@@ -100,14 +125,15 @@ impl Options {
         }
     }
 
-    pub fn block(&self, section: &MeasuredSection, m: &PageMetrics) -> Block {
+    /// The section's block with lines wrapped at `wrap` em.
+    pub fn block(&self, section: &MeasuredSection, m: &PageMetrics, wrap: f32) -> Block {
         let visible = self.visible_lines(section);
-        let inline = self.inline(section);
         let line_width = section
             .lines
             .iter()
             .take(visible)
-            .map(|line| line.width(inline))
+            .flat_map(|line| self.rows(section, line, m, wrap))
+            .map(|row| row.width)
             .fold(0.0, f32::max);
         let label = if section.label.is_empty() || self.side_labels {
             0.0
@@ -125,7 +151,7 @@ impl Options {
                     .lines
                     .iter()
                     .take(visible)
-                    .map(|line| self.line_height(section, line, m))
+                    .map(|line| self.line_height(section, line, m, wrap))
                     .sum::<f32>()
                 + self.label_row(section, m),
         }
@@ -230,6 +256,9 @@ pub struct Solution {
     pub header: HeaderLayout,
     pub blocks: Vec<Block>,
     pub fit: Fit,
+    /// Continuation rows across every visible line: how much wrapping this
+    /// candidate needs at this width.
+    pub wrapped_rows: usize,
 }
 
 /// Lays out one candidate at the body size. Arithmetic only.
@@ -257,7 +286,24 @@ pub fn layout(
         })
         .max(song.header.artist_width)
     };
-    let blocks: Vec<Block> = song.sections.iter().map(|s| options.block(s, m)).collect();
+    // Lines wider than the content box wrap at its width; a block that is
+    // still wider holds an unbreakable run, and the fit reports it.
+    let blocks: Vec<Block> = song
+        .sections
+        .iter()
+        .map(|s| options.block(s, m, view.width))
+        .collect();
+    let wrapped_rows = song
+        .sections
+        .iter()
+        .flat_map(|section| {
+            section
+                .lines
+                .iter()
+                .take(options.visible_lines(section))
+                .map(move |line| options.rows(section, line, m, view.width).len() - 1)
+        })
+        .sum();
     let fit = fit(
         &blocks,
         FitOptions {
@@ -279,6 +325,7 @@ pub fn layout(
         header,
         blocks,
         fit,
+        wrapped_rows,
     }
 }
 
@@ -303,6 +350,35 @@ mod tests {
     use super::*;
     use crate::{Face, Measure, Metrics, measure_song};
 
+    #[test]
+    fn a_candidate_counts_the_rows_wrapping_adds() {
+        let song = song("[C]one two three four five six");
+        let wide = layout(
+            &song,
+            &PAGE,
+            Viewport {
+                width: 100.0,
+                height: 100.0,
+            },
+            Options::default(),
+            0,
+        );
+        assert_eq!(wide.wrapped_rows, 0);
+        let narrow = layout(
+            &song,
+            &PAGE,
+            Viewport {
+                width: 4.0,
+                height: 100.0,
+            },
+            Options::default(),
+            0,
+        );
+        assert!(narrow.wrapped_rows >= 2, "{}", narrow.wrapped_rows);
+        assert!(narrow.fit.meets_floor, "wrapped lines fit the width");
+        assert!(narrow.blocks[0].height > wide.blocks[0].height);
+    }
+
     struct Fixed;
     impl Measure for Fixed {
         fn width(&self, text: &str, size_pt: f32, _: u16, _: Face) -> f32 {
@@ -324,6 +400,7 @@ mod tests {
         column_gutter: 3.0,
         side_label_room: 2.0,
         max_columns: 4,
+        wrap_indent: 1.0,
     };
 
     fn song(source: &str) -> MeasuredSong {
@@ -451,7 +528,9 @@ mod tests {
             ..Options::default()
         };
         assert_eq!(
-            options.block(&song.sections[0], &PAGE).height,
+            options
+                .block(&song.sections[0], &PAGE, f32::INFINITY)
+                .height,
             PAGE.line_height
         );
         let above = Options {
@@ -459,7 +538,7 @@ mod tests {
             ..Options::default()
         };
         assert_eq!(
-            above.block(&song.sections[0], &PAGE).height,
+            above.block(&song.sections[0], &PAGE, f32::INFINITY).height,
             PAGE.label_height + PAGE.label_gap
         );
     }

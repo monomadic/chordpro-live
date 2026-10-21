@@ -16,7 +16,10 @@ line block: the chord baseline is immediately above the lyric baseline, and
 section labels have their own gap. All page dimensions are in
 `config/default.toml`; font sizes are points and the other values are in
 body-size units except margins, which are points. A song crossing the bottom
-margin scrolls at the same body size. Width overflow still needs a solution.
+margin scrolls at the same body size. A line wider than the content box
+wraps (see [layout](layout.md)); only an unbreakable run reaches the
+width-needed state, and a scrolling page clips a too-wide title rather than
+withholding the song.
 Chord-only progressions sit on one compact row at full chord size. Whitespace
 used to separate their chords is measured for alignment but not drawn as
 an empty lyric run.

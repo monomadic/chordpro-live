@@ -79,8 +79,42 @@ pub struct Run {
     pub width: f32,
 }
 
+/// A word of lyric with the whitespace that follows it, measured. A row may
+/// break after a token that ends in whitespace, never inside one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token {
+    pub text: String,
+    pub width: f32,
+    /// A `Role::Tab` or `Role::Comment` line is one token in that role.
+    pub role: Role,
+}
+
+/// A measured chord with its width in both chord layouts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasuredChord {
+    pub text: String,
+    pub above_width: f32,
+    pub inline_width: f32,
+}
+
+/// A song segment, measured: an optional chord and the words it sits over.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasuredSegment {
+    pub chord: Option<MeasuredChord>,
+    pub tokens: Vec<Token>,
+}
+
+/// One row of a flowed line: its runs and its extent, both in em.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Row {
+    pub runs: Vec<Run>,
+    pub width: f32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeasuredLine {
+    /// The source segments with every word measured; `rows` flows them.
+    pub segments: Vec<MeasuredSegment>,
     /// Chords on their own row above the lyric, overhang pushing lyrics right.
     pub above: Vec<Run>,
     pub above_width: f32,
@@ -89,6 +123,8 @@ pub struct MeasuredLine {
     pub inline_width: f32,
     /// A chord progression with no sung words, such as an intro or turnaround.
     pub chord_only: bool,
+    chord_gap: f32,
+    inline_chord_gap: f32,
 }
 
 impl MeasuredLine {
@@ -105,6 +141,187 @@ impl MeasuredLine {
             self.inline_width
         } else {
             self.above_width
+        }
+    }
+
+    /// Flows the line into rows no wider than `max_width` em where a word
+    /// boundary allows, continuation rows starting at `indent`. A chord
+    /// stays over the first word of its segment, so wrapping never moves a
+    /// chord away from its syllable. One row of unlimited width is the
+    /// unwrapped line, which is how `above` and `inline` are produced; a
+    /// single token wider than `max_width` stays whole, and the caller sees
+    /// that in the row's width.
+    pub fn rows(&self, inline: bool, max_width: f32, indent: f32) -> Vec<Row> {
+        let inline = inline && !self.chord_only;
+        let gap = if inline {
+            self.inline_chord_gap
+        } else {
+            self.chord_gap
+        };
+        let mut rows = Vec::new();
+        let mut row = RowBuilder::new(0.0, inline, gap);
+        for (index, segment) in self.segments.iter().enumerate() {
+            let mut chord = segment.chord.as_ref();
+            if segment.tokens.is_empty() {
+                if let Some(chord) = chord {
+                    if row.exceeds(Some(chord), None, max_width) && row.can_break {
+                        rows.push(row.finish());
+                        row = RowBuilder::new(indent, inline, gap);
+                    }
+                    row.push(Some(chord), None, index, true);
+                }
+                continue;
+            }
+            let last = segment.tokens.len() - 1;
+            for (position, token) in segment.tokens.iter().enumerate() {
+                if row.exceeds(chord, Some(token), max_width) && row.can_break {
+                    rows.push(row.finish());
+                    row = RowBuilder::new(indent, inline, gap);
+                }
+                row.push(chord, Some(token), index, position == last);
+                chord = None;
+            }
+        }
+        rows.push(row.finish());
+        rows
+    }
+}
+
+/// Lays runs along one row with the chord-over-syllable rule: a chord wider
+/// than its syllable pushes the next lyric past the chord and its gap, which
+/// is exactly where the next chord can start.
+struct RowBuilder {
+    inline: bool,
+    gap: f32,
+    runs: Vec<Run>,
+    lyric_x: f32,
+    chord_x: f32,
+    width: f32,
+    /// Whether the last token ended in whitespace, so a break may follow.
+    can_break: bool,
+    /// The segment the last lyric run belongs to, so consecutive words of
+    /// one segment merge into a single run.
+    last_segment: Option<usize>,
+}
+
+impl RowBuilder {
+    fn new(indent: f32, inline: bool, gap: f32) -> Self {
+        Self {
+            inline,
+            gap,
+            runs: Vec::new(),
+            lyric_x: indent,
+            chord_x: indent,
+            width: indent,
+            can_break: false,
+            last_segment: None,
+        }
+    }
+
+    fn chord_width(&self, chord: &MeasuredChord) -> f32 {
+        if self.inline {
+            chord.inline_width
+        } else {
+            chord.above_width
+        }
+    }
+
+    /// The row's extent if `chord` and `token` were appended.
+    fn exceeds(&self, chord: Option<&MeasuredChord>, token: Option<&Token>, max: f32) -> bool {
+        let mut extent = self.width;
+        if self.inline {
+            let mut x = self.lyric_x;
+            if let Some(chord) = chord {
+                x += self.chord_width(chord) + self.gap;
+                extent = extent.max(x);
+            }
+            if let Some(token) = token {
+                extent = extent.max(x + token.width);
+            }
+        } else {
+            if let Some(chord) = chord {
+                let chord_x = self.chord_x.max(self.lyric_x);
+                extent = extent.max(chord_x + self.chord_width(chord));
+            }
+            if let Some(token) = token {
+                extent = extent.max(self.lyric_x + token.width);
+            }
+        }
+        extent > max + 1e-4
+    }
+
+    /// Appends a chord and/or a token of `segment`. `segment_end` applies the
+    /// overhang rule once the whole segment is down, so the words of one
+    /// segment stay contiguous under a chord wider than its first word.
+    fn push(
+        &mut self,
+        chord: Option<&MeasuredChord>,
+        token: Option<&Token>,
+        segment: usize,
+        segment_end: bool,
+    ) {
+        if self.inline {
+            if let Some(chord) = chord {
+                let width = chord.inline_width;
+                self.runs.push(Run {
+                    role: Role::InlineChord,
+                    text: chord.text.clone(),
+                    x: self.lyric_x,
+                    width,
+                });
+                self.lyric_x += width + self.gap;
+                self.width = self.width.max(self.lyric_x);
+                self.last_segment = None;
+            }
+        } else if let Some(chord) = chord {
+            self.chord_x = self.chord_x.max(self.lyric_x);
+            self.runs.push(Run {
+                role: Role::Chord,
+                text: chord.text.clone(),
+                x: self.chord_x,
+                width: chord.above_width,
+            });
+            self.chord_x += chord.above_width + self.gap;
+            self.width = self.width.max(self.chord_x - self.gap);
+            self.last_segment = None;
+        }
+        if let Some(token) = token {
+            let merged = self.last_segment == Some(segment)
+                && self.runs.last().is_some_and(|run| run.role == token.role);
+            if merged {
+                let run = self.runs.last_mut().unwrap();
+                run.text.push_str(&token.text);
+                run.width += token.width;
+            } else {
+                self.runs.push(Run {
+                    role: token.role,
+                    text: token.text.clone(),
+                    x: self.lyric_x,
+                    width: token.width,
+                });
+            }
+            self.lyric_x += token.width;
+            self.width = self.width.max(self.lyric_x);
+            self.can_break = token.text.ends_with(char::is_whitespace);
+            self.last_segment = Some(segment);
+        }
+        if !self.inline && segment_end {
+            self.lyric_x = self.lyric_x.max(self.chord_x);
+        }
+    }
+
+    fn finish(self) -> Row {
+        let width = if self.inline {
+            self.lyric_x
+        } else {
+            self.runs
+                .iter()
+                .map(|run| run.x + run.width)
+                .fold(0.0, f32::max)
+        };
+        Row {
+            runs: self.runs,
+            width,
         }
     }
 }
@@ -210,26 +427,52 @@ impl<M: Measure> Measurer<'_, M> {
         width
     }
 
-    fn run(&mut self, role: Role, text: &str, x: f32) -> Run {
-        Run {
-            role,
-            width: self.em(text, role),
-            text: text.to_owned(),
-            x,
-        }
+    /// Tablature and comments: one token, the same in both chord layouts.
+    /// A tab row never wraps; a comment wraps by its words.
+    fn whole_line(&mut self, line: &Line, role: Role) -> MeasuredLine {
+        let text = line.lyrics();
+        let tokens = if role == Role::Tab {
+            vec![Token {
+                width: self.em(&text, role),
+                text,
+                role,
+            }]
+        } else {
+            self.tokens(&text, role)
+        };
+        self.flowed(
+            vec![MeasuredSegment {
+                chord: None,
+                tokens,
+            }],
+            false,
+        )
     }
 
-    /// Tablature and comments: one run, the same in both chord layouts.
-    fn whole_line(&mut self, line: &Line, role: Role) -> MeasuredLine {
-        let run = self.run(role, &line.lyrics(), 0.0);
-        let width = run.width;
-        MeasuredLine {
-            above: vec![run.clone()],
-            above_width: width,
-            inline: vec![run],
-            inline_width: width,
-            chord_only: false,
+    /// Words with their trailing whitespace, each measured on its own.
+    fn tokens(&mut self, text: &str, role: Role) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        let mut start = 0;
+        let bytes: Vec<(usize, char)> = text.char_indices().collect();
+        let mut index = 0;
+        while index < bytes.len() {
+            // a word, then its whitespace
+            while index < bytes.len() && !bytes[index].1.is_whitespace() {
+                index += 1;
+            }
+            while index < bytes.len() && bytes[index].1.is_whitespace() {
+                index += 1;
+            }
+            let end = bytes.get(index).map_or(text.len(), |(offset, _)| *offset);
+            let word = &text[start..end];
+            tokens.push(Token {
+                width: self.em(word, role),
+                text: word.to_owned(),
+                role,
+            });
+            start = end;
         }
+        tokens
     }
 
     fn line(&mut self, line: &Line) -> MeasuredLine {
@@ -238,52 +481,44 @@ impl<M: Measure> Measurer<'_, M> {
                 .segments
                 .iter()
                 .all(|segment| segment.lyric.trim().is_empty());
-        let gap = self.metrics.chord_gap;
-        let mut above = Vec::new();
-        let (mut lyric_x, mut chord_x) = (0.0_f32, 0.0_f32);
-        let mut above_width = 0.0_f32;
-        for segment in &line.segments {
-            if let Some(chord) = &segment.chord {
-                chord_x = chord_x.max(lyric_x);
-                let run = self.run(Role::Chord, chord, chord_x);
-                chord_x += run.width + gap;
-                above_width = above_width.max(run.x + run.width);
-                above.push(run);
-            }
-            if !segment.lyric.is_empty() {
-                let run = self.run(Role::Lyric, &segment.lyric, lyric_x);
-                lyric_x += run.width;
-                above_width = above_width.max(lyric_x);
-                above.push(run);
-            }
-            // A chord wider than its syllable pushes the next lyric past the
-            // chord and its gap, which is exactly where the next chord can
-            // start, so every chord still sits over the syllable it names.
-            lyric_x = lyric_x.max(chord_x);
-        }
+        let segments = line
+            .segments
+            .iter()
+            .map(|segment| MeasuredSegment {
+                chord: segment.chord.as_ref().map(|chord| MeasuredChord {
+                    above_width: self.em(chord, Role::Chord),
+                    inline_width: self.em(chord, Role::InlineChord),
+                    text: chord.clone(),
+                }),
+                tokens: self.tokens(&segment.lyric, Role::Lyric),
+            })
+            .collect();
+        self.flowed(segments, chord_only)
+    }
 
-        let inline_gap = self.metrics.inline_chord_gap;
-        let mut inline = Vec::new();
-        let mut x = 0.0;
-        for segment in &line.segments {
-            if let Some(chord) = &segment.chord {
-                let run = self.run(Role::InlineChord, chord, x);
-                x += run.width + inline_gap;
-                inline.push(run);
-            }
-            if !segment.lyric.is_empty() {
-                let run = self.run(Role::Lyric, &segment.lyric, x);
-                x += run.width;
-                inline.push(run);
-            }
-        }
-        MeasuredLine {
-            above,
-            above_width,
-            inline,
-            inline_width: x,
+    /// The unwrapped line in both layouts is the one-row flow of its segments.
+    fn flowed(&self, segments: Vec<MeasuredSegment>, chord_only: bool) -> MeasuredLine {
+        let mut line = MeasuredLine {
+            segments,
+            above: Vec::new(),
+            above_width: 0.0,
+            inline: Vec::new(),
+            inline_width: 0.0,
             chord_only,
+            chord_gap: self.metrics.chord_gap,
+            inline_chord_gap: self.metrics.inline_chord_gap,
+        };
+        let above = line.rows(false, f32::INFINITY, 0.0).remove(0);
+        line.above = above.runs;
+        line.above_width = above.width;
+        let mut inline = line.rows(true, f32::INFINITY, 0.0).remove(0);
+        if chord_only {
+            // Chord-only lines keep their full chord row at the inline step.
+            inline = line.rows(false, f32::INFINITY, 0.0).remove(0);
         }
+        line.inline = inline.runs;
+        line.inline_width = inline.width;
+        line
     }
 }
 
@@ -389,6 +624,58 @@ mod tests {
         let (_, calls) = measured("[C]la[C]la[C]la\n[C]la[C]la");
         // "C" as chord and as inline chord, "la" as lyric, then title "Untitled".
         assert_eq!(calls, 4);
+    }
+
+    #[test]
+    fn a_wide_line_wraps_at_a_word_boundary_with_its_chords_following() {
+        // Fixed: 0.5 em per character. "Hello there " is 6 em, "my " 1.5 em.
+        let (song, _) = measured("[C]Hello there [G]my [Am]friend of old");
+        let line = &song.sections[0].lines[0];
+        assert_eq!(line.rows(false, f32::INFINITY, 0.0).len(), 1);
+        let rows = line.rows(false, 8.0, 1.0);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        let first: Vec<&str> = rows[0].runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(first, ["C", "Hello there ", "G", "my "]);
+        let second: Vec<&str> = rows[1].runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(second, ["Am", "friend of old"]);
+        assert_eq!(rows[1].runs[0].x, 1.0, "continuation rows are indented");
+        assert_eq!(rows[1].runs[1].x, 1.0, "the chord still sits over its word");
+        assert!(rows[0].width <= 8.0 && rows[1].width <= 8.0);
+    }
+
+    #[test]
+    fn wrapping_never_breaks_inside_a_word_or_after_a_syllable_split() {
+        let (song, _) = measured("[D]New Or[F]leans is [G]far");
+        let line = &song.sections[0].lines[0];
+        // 3 em fits "New " and nothing else; "Or" + "leans" must stay together.
+        let rows = line.rows(false, 3.0, 0.0);
+        let texts: Vec<Vec<&str>> = rows
+            .iter()
+            .map(|row| row.runs.iter().map(|r| r.text.as_str()).collect())
+            .collect();
+        // "New Or" merges into one run; "Or" cannot leave "leans" behind, so
+        // the F chord's segment overruns the limit rather than breaking.
+        assert_eq!(
+            texts,
+            [vec!["D", "New Or", "F", "leans "], vec!["is ", "G", "far"]]
+        );
+        // An unbreakable token wider than the limit stays whole and reports it.
+        let (song, _) = measured("[C]Supercalifragilistic");
+        let rows = song.sections[0].lines[0].rows(false, 2.0, 0.0);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].width > 2.0);
+    }
+
+    #[test]
+    fn inline_rows_wrap_too_and_tab_rows_never_do() {
+        let (song, _) = measured("[C]one two [G]three four");
+        let line = &song.sections[0].lines[0];
+        let rows = line.rows(true, 4.5, 0.5);
+        assert!(rows.len() >= 2);
+        assert!(rows.iter().all(|row| row.width <= 4.5 + 1e-4), "{rows:?}");
+        let (song, _) = measured("{sot}\ne|--3--|--5--|--7--|\n{eot}");
+        let tab = &song.sections[0].lines[0];
+        assert_eq!(tab.rows(false, 1.0, 0.0).len(), 1);
     }
 
     #[test]
