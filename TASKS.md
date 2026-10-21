@@ -12,7 +12,13 @@ automated checks. When every task in an epic is checked, the epic moves to
   **real 1x window**, which needs a 1x display. Everything else is done
   (HISTORY.md, 2026-10-21): `tests/page_bounds.rs` checks real CoreText ink
   at 1x and 2x across the testdata songs and window sizes, and 1x pages
-  were inspected through `chordpro-live render --scale 1`.
+  were inspected through `chordpro-live render --scale 1`. The repeatable
+  capture matrix and the review procedure for that window check are in
+  [docs/visual-regression.md](docs/visual-regression.md), with the last
+  attempt recorded in
+  [docs/visual-regression-validation.md](docs/visual-regression-validation.md);
+  a candidate capture alone does not complete this task, and the 1x and 2x
+  runs still need reviewing and approving as baselines.
 
 ## P2 — complete the proposed viewer
 
