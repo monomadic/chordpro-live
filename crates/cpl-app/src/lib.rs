@@ -228,12 +228,47 @@ enum PreparedPage {
         bounds: BTreeMap<usize, (f32, f32)>,
         sections: Vec<ScrollSection>,
         max_offset: f32,
+        /// Paged mode's page starts: offsets at which a page begins on a
+        /// whole group and holds every group that fits before the strip.
+        pages: Vec<f32>,
     },
 }
 
 struct ScrollSection {
     groups: std::ops::Range<usize>,
     name: String,
+}
+
+#[derive(Clone, Copy)]
+enum Position {
+    Offset(f32),
+    Page(usize),
+}
+
+/// Page starts over a single column of groups: each page begins at the top
+/// of the first group the page before could not hold whole. A group taller
+/// than a page (it cannot happen at the floor with wrapping, but a giant
+/// title could) starts its own page and is cut, rather than looping.
+fn page_starts(
+    bounds: &BTreeMap<usize, (f32, f32)>,
+    top_margin: f32,
+    content_end: f32,
+) -> Vec<f32> {
+    let mut pages = vec![0.0];
+    let mut offset = 0.0_f32;
+    let page_height = content_end - top_margin;
+    while let Some(&(top, _)) = bounds
+        .values()
+        .find(|&&(top, bottom)| bottom - offset > content_end && top - offset >= top_margin - 1e-3)
+    {
+        let mut next = top - top_margin;
+        if next <= offset + 1e-3 {
+            next = offset + page_height;
+        }
+        pages.push(next);
+        offset = next;
+    }
+    pages
 }
 
 impl App {
@@ -361,6 +396,26 @@ impl App {
     /// Only the status strip's text changes per step, so this costs no
     /// measurement and no page composition.
     pub fn view(&self, width: f32, height: f32, offset: f32) -> ScrollView {
+        self.view_at(width, height, Position::Offset(offset))
+    }
+
+    /// How many pages paged mode turns through at this viewport; 1 when the
+    /// song fits.
+    pub fn page_count(&self, width: f32, height: f32) -> usize {
+        match self.prepared(width, height).as_ref() {
+            PreparedPage::Scroll { pages, .. } => pages.len(),
+            _ => 1,
+        }
+    }
+
+    /// Paged mode's view of `page` (clamped to the last): the page begins on
+    /// a whole chord/lyric group, even when that leaves the last page short,
+    /// so a turn never repeats a line from the page before.
+    pub fn page_view(&self, width: f32, height: f32, page: usize) -> ScrollView {
+        self.view_at(width, height, Position::Page(page))
+    }
+
+    fn view_at(&self, width: f32, height: f32, position: Position) -> ScrollView {
         match self.prepared(width, height).as_ref() {
             PreparedPage::Fit(_) | PreparedPage::NeedsWidth(_) => ScrollView {
                 offset: 0.0,
@@ -372,16 +427,23 @@ impl App {
                 bounds,
                 sections,
                 max_offset,
+                pages,
                 ..
             } => {
                 let c = &self.config;
                 let body = c.body_size;
-                let offset = offset.clamp(0.0, *max_offset);
+                let (offset, page) = match position {
+                    Position::Offset(offset) => (offset.clamp(0.0, *max_offset), None),
+                    Position::Page(page) => {
+                        let page = page.min(pages.len() - 1);
+                        (pages[page], Some(page))
+                    }
+                };
                 let content_end = height - c.margin_bottom - c.status_height * body;
                 let mut band = (f32::INFINITY, f32::NEG_INFINITY);
                 let mut first_visible_group = None;
                 for (&group, &(top, bottom)) in bounds {
-                    if top - offset >= c.margin_top && bottom - offset <= content_end {
+                    if top - offset >= c.margin_top - 1e-3 && bottom - offset <= content_end {
                         band.0 = band.0.min(top - offset);
                         band.1 = band.1.max(bottom - offset);
                         if group != 0 {
@@ -398,15 +460,21 @@ impl App {
                 } else {
                     (0.0, 0.0)
                 };
-                let status = Text {
-                    group: usize::MAX,
-                    content: self.scroll_status(
+                let content = match page {
+                    None => self.scroll_status(
                         width,
                         offset,
                         *max_offset,
                         first_visible_group,
                         sections,
                     ),
+                    Some(page) => {
+                        self.page_status(width, page, pages.len(), first_visible_group, sections)
+                    }
+                };
+                let status = Text {
+                    group: usize::MAX,
+                    content,
                     x: c.margin_x,
                     baseline: height - c.margin_bottom * 0.5,
                     size: body * 0.7,
@@ -424,6 +492,36 @@ impl App {
         }
     }
 
+    fn section_prefix(first_visible_group: Option<usize>, sections: &[ScrollSection]) -> String {
+        first_visible_group
+            .and_then(|group| {
+                sections
+                    .iter()
+                    .find(|section| section.groups.contains(&group))
+            })
+            .map_or(String::new(), |section| format!("{}  ·  ", section.name))
+    }
+
+    fn page_status(
+        &self,
+        width: f32,
+        page: usize,
+        count: usize,
+        first_visible_group: Option<usize>,
+        sections: &[ScrollSection],
+    ) -> String {
+        let prefix = Self::section_prefix(first_visible_group, sections);
+        let page = format!("PAGE {} / {count}", page + 1);
+        if width < 700.0 {
+            format!("{prefix}{page}")
+        } else {
+            format!(
+                "{prefix}{page}  ·  stand {} pt  ·  Space / Page Down turns",
+                self.config.body_size
+            )
+        }
+    }
+
     fn scroll_status(
         &self,
         width: f32,
@@ -438,13 +536,7 @@ impl App {
         } else {
             ""
         };
-        let section = first_visible_group.and_then(|group| {
-            sections
-                .iter()
-                .find(|section| section.groups.contains(&group))
-        });
-        let section_prefix =
-            section.map_or(String::new(), |section| format!("{}  ·  ", section.name));
+        let section_prefix = Self::section_prefix(first_visible_group, sections);
         if width < 400.0 {
             // A phone-narrow window keeps where you are and whether there is
             // more; the point size can wait.
@@ -471,6 +563,7 @@ impl App {
                 bounds,
                 sections,
                 max_offset,
+                ..
             } => {
                 let c = &self.config;
                 let body = c.body_size;
@@ -602,11 +695,13 @@ impl App {
                 marker
             })
             .collect();
+        let pages = page_starts(&group_bounds, c.margin_top, content_end);
         PreparedPage::Scroll {
             content: long.text,
             bounds: group_bounds,
             sections,
             max_offset,
+            pages,
         }
     }
 
@@ -1102,6 +1197,53 @@ mod tests {
                 .any(|item| item.group == usize::MAX
                     && item.content.starts_with("CHORUS  ·  SCROLL"))
         );
+    }
+
+    #[test]
+    fn pages_turn_on_whole_groups_without_repeating_or_skipping_a_line() {
+        let mut source = String::from("{title: Test}\n{sov: Verse 1}\n");
+        for index in 0..25 {
+            source.push_str(&format!("[C]Line {index} [G]here\n"));
+        }
+        source.push_str("{eov}");
+        let app = app(&source);
+        let (width, height) = (450.0, 300.0);
+        let count = app.page_count(width, height);
+        assert!(count >= 3, "{count}");
+        let page = app.page(width, height);
+        let mut seen = Vec::new();
+        for index in 0..count {
+            let view = app.page_view(width, height, index);
+            let status = view.status.as_ref().unwrap();
+            assert!(
+                status
+                    .content
+                    .contains(&format!("PAGE {} / {count}", index + 1)),
+                "{}",
+                status.content
+            );
+            for item in page.text.iter().filter(|t| t.content.starts_with("Line ")) {
+                let y = item.baseline - view.offset;
+                let top = y - item.size;
+                if top >= view.band.0 && y <= view.band.1 {
+                    seen.push(item.content.clone());
+                }
+            }
+        }
+        let expected: Vec<String> = (0..25).map(|i| format!("Line {i} ")).collect();
+        assert_eq!(seen, expected, "every line once, in order");
+        // The page past the end clamps to the last.
+        assert_eq!(
+            app.page_view(width, height, 99).offset,
+            app.page_view(width, height, count - 1).offset
+        );
+    }
+
+    #[test]
+    fn a_fitted_song_is_one_page() {
+        let app = app("{title: Test}\n{sov: A}\n[C]Hello\n{eov}");
+        assert_eq!(app.page_count(900.0, 600.0), 1);
+        assert!(app.page_view(900.0, 600.0, 3).status.is_none());
     }
 
     #[test]

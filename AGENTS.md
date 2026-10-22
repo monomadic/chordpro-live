@@ -20,7 +20,8 @@ which also holds the `Setlist`: several songs or a folder open as an ordered
 setlist, the next song's page is composed while the worker is idle, and a
 song change shows the old page until the new one is complete. The viewer
 currently hides tablature blocks while preserving them in the parsed song.
-The diagram and metadata-pill reduction steps, paged mode, library, search,
+An overflowing song scrolls or, with `v`, turns pages.
+The diagram and metadata-pill reduction steps, library, search,
 sidecar metadata, full ChordPro 6 conformance, text atlas, and iOS host are
 still planned. Do not describe these as implemented.
 
@@ -56,10 +57,11 @@ overflow with `cargo run -- --view page-scroll`; or open a song with
 `cargo run -- --view song.cho` (`--view page-dark song.cho` for white on
 black), or several songs or a folder as a setlist (`--view testdata`); append
 `--size 980x720` to a `--view` command for a repeatable logical-point window
-size, `--song 2` to open on a given song and `--scroll 120` to open scrolled
-that many points. `cpl --help` lists the forms. Press `i` for polarity,
-`n`/`p` (or ← →) for the next and previous song, and `q` or Escape to close.
-Up/Down, Page Up/Down, Home, and End navigate an overflowing song. Capture
+size, `--song 2` to open on a given song, `--scroll 120` to open scrolled
+that many points, and `--paged` or `--page 2` to open in paged mode.
+`cpl --help` lists the forms. Press `i` for polarity, `v` for scroll or
+paged, `n`/`p` (or ← →) for the next and previous song, and `q` or Escape
+to close. Up/Down, Space, Page Up/Down, Home, and End scroll or turn pages. Capture
 the window with
 `screencapture -x -l "$(swift scripts/window-id.swift | head -1)" shot.png`;
 `CPL_TIMING=1` logs each worker answer (`slab` or `view`) to stderr.

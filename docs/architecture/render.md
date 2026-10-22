@@ -65,3 +65,8 @@ composes as usual. Only the newest generation is accepted, so a page from
 the previous song can never land after the change. `--song N` opens the
 viewer on a given song and `scripts/window-id.swift` finds the window, so a
 capture of any song needs no keypress.
+
+In paged mode the worker answers a page request the same way: it asks the
+app for the page's view first, then keeps the slab if it covers that offset
+(or reaches the end of the page, for a short last page), so a page turn
+uploads only the status strip unless it leaves the slab.

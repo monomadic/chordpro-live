@@ -40,8 +40,18 @@ automated checks. When every task in an epic is checked, the epic moves to
   (two lines wrap, chords follow their words) and Scarborough Fair at
   420×720 pt (step 9 inline chords, one wrapped line). Under 400 pt the
   scroll status shortens to section, SCROLL and an arrow so it fits.
-- [ ] Add paged mode for songs that cannot fit and need a predictable page turn.
+- [x] Add paged mode for songs that cannot fit and need a predictable page turn.
   Keep whole chord/lyric pairs together and make the current page obvious.
+  `v` toggles scroll and paged; Space, ↓ and Page Down turn forward, ↑ and
+  Page Up back, Home and End to the ends. Each page begins on the first
+  chord/lyric group the page before could not hold whole, so no line repeats
+  or is skipped, and the status reads the section and `PAGE n / N`. A page is
+  an offset over the same retained slab, so a turn uploads only the status
+  strip unless it leaves the slab. `--paged` and `--page N` open in paged
+  mode for captures. Captured pages 1, 2 and a clamped 9 of the scroll sample
+  at 560×340 pt; a headless test checks every line appears once, in order.
+  Not yet: the key-driven turn in a window, and a page-turn mark beyond the
+  status strip if rehearsal finds the strip too quiet.
 - [ ] Check actual CoreText extents at 1x and 2x against fit bounds, including
   title, byline, labels, and long chords. A real-raster page-bound test now
   covers three viewport sizes at both scales with no mismatch; expand it when

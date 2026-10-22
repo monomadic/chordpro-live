@@ -51,6 +51,10 @@ struct Viewer {
     initial_size: (f64, f64),
     scroll_offset: f32,
     scroll_max: f32,
+    /// Paged mode turns whole pages instead of scrolling; `v` toggles it.
+    paged: bool,
+    page: usize,
+    page_count: usize,
     /// Index into the setlist; `n`/`p` move it, the worker swaps the page.
     song: usize,
     song_count: usize,
@@ -76,6 +80,8 @@ struct PageRequest {
     /// Title strip height in points.
     inset: f32,
     offset: f32,
+    /// Paged mode's page; `offset` is ignored when set.
+    page: Option<usize>,
     polarity: Polarity,
     max_texture_side: u32,
 }
@@ -94,8 +100,8 @@ impl PageRequest {
             self.content_px() as f32 / self.scale,
         )
     }
-    fn offset_px(&self) -> i32 {
-        (self.offset * self.scale).round() as i32
+    fn px(&self, points: f32) -> i32 {
+        (points * self.scale).round() as i32
     }
 }
 
@@ -112,6 +118,10 @@ struct ReadyPage {
     song: usize,
     title: String,
     max_offset: f32,
+    /// Paged mode's page count at this viewport.
+    pages: usize,
+    /// The offset in points the view shows, so scroll mode can resume there.
+    view_offset: f32,
     slab: Arc<Slab>,
     /// A freshly composed status strip, when the page does not carry its own.
     status: Option<PageImage>,
@@ -162,20 +172,22 @@ struct Worker {
     timing: bool,
 }
 
-/// Composes the slab of `page` around the requested offset.
+/// Composes the slab of `page` around `offset_px`, the device row at the top
+/// of the content.
 fn compose_slab(
     compositor: &mut PageCompositor,
     next_id: &mut u64,
     page: &Frame,
     page_px: u32,
     request: &PageRequest,
+    offset_px: i32,
 ) -> Arc<Slab> {
     let viewport = request.content_px();
     let height = page_px
         .min(viewport * SLAB_VIEWPORTS)
         .min(request.max_texture_side)
         .max(1);
-    let top = (request.offset_px() - viewport as i32).clamp(0, page_px as i32 - height as i32);
+    let top = (offset_px - viewport as i32).clamp(0, page_px as i32 - height as i32);
     let image = compositor.compose_slab(page, request.scale, request.width, height, top);
     *next_id += 1;
     Arc::new(Slab {
@@ -191,12 +203,13 @@ fn retain(
     next_id: &mut u64,
     app: &mut App,
     request: &PageRequest,
+    offset_px: i32,
 ) -> Retained {
     app.polarity = request.polarity;
     let (width, height) = request.logical();
     let page = app.page(width, height);
     let page_px = ((page.height * request.scale).round() as u32).max(1);
-    let slab = compose_slab(compositor, next_id, &page, page_px, request);
+    let slab = compose_slab(compositor, next_id, &page, page_px, request, offset_px);
     Retained {
         song: request.song,
         key: ViewKey::of(request),
@@ -217,30 +230,49 @@ impl Worker {
         }
         let key = ViewKey::of(request);
         let mut composed_slab = false;
+        // Where the content sits decides which slab is needed, so the view
+        // comes first; it reads the prepared page and measures nothing.
+        let (width, height) = request.logical();
+        let (scroll, pages) = {
+            let app = self.setlist.current(&CoreText);
+            app.polarity = request.polarity;
+            let scroll = match request.page {
+                Some(page) => app.page_view(width, height, page),
+                None => app.view(width, height, request.offset),
+            };
+            (scroll, app.page_count(width, height))
+        };
+        let offset_px = request.px(scroll.offset);
         let fresh = self
             .retained
             .as_ref()
             .is_none_or(|r| r.song != request.song || r.key != key);
         if fresh {
-            self.retained = Some(
-                match self
-                    .preloaded
-                    .take_if(|p| p.song == request.song && p.key == key)
-                {
-                    Some(preloaded) => preloaded,
-                    None => {
-                        composed_slab = true;
-                        let app = self.setlist.current(&CoreText);
-                        retain(&mut self.compositor, &mut self.next_slab_id, app, request)
-                    }
-                },
-            );
+            let preloaded = self
+                .preloaded
+                .take_if(|p| p.song == request.song && p.key == key);
+            self.retained = Some(match preloaded {
+                Some(preloaded) => preloaded,
+                None => {
+                    composed_slab = true;
+                    let app = self.setlist.current(&CoreText);
+                    retain(
+                        &mut self.compositor,
+                        &mut self.next_slab_id,
+                        app,
+                        request,
+                        offset_px,
+                    )
+                }
+            });
         }
         let retained = self.retained.as_mut().unwrap();
         let viewport = request.content_px() as i32;
-        let offset_px = request.offset_px();
+        let slab_end = retained.slab.top + retained.slab.image.height as i32;
+        // The last page may start past the page's end less a viewport; a
+        // slab that reaches the page's end covers it, the rest is paper.
         let covered = retained.slab.top <= offset_px
-            && retained.slab.top + retained.slab.image.height as i32 >= offset_px + viewport;
+            && (slab_end >= offset_px + viewport || slab_end >= retained.page_px as i32);
         if !covered {
             composed_slab = true;
             retained.slab = compose_slab(
@@ -249,13 +281,10 @@ impl Worker {
                 &retained.page,
                 retained.page_px,
                 request,
+                offset_px,
             );
         }
         let retained = self.retained.as_ref().unwrap();
-        let (width, height) = request.logical();
-        let app = self.setlist.current(&CoreText);
-        app.polarity = request.polarity;
-        let scroll = app.view(width, height, request.offset);
         let scale = request.scale;
         let paper = if request.polarity == Polarity::Light {
             255
@@ -294,6 +323,8 @@ impl Worker {
                 song: request.song,
                 title: self.setlist.title(request.song).to_owned(),
                 max_offset: scroll.max_offset,
+                pages,
+                view_offset: scroll.offset,
                 slab: Arc::clone(&retained.slab),
                 status,
                 view,
@@ -327,6 +358,7 @@ impl Worker {
         let request = PageRequest {
             song: next,
             offset: 0.0,
+            page: last.page.map(|_| 0),
             ..last
         };
         self.preloaded = Some(retain(
@@ -334,6 +366,7 @@ impl Worker {
             &mut self.next_slab_id,
             app,
             &request,
+            0,
         ));
         true
     }
@@ -359,6 +392,7 @@ impl Viewer {
             scale: window.scale_factor() as f32,
             inset: TITLE_STRIP_PT,
             offset: self.scroll_offset,
+            page: self.paged.then_some(self.page),
             polarity: self.polarity,
             max_texture_side: self.max_texture_side,
         });
@@ -370,6 +404,12 @@ impl Viewer {
                 continue;
             }
             self.scroll_max = page.max_offset;
+            self.page_count = page.pages;
+            self.page = self.page.min(page.pages.saturating_sub(1));
+            // Leaving paged mode resumes scrolling where the page was.
+            if self.paged {
+                self.scroll_offset = page.view_offset;
+            }
             self.scroll_offset = self.scroll_offset.min(self.scroll_max);
             if let (Some(gpu), Some(window)) = (&mut self.gpu, &self.window) {
                 if self.uploaded_slab != Some(page.slab.id) {
@@ -395,6 +435,15 @@ impl Viewer {
         }
     }
 
+    /// Turns to `page`, clamped to the song; no request when it would not move.
+    fn turn_page(&mut self, page: usize) {
+        let page = page.min(self.page_count.saturating_sub(1));
+        if page != self.page {
+            self.page = page;
+            self.request_page();
+        }
+    }
+
     /// Moves through the setlist without wrapping. The page shown stays the
     /// old song's until the new song's complete page arrives.
     fn change_song(&mut self, delta: isize) {
@@ -405,6 +454,7 @@ impl Viewer {
         self.song = target;
         self.scroll_offset = 0.0;
         self.scroll_max = 0.0;
+        self.page = 0;
         self.request_page();
     }
 }
@@ -483,6 +533,30 @@ impl ApplicationHandler<PageReady> for Viewer {
                 Key::Character(key) if key.eq_ignore_ascii_case("p") => self.change_song(-1),
                 Key::Named(NamedKey::ArrowRight) => self.change_song(1),
                 Key::Named(NamedKey::ArrowLeft) => self.change_song(-1),
+                Key::Character(key) if key.eq_ignore_ascii_case("v") => {
+                    self.paged = !self.paged;
+                    if self.paged {
+                        // Open on the page holding what is on screen now.
+                        self.page = 0;
+                    }
+                    self.request_page();
+                }
+                Key::Named(NamedKey::ArrowDown | NamedKey::PageDown | NamedKey::Space)
+                    if self.paged =>
+                {
+                    self.turn_page(self.page + 1)
+                }
+                Key::Named(NamedKey::ArrowUp | NamedKey::PageUp) if self.paged => {
+                    self.turn_page(self.page.saturating_sub(1))
+                }
+                Key::Named(NamedKey::Home) if self.paged => self.turn_page(0),
+                Key::Named(NamedKey::End) if self.paged => self.turn_page(usize::MAX),
+                Key::Named(NamedKey::Space) => {
+                    let height = self.window.as_ref().unwrap().inner_size().height as f32
+                        / self.window.as_ref().unwrap().scale_factor() as f32;
+                    self.scroll_offset = (self.scroll_offset + height * 0.8).min(self.scroll_max);
+                    self.request_page();
+                }
                 Key::Named(NamedKey::ArrowDown) => {
                     self.scroll_offset = (self.scroll_offset
                         + self.config.line_height * self.config.body_size)
@@ -545,9 +619,12 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
                                           set the window size in logical points
        cpl --view <folder> --song 2       open on the second song of the setlist
        cpl --view <song.cho> --scroll 300 open scrolled 300 points down the song
+       cpl --view <song.cho> --paged      open in paged mode (`v` toggles)
+       cpl --view <song.cho> --page 2     open paged on the second page
        cpl <song.cho>                     print the parsed lyrics
-In the viewer: i polarity, n / p or ← → next and previous song,
-↑ ↓ / Page Up / Page Down / Home / End scroll, q or Escape closes.";
+In the viewer: i polarity, v scroll or paged, n / p or ← → next and
+previous song, ↑ ↓ / Space / Page Up / Page Down / Home / End scroll or turn
+pages, q or Escape closes.";
 
 const SONG_EXTENSIONS: [&str; 6] = ["cho", "chopro", "chordpro", "crd", "pro", "cp"];
 
@@ -606,14 +683,22 @@ fn main() -> ExitCode {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
     }
-    // Trailing `--size WxH` and `--song N` options, in either order.
+    // `--paged` anywhere opens in paged mode; trailing `--size WxH`,
+    // `--song N`, `--scroll P` and `--page N` options come in any order.
+    let mut paged = false;
+    args.retain(|arg| {
+        let flag = arg == "--paged";
+        paged |= flag;
+        !flag
+    });
     let mut requested_size = None;
     let mut start_song = 0;
     let mut start_offset = 0.0f32;
+    let mut start_page = 0;
     while args.len() >= 2
         && matches!(
             args[args.len() - 2].as_str(),
-            "--size" | "--song" | "--scroll"
+            "--size" | "--song" | "--scroll" | "--page"
         )
     {
         let value = args.pop().unwrap();
@@ -623,6 +708,17 @@ fn main() -> ExitCode {
                 Some(size) => requested_size = Some(size),
                 None => {
                     eprintln!("invalid --size {value:?}; expected WIDTHxHEIGHT (at least 200x200)");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else if flag == "--page" {
+            match value.parse::<usize>() {
+                Ok(n) if n >= 1 => {
+                    start_page = n - 1;
+                    paged = true;
+                }
+                _ => {
+                    eprintln!("invalid --page {value:?}; expected a 1-based page number");
                     return ExitCode::FAILURE;
                 }
             }
@@ -663,8 +759,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if (requested_size.is_some() || start_song > 0 || start_offset > 0.0) && !view {
-        eprintln!("--size, --song and --scroll require --view");
+    if (requested_size.is_some() || start_song > 0 || start_offset > 0.0 || paged) && !view {
+        eprintln!("--size, --song, --scroll, --page and --paged require --view");
         return ExitCode::FAILURE;
     }
     let paths = match expand_paths(&paths) {
@@ -806,6 +902,9 @@ fn main() -> ExitCode {
         }),
         scroll_offset: start_offset,
         scroll_max: f32::INFINITY,
+        paged,
+        page: start_page,
+        page_count: usize::MAX,
         song: start_song,
         song_count,
         generation: 0,

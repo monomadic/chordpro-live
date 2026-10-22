@@ -6,6 +6,20 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **Paged mode.** `v` switches an overflowing song between scrolling and
+  turning pages. `App::page_count` and `App::page_view` give the pages of
+  the prepared scroll page: each begins at the top of the first chord/lyric
+  group the page before could not hold whole (a group taller than a page
+  starts its own page instead of looping), the last page may be short, and
+  the status names the section and `PAGE n / N`. The host's worker now
+  computes the view before choosing a slab, so a page turn is an offset
+  over the retained slab and composes nothing unless it leaves the slab; a
+  slab reaching the end of the page covers a short last page. Space also
+  scrolls in scroll mode. `--paged` and `--page N` open paged for captures.
+  Two new headless tests (every line once and in order across pages; a
+  fitted song is one page); workspace tests and strict Clippy passed;
+  pages 1, 2 and a clamped 9 of the scroll sample captured at 2x. Unverified:
+  key-driven turns in a window.
 - **Wide lyric lines wrap.** Measurement now records every word of a line
   with its width, and one pure row flow (`MeasuredLine::rows`) produces both
   the unwrapped runs and the wrapped rows: a break is allowed only after a

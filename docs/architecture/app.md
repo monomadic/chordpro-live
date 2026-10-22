@@ -33,7 +33,7 @@ chords only if a line is too wide, and selects complete chord/lyric line
 groups for the viewport. The macOS host owns the offset and handles arrow,
 Page Up/Down, Home, and End keys. The scroll status names the section
 containing the first visible song line, even after its label leaves the
-viewport. Paged and timed scroll modes, diagram and
+viewport. Timed scroll modes, diagram and
 pill reductions, per-step on/off/auto pins, and normalised input events in
 the proposal are not implemented yet. The default config is embedded at
 build time; hot reload has not landed.
@@ -62,3 +62,15 @@ descenders, safe because neighbouring groups keep 0.45 em clear), and the
 status text. The renderer masks outside the band, so the retained page can
 be drawn at any offset while partial lines stay hidden. `frame_scrolled`
 remains for headless checks and shares the status text with `view`.
+
+## Paged mode
+
+A scrolling page also carries its page starts. Walking the groups in order,
+each page begins at the top of the first group whose bottom falls past the
+content box on the page before, so a page always opens on a whole
+chord/lyric group, no line repeats or is skipped, and the last page may be
+short. `App::page_view(width, height, page)` returns the same `ScrollView`
+as `view` at that start (unclamped by `max_offset`, clamped to the last
+page), with a status naming the section and `PAGE n / N`;
+`App::page_count` is 1 for a song that fits. The host keeps the page index
+and toggles the mode with `v`.
