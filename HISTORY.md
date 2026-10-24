@@ -6,6 +6,23 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **Visual regression goldens.** `tests/visual.rs` runs eleven `cpl render`
+  cases and compares each with a committed golden in `tests/goldens/`,
+  `sips`-compressed so the set is about 540 KB and every golden opens in Preview or
+  on GitHub. `cpl-render/src/png.rs` gained a decoder (full inflate after
+  puff.c, all five row filters) to read them back. Tolerance: a pixel differs
+  when a channel moves more than 24 levels, a case fails past 0.02% of its
+  pixels; a failing case leaves its render and a diff in `target/visual/`,
+  and `CPL_BLESS=1` rewrites the goldens. Checked by shifting lyric baselines
+  0.1 em (every chords-above case failed) and widening the chord gap (caught
+  only once `testdata/crowded_chords.cho` was added, since no other case
+  crowds chords). The first goldens showed the inline sample drawing only its
+  title: the 28 pt title strip from the chromeless window had taken the room
+  that sample was sized for, so its default window is now 300×228 pt, back at
+  step 9, confirmed in a real window. Light and dark polarity and body sizes
+  17, 18, 19, 26 and 28 pt were inspected in the goldens. Workspace tests and
+  strict Clippy passed. While capturing, a fresh window stayed blank once;
+  that is the new first P1 task.
 - **Real CoreText ink checked against page bounds; three defects fixed.**
   `tests/page_bounds.rs` now covers both testdata songs at five window sizes
   and the scroll end, and wrapped lines with long chords, at 1x and 2x. It

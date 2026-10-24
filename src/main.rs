@@ -1047,7 +1047,9 @@ fn main() -> ExitCode {
         config,
         polarity,
         initial_size: requested_size.unwrap_or(if inline {
-            (300.0, 200.0)
+            // 200 pt of page under the 28 pt title strip: tight enough
+            // that the sample needs ladder step 9, inline chords.
+            (300.0, 228.0)
         } else if scroll {
             (560.0, 340.0)
         } else {

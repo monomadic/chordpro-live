@@ -8,6 +8,14 @@ automated checks. When every task in an epic is checked, the epic moves to
 
 ## P1 — dependable performance behavior
 
+- [ ] A freshly launched window sometimes stays blank (window background,
+  no page) although the worker logged its first page: seen twice in about
+  twenty `--view` launches. Suspect `Gpu::render` returning early on a
+  surface timeout or an occluded window without anyone asking for another
+  present. Reproduce by launching repeatedly and capturing, make a skipped
+  present retry on the idle tick and on `Occluded(false)`, and capture 20
+  clean launches.
+
 - [x] Move song measurement and page preparation off the window callback.
   A worker measures, lays out and rasterises complete pages; stale results
   are discarded and resize keeps the previous texture until replacement.
@@ -65,11 +73,21 @@ automated checks. When every task in an epic is checked, the epic moves to
   pages were inspected through `cpl render --scale 1`, which runs the worker's
   real page path and the shader's placement rule. **Still to do: a real 1x
   window**, which needs a 1x display.
-- [ ] Add a visual regression path for `--view` sample pages at known logical
+- [x] Add a visual regression path for `--view` sample pages at known logical
   sizes. Verify light and dark polarity and the 17–28 pt type range on macOS.
-  `cpl render <song|sample> --out page.png --size WxH --scale N [--dark]
-  [--scroll P | --page N]` now writes exactly what the window would present,
-  headless; what remains is the set of goldens and the comparison.
+  `tests/visual.rs` renders eleven cases through the real `cpl render` and
+  compares them with `sips`-compressed goldens in `tests/goldens/` (about 540 KB):
+  light and dark sample, inline at 2x, scroll and a scrolled view, a dark
+  paged page, House of the Rising Sun at 1x and 2x (28 pt), Scarborough Fair
+  wrapped at 420 and 280 pt (18 pt, step 9), and a crowded-chords fixture;
+  body sizes run from the 17 pt floor to 28 pt. A case fails when more than
+  0.02% of pixels move by more than 24 levels; renders and a diff land in
+  `target/visual/`; `CPL_BLESS=1` rewrites the goldens. Proven to catch a
+  0.1 em lyric shift (2,752–39,158 pixels per case) and a chord-gap change
+  (15,820 pixels, via the crowded fixture). Inspecting the first goldens
+  found the inline sample showing only its title since the chromeless title
+  strip took 28 pt; its window is now 300×228 and it fits at step 9 again,
+  confirmed in a real window.
 
 ## P2 — complete the proposed viewer
 

@@ -84,3 +84,13 @@ fragment shader's placement rule on the CPU (`present`), so the PNG holds
 the pixels the window would present at any `--scale`, `--size`, polarity,
 scroll offset or page. `cpl-render/src/png.rs` writes it with stored deflate
 blocks and no dependency.
+
+**Visual regression.** `tests/visual.rs` renders each case with the real
+binary (`cpl render`) and decodes both it and its golden with
+`cpl-render/src/png.rs`. Goldens are `sips`-compressed PNGs in
+`tests/goldens/`; a case fails when more than 0.02% of pixels move more than
+24 levels in any channel, which tolerates antialiasing drift from a macOS
+font update but not a moved run. After an intended visual change, inspect
+`target/visual/*.png`, then run `CPL_BLESS=1 cargo test --test visual`.
+A layout constant only reaches a golden if some case exercises it; the
+crowded-chords fixture exists because no song case crowded its chords.

@@ -1,0 +1,13 @@
+{title: Crowded Chords}
+{artist: chordpro-live test fixture}
+{key: G}
+
+{start_of_verse: Verse 1}
+[Cmaj7]I [G/B]am [Am7]a [D7sus4]song [Em]
+With [F#m7b5]chords [B7]on [Em]short [Em/D]words
+{end_of_verse}
+
+{start_of_chorus: Chorus}
+[C]Every [D]chord [G]stays [Gsus4]put [G]
+[Am]Over [Bm7]its [C]own [D]sound
+{end_of_chorus}
