@@ -6,6 +6,25 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **Real CoreText ink checked against page bounds; three defects fixed.**
+  `tests/page_bounds.rs` now covers both testdata songs at five window sizes
+  and the scroll end, and wrapped lines with long chords, at 1x and 2x. It
+  found: (1) a title wider than the content box running into the margin — a
+  title now wraps by words (`HeaderLayout::title_rows`, new `title_leading`
+  config key), fit mode keeps a long title instead of dropping it at step 7
+  for width alone, and a scroll page drops a title that would wrap past half
+  the viewport, since a header taller than the viewport could never be shown
+  whole; (2) side labels chosen at the floor carried to a larger body size
+  where the fixed-point margin no longer held them, drawing a label at
+  −21 pt — `layout` now marks such a candidate unfit; (3) measuring while
+  another thread rasterised returned wrong advances in about one layout in
+  ten — the shim is serialised behind a process-wide lock, and
+  `tests/coretext_threads.rs` fails without it. `cpl render` writes the page
+  the window would present to a PNG at any scale (a dependency-free encoder
+  in `cpl-render/src/png.rs`); 1x and 2x renders of both songs, the scroll
+  sample and a dark paged sample were inspected. Workspace tests and strict
+  Clippy passed; the page-bounds test passed 30 of 30 parallel runs.
+  Unverified: a real 1x window.
 - **Paged mode.** `v` switches an overflowing song between scrolling and
   turning pages. `App::page_count` and `App::page_view` give the pages of
   the prepared scroll page: each begins at the top of the first chord/lyric

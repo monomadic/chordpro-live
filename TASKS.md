@@ -53,11 +53,23 @@ automated checks. When every task in an epic is checked, the epic moves to
   Not yet: the key-driven turn in a window, and a page-turn mark beyond the
   status strip if rehearsal finds the strip too quiet.
 - [ ] Check actual CoreText extents at 1x and 2x against fit bounds, including
-  title, byline, labels, and long chords. A real-raster page-bound test now
-  covers three viewport sizes at both scales with no mismatch; expand it when
-  a failing real-song case appears and verify a 1x window visually.
+  title, byline, labels, and long chords. `tests/page_bounds.rs` now checks
+  real CoreText ink at 1x and 2x for the sample, both testdata songs at five
+  window sizes (roomy, stand, wrapping, narrow, scrolling, plus the scroll
+  end), and wrapped lines with long chords. Expanding it found and fixed
+  three defects: a title wider than the content box crossed the margin (it
+  now wraps by words); a page that needed side labels at the floor kept them
+  at a larger size where they no longer fit the margin (such a candidate is
+  now unfit); and measuring while another thread rasterised returned wrong
+  advances (the shim is now serialised; `tests/coretext_threads.rs`). 1x
+  pages were inspected through `cpl render --scale 1`, which runs the worker's
+  real page path and the shader's placement rule. **Still to do: a real 1x
+  window**, which needs a 1x display.
 - [ ] Add a visual regression path for `--view` sample pages at known logical
   sizes. Verify light and dark polarity and the 17–28 pt type range on macOS.
+  `cpl render <song|sample> --out page.png --size WxH --scale N [--dark]
+  [--scroll P | --page N]` now writes exactly what the window would present,
+  headless; what remains is the set of goldens and the comparison.
 
 ## P2 — complete the proposed viewer
 
@@ -69,3 +81,6 @@ automated checks. When every task in an epic is checked, the epic moves to
 - [ ] Run ChordPro 6 conformance against the reference implementation and
   generate the directive status table from the results.
 - [ ] Add the iOS host after the app and renderer boundaries are stable.
+- [ ] Build the CoreText shim's fonts with `CTFont` rather than AppKit's
+  `NSFont`, so measurement is thread-safe without the process-wide lock in
+  `cpl-render/src/text.rs`. Needed before a second worker or the iOS host.

@@ -342,6 +342,9 @@ pub struct MeasuredSection {
 pub struct Header {
     pub title: String,
     pub title_width: f32,
+    /// The title's words with their trailing spaces, measured, so a title
+    /// wider than the content box can wrap instead of crossing the margin.
+    pub title_tokens: Vec<Token>,
     pub artist: Option<String>,
     pub artist_width: f32,
 }
@@ -364,6 +367,7 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
     let artist = song.first_meta("artist").map(str::to_owned);
     let header = Header {
         title_width: m.em(&title, Role::Title),
+        title_tokens: m.tokens(&title, Role::Title),
         artist_width: artist.as_deref().map_or(0.0, |a| m.em(a, Role::Subtitle)),
         title,
         artist,

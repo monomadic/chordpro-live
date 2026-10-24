@@ -74,3 +74,8 @@ as `view` at that start (unclamped by `max_offset`, clamped to the last
 page), with a status naming the section and `PAGE n / N`;
 `App::page_count` is 1 for a song that fits. The host keeps the page index
 and toggles the mode with `v`.
+
+A scroll page lays its header out at the content width like any other. If
+the wrapped title would take more than half the content box, the scroll page
+drops it, as ladder step 7 would: the header is one scroll group, and a
+group taller than the viewport could never be shown whole.

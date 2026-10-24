@@ -63,3 +63,16 @@ floor. A row wider than the limit means an unbreakable token, and the fit
 reports it as not meeting the floor — the only case left for the
 width-needed state. Wrapping at a column's own width, to allow more columns,
 is not attempted yet.
+
+A title wider than the content box wraps the same way, by its measured words
+(`Header::title_tokens`): `Options::header` takes the content width and
+returns `title_rows` with their baselines, `title_leading` title sizes apart,
+and the header's real `width`. Fit mode therefore keeps a long title and
+drops it at step 7 only when height requires. A single title word wider than
+the box still overflows and makes the candidate unfit.
+
+Side labels sit in the left margin, whose width is fixed in points, so the
+room they have in em shrinks as the body size grows. `layout` marks a
+candidate with side labels unfit when any label is wider than that room at
+the candidate's own metrics, so a larger size never reuses side labels that
+no longer fit.

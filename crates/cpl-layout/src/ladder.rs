@@ -25,6 +25,8 @@ pub struct PageMetrics {
     pub max_columns: usize,
     /// Indent of a wrapped line's continuation rows.
     pub wrap_indent: f32,
+    /// Baseline advance between rows of a wrapped title, in title sizes.
+    pub title_leading: f32,
 }
 
 /// The content box between the margins and above the status strip, in em.
@@ -47,9 +49,15 @@ pub struct Options {
 }
 
 /// Header positions in em: x from the left margin, baselines from the top margin.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HeaderLayout {
+    /// The first title row's baseline; `None` when the title is hidden.
     pub title_baseline: Option<f32>,
+    /// The title as drawn: each row's text and baseline. One row unless the
+    /// title is wider than the content box.
+    pub title_rows: Vec<(String, f32)>,
+    /// The widest header row, in em.
+    pub width: f32,
     pub artist: Option<(f32, f32)>,
     /// Where the first section starts.
     pub height: f32,
@@ -157,17 +165,32 @@ impl Options {
         }
     }
 
-    pub fn header(&self, header: &Header, m: &PageMetrics) -> HeaderLayout {
+    /// The header for a content box `max_width` em wide. A title wider than
+    /// that wraps at its word boundaries; only a single word wider than the
+    /// box still overflows, and the width says so.
+    pub fn header(&self, header: &Header, m: &PageMetrics, max_width: f32) -> HeaderLayout {
         let mut y = 0.0;
         let mut title_baseline = None;
+        let mut title_rows = Vec::new();
+        let mut width: f32 = 0.0;
         if !self.hide_title {
-            y += m.title_size;
-            title_baseline = Some(y);
+            let rows = title_rows_within(header, max_width);
+            for (index, (text, row_width)) in rows.into_iter().enumerate() {
+                y += if index == 0 {
+                    m.title_size
+                } else {
+                    m.title_size * m.title_leading
+                };
+                title_baseline.get_or_insert(y);
+                width = width.max(row_width);
+                title_rows.push((text, y));
+            }
         }
         let mut artist = None;
         if header.artist.is_some() {
-            if self.one_line_header && !self.hide_title {
+            if self.one_line_header && !self.hide_title && title_rows.len() == 1 {
                 artist = Some((header.title_width + m.header_inline_gap, y));
+                width = header.title_width + m.header_inline_gap + header.artist_width;
             } else {
                 y += if self.hide_title {
                     m.subtitle_size
@@ -175,14 +198,39 @@ impl Options {
                     m.subtitle_size * m.byline_leading
                 };
                 artist = Some((0.0, y));
+                width = width.max(header.artist_width);
             }
         }
         HeaderLayout {
             title_baseline,
+            title_rows,
+            width,
             artist,
             height: y + m.header_gap,
         }
     }
+}
+
+/// The title flowed into rows no wider than `max_width` em, breaking only
+/// after a word that ends in whitespace. Each row's text drops its trailing
+/// space; its width keeps it, which errs toward breaking a little early.
+fn title_rows_within(header: &Header, max_width: f32) -> Vec<(String, f32)> {
+    if header.title_width <= max_width || header.title_tokens.len() < 2 {
+        return vec![(header.title.clone(), header.title_width)];
+    }
+    let mut rows: Vec<(String, f32)> = Vec::new();
+    let (mut text, mut width) = (String::new(), 0.0_f32);
+    for token in &header.title_tokens {
+        if !text.is_empty() && width + token.width > max_width + 1e-4 {
+            rows.push((text.trim_end().to_owned(), width));
+            text.clear();
+            width = 0.0;
+        }
+        text.push_str(&token.text);
+        width += token.width;
+    }
+    rows.push((text.trim_end().to_owned(), width));
+    rows
 }
 
 /// One rung: its number in PROPOSAL.md's ladder, whether it can change this
@@ -269,23 +317,8 @@ pub fn layout(
     options: Options,
     step: u8,
 ) -> Solution {
-    let header = options.header(&song.header, m);
-    let header_width = if options.one_line_header && !options.hide_title {
-        song.header.title_width
-            + m.header_inline_gap
-            + song
-                .header
-                .artist
-                .as_ref()
-                .map_or(0.0, |_| song.header.artist_width)
-    } else {
-        (if options.hide_title {
-            0.0
-        } else {
-            song.header.title_width
-        })
-        .max(song.header.artist_width)
-    };
+    let header = options.header(&song.header, m, view.width);
+    let header_width = header.width;
     // Lines wider than the content box wrap at its width; a block that is
     // still wider holds an unbreakable run, and the fit reports it.
     let blocks: Vec<Block> = song
@@ -321,7 +354,12 @@ pub fn layout(
     Solution {
         options,
         step,
-        fits: fit.meets_floor && header_width <= view.width,
+        // Side labels live in the margin, which is fixed in points, so at a
+        // larger body size they may no longer fit it; such a candidate is
+        // unfit rather than drawn off the page.
+        fits: fit.meets_floor
+            && header_width <= view.width
+            && (!options.side_labels || labels_fit_side(song, m, view)),
         header,
         blocks,
         fit,
@@ -401,6 +439,7 @@ mod tests {
         side_label_room: 2.0,
         max_columns: 4,
         wrap_indent: 1.0,
+        title_leading: 1.15,
     };
 
     fn song(source: &str) -> MeasuredSong {
@@ -546,27 +585,75 @@ mod tests {
     #[test]
     fn one_line_header_puts_the_byline_on_the_title_baseline() {
         let song = song(SONGS[0]);
-        let full = Options::default().header(&song.header, &PAGE);
+        let full = Options::default().header(&song.header, &PAGE, f32::INFINITY);
         let one = Options {
             one_line_header: true,
             ..Options::default()
         }
-        .header(&song.header, &PAGE);
+        .header(&song.header, &PAGE, f32::INFINITY);
         assert_eq!(one.artist.unwrap().1, one.title_baseline.unwrap());
         assert!(one.height < full.height);
     }
 
     #[test]
-    fn wide_title_must_drop_before_page_can_fit() {
+    fn a_wide_title_wraps_and_drops_only_for_height() {
+        // Fixed: "A title wider than the page" is 27 em at title size 2.
         let song = song("{title: A title wider than the page}\n[C]Hi");
+        let roomy = Viewport {
+            width: 7.0,
+            height: 30.0,
+        };
+        let chosen = solve(&song, &PAGE, roomy);
+        assert!(chosen.fits);
+        assert_eq!(chosen.step, 0, "a wrapped title needs no reduction");
+        let rows = &chosen.header.title_rows;
+        assert!(rows.len() > 1, "{rows:?}");
+        assert!(chosen.header.width <= 7.0);
+        assert!(
+            rows.windows(2).all(|pair| pair[1].1 > pair[0].1),
+            "rows descend"
+        );
+        let joined: Vec<&str> = rows.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(joined.join(" "), "A title wider than the page");
+        // Too short for the wrapped title: it drops at step 7, as before.
+        let short = Viewport {
+            width: 7.0,
+            height: chosen.header.height + 1.0,
+        };
+        let chosen = solve(&song, &PAGE, short);
+        assert!(chosen.fits);
+        assert_eq!(chosen.step, 7);
+        assert!(chosen.options.hide_title);
+    }
+
+    #[test]
+    fn side_labels_too_wide_for_the_margin_make_a_candidate_unfit() {
+        // Fixed: "ABCD" at label size 0.7 is 1.4 em; PAGE gives 2 em of room.
+        let song = song("{sov: ABCD}\n[C]Alpha\n{eov}\n{sov: ABCD}\n[G]Bravo\n{eov}");
+        let view = Viewport {
+            width: 30.0,
+            height: 30.0,
+        };
+        let side = Options {
+            side_labels: true,
+            ..Options::default()
+        };
+        assert!(layout(&song, &PAGE, view, side, 2).fits);
+        let cramped = PageMetrics {
+            side_label_room: 1.0,
+            ..PAGE
+        };
+        assert!(!layout(&song, &cramped, view, side, 2).fits);
+    }
+
+    #[test]
+    fn a_single_word_title_wider_than_the_page_still_does_not_fit() {
+        let song = song("{title: Supercalifragilistic}\n[C]Hi");
         let view = Viewport {
             width: 7.0,
             height: 30.0,
         };
         assert!(!layout(&song, &PAGE, view, Options::default(), 0).fits);
-        let chosen = solve(&song, &PAGE, view);
-        assert!(chosen.fits);
-        assert_eq!(chosen.step, 7);
-        assert!(chosen.options.hide_title);
+        assert!(solve(&song, &PAGE, view).options.hide_title);
     }
 }

@@ -70,3 +70,17 @@ In paged mode the worker answers a page request the same way: it asks the
 app for the page's view first, then keeps the slab if it covers that offset
 (or reaches the end of the page, for a short last page), so a page turn
 uploads only the status strip unless it leaves the slab.
+
+**One CoreText call at a time.** The shim creates fonts through AppKit's
+`NSFont`, and measuring on one thread while another rasterised returned wrong
+advances. `text.rs` serialises both shim calls behind a process-wide lock;
+the app measures and draws on one worker, so it costs nothing there, and
+`tests/coretext_threads.rs` guards it. Moving the shim to `CTFont` would
+make the lock unnecessary.
+
+**Headless renders.** `cpl render <song|sample> --out page.png` answers one
+request through the worker's real path (`Worker::answer`) and runs the
+fragment shader's placement rule on the CPU (`present`), so the PNG holds
+the pixels the window would present at any `--scale`, `--size`, polarity,
+scroll offset or page. `cpl-render/src/png.rs` writes it with stored deflate
+blocks and no dependency.

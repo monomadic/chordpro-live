@@ -23,6 +23,20 @@ unsafe extern "C" {
 /// Pixels of slack the shim puts on each side of a raster (`pad` in text_shim.m).
 pub(crate) const RASTER_PAD: i32 = 1;
 
+/// One CoreText call at a time, process-wide. The shim builds its fonts with
+/// AppKit's `NSFont`, and measuring on one thread while another rasterises
+/// was measured to return wrong advances (a label 1.8 em instead of 3.1 em,
+/// in 6 of 60 layouts with three rasterising threads). The app measures and
+/// draws on one worker, so this costs it nothing; tests and any future second
+/// worker are what it protects.
+static CORETEXT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn coretext_lock() -> std::sync::MutexGuard<'static, ()> {
+    CORETEXT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 pub struct Raster {
     pub width: u32,
     pub height: u32,
@@ -44,6 +58,7 @@ impl CoreText {
     ) -> Option<Raster> {
         let text = CString::new(text).ok()?;
         let (mut width, mut height, mut baseline) = (0, 0, 0);
+        let _coretext = coretext_lock();
         let pointer = unsafe {
             sb_text_rasterize(
                 text.as_ptr(),
@@ -81,6 +96,7 @@ impl Measure for CoreText {
         let Ok(text) = CString::new(text) else {
             return 0.0;
         };
+        let _coretext = coretext_lock();
         unsafe {
             sb_text_width(
                 text.as_ptr(),

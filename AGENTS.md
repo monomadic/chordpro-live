@@ -65,6 +65,9 @@ to close. Up/Down, Space, Page Up/Down, Home, and End scroll or turn pages. Capt
 the window with
 `screencapture -x -l "$(swift scripts/window-id.swift | head -1)" shot.png`;
 `CPL_TIMING=1` logs each worker answer (`slab` or `view`) to stderr.
+`cargo run -- render song.cho --out page.png --scale 1 --size 420x720`
+writes exactly what the window would show, headless; use it for 1x checks
+and visual comparisons.
 `cargo run -- song.cho` prints the parsed lyrics.
 
 ## Design source

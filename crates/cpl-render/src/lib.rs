@@ -1,6 +1,7 @@
 //! CoreText coverage composed into a page texture, presented with wgpu.
 //! This first renderer rebuilds the page only when its content or size changes.
 
+pub mod png;
 mod text;
 
 pub use text::CoreText;

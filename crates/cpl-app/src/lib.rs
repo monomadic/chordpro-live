@@ -89,6 +89,8 @@ pub struct Config {
     pub side_label_inset: f32,
     /// Indent of a wrapped line's continuation rows, in body sizes.
     pub wrap_indent: f32,
+    /// Baseline advance between rows of a wrapped title, in title sizes.
+    pub title_leading: f32,
     pub status_height: f32,
     pub max_columns: f32,
 }
@@ -168,6 +170,7 @@ impl Config {
             byline_leading: take!("byline_leading"),
             side_label_inset: take!("side_label_inset"),
             wrap_indent: take!("wrap_indent"),
+            title_leading: take!("title_leading"),
             status_height: take!("status_height"),
             max_columns: take!("max_columns"),
         };
@@ -345,6 +348,7 @@ impl App {
             side_label_room: c.margin_x.min(c.column_gutter * body) / body - c.side_label_inset,
             max_columns: c.max_columns as usize,
             wrap_indent: c.wrap_indent,
+            title_leading: c.title_leading,
         }
     }
 
@@ -627,19 +631,30 @@ impl App {
             height: f32::INFINITY,
             ..self.viewport(width, height, body)
         };
-        // Lines wrap at the content width, so only an unbreakable run (a tab
-        // row, one enormous word) can still fail. A title wider than the
-        // window clips at the edge rather than withholding the whole song.
-        let mut long = cpl_layout::layout(&self.measured, &metrics, tall, Options::default(), 0);
+        // Lines and titles wrap at the content width, so only an unbreakable
+        // run (a tab row, one enormous word) can still fail. A header is one
+        // scroll group, and a group taller than the viewport could never be
+        // shown whole, so a title that wraps past half the content box drops
+        // here exactly as ladder step 7 drops it from a fitted page.
+        let view_height = self.viewport(width, height, body).height;
+        let mut base = Options::default();
+        if base
+            .header(&self.measured.header, &metrics, tall.width)
+            .height
+            > view_height / 2.0
+        {
+            base.hide_title = true;
+        }
+        let mut long = cpl_layout::layout(&self.measured, &metrics, tall, base, 0);
         if !long.fit.meets_floor {
             let inline = Options {
                 inline_chords: true,
-                ..Options::default()
+                ..base
             };
             long = cpl_layout::layout(&self.measured, &metrics, tall, inline, 9);
         }
-        // The scroll page tolerates a header wider than the window: it
-        // clips at the edge instead of withholding the song.
+        // A single title word wider than the window still clips at its edge
+        // rather than withholding the song.
         long.fits = long.fit.meets_floor;
         if !long.fits {
             for item in &mut fit.text {
@@ -759,10 +774,10 @@ impl App {
             },
             ladder_step: solution.step,
         };
-        if let Some(baseline) = solution.header.title_baseline {
+        for (row, baseline) in &solution.header.title_rows {
             frame.text.push(Text {
                 group: 0,
-                content: header.title.clone(),
+                content: row.clone(),
                 x: c.margin_x,
                 baseline: c.margin_top + baseline * body,
                 size: c.title_size * body,
@@ -1445,9 +1460,31 @@ mod tests {
             Polarity::Light,
             &Fixed,
         );
+        // In a short window the wrapped title would fill the viewport, so it
+        // drops like ladder step 7 and the song starts on the first screen.
         let (frame, max_offset) = wide_title.frame_scrolled(220.0, 300.0, 0.0);
         assert!(max_offset > 0.0);
         assert_eq!(count(&frame, "Line 0"), 1);
+        assert!(!frame.text.iter().any(|t| t.content.starts_with("A Title")));
+        // In a tall one it wraps inside the content box and stays.
+        let (tall, _) = wide_title.frame_scrolled(220.0, 900.0, 0.0);
+        let right_edge = 220.0 - wide_title.config().margin_x + 1e-2;
+        let title_rows: Vec<&Text> = tall
+            .text
+            .iter()
+            .filter(|t| t.weight == 600 && t.group == 0)
+            .collect();
+        assert!(title_rows.len() > 1, "the title wraps");
+        for row in &title_rows {
+            let width = row.content.chars().count() as f32 * row.size * 0.5;
+            assert!(
+                row.x + width <= right_edge,
+                "{:?} crosses the margin",
+                row.content
+            );
+        }
+        let (end, _) = wide_title.frame_scrolled(220.0, 300.0, max_offset);
+        assert_eq!(count(&end, "Line 29"), 1, "the whole song is reachable");
     }
 
     #[test]

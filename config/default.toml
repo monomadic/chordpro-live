@@ -26,5 +26,6 @@ header_inline_gap = 0.8
 byline_leading = 1.8
 side_label_inset = 0.25
 wrap_indent = 1.0
+title_leading = 1.15
 status_height = 1.5
 max_columns = 4

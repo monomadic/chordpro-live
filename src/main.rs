@@ -622,6 +622,9 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
        cpl --view <song.cho> --paged      open in paged mode (`v` toggles)
        cpl --view <song.cho> --page 2     open paged on the second page
        cpl <song.cho>                     print the parsed lyrics
+       cpl render <song.cho|sample> --out page.png [--size 980x720]
+           [--scale 1|2] [--dark] [--scroll P | --page N]
+                                          write what the window would show
 In the viewer: i polarity, v scroll or paged, n / p or ← → next and
 previous song, ↑ ↓ / Space / Page Up / Page Down / Home / End scroll or turn
 pages, q or Escape closes.";
@@ -677,11 +680,161 @@ fn parse_size(value: &str) -> Option<(f64, f64)> {
     }
 }
 
+/// What the window would present for `page`, as RGBA: the fragment shader's
+/// placement rule run on the CPU over the same slab and status strip.
+fn present(page: &ReadyPage, width: u32, height: u32) -> Vec<u8> {
+    let view = page.view;
+    let paper = [view.paper, view.paper, view.paper, 255];
+    let mut out = Vec::with_capacity(width as usize * height as usize * 4);
+    let slab = &page.slab.image;
+    for y in 0..height as i32 {
+        let content_y = y - view.inset;
+        for x in 0..width as i32 {
+            let pixel = |image: &PageImage, row: i32| -> [u8; 4] {
+                if row < 0 || x >= image.width as i32 || row >= image.height as i32 {
+                    return paper;
+                }
+                let at = (row as usize * image.width as usize + x as usize) * 4;
+                image.pixels[at..at + 4].try_into().unwrap()
+            };
+            let rgba = if content_y < 0 {
+                paper
+            } else if content_y >= view.status_top {
+                match &page.status {
+                    Some(status) => pixel(status, content_y - view.status_top),
+                    None => paper,
+                }
+            } else if content_y < view.band_top || content_y >= view.band_bottom {
+                paper
+            } else {
+                pixel(slab, content_y + view.scroll)
+            };
+            out.extend_from_slice(&rgba);
+        }
+    }
+    out
+}
+
+/// `cpl render`: one song through the worker's real page path, presented as
+/// the window would draw it, written to a PNG at any display scale. This is
+/// how a 1x page is checked on a 2x Mac, and what visual regression compares.
+fn render_main(mut args: Vec<String>) -> ExitCode {
+    let mut out = None;
+    let mut size = (980.0_f64, 720.0_f64);
+    let mut scale = 2.0_f32;
+    let mut dark = false;
+    let mut offset = 0.0_f32;
+    let mut page = None;
+    let mut source = None;
+    while !args.is_empty() {
+        let arg = args.remove(0);
+        let mut value = || {
+            if args.is_empty() {
+                None
+            } else {
+                Some(args.remove(0))
+            }
+        };
+        let ok = match arg.as_str() {
+            "--out" => value().map(|v| out = Some(v)).is_some(),
+            "--size" => value()
+                .and_then(|v| parse_size(&v))
+                .map(|v| size = v)
+                .is_some(),
+            "--scale" => value()
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|v| (1.0..=4.0).contains(v))
+                .map(|v| scale = v)
+                .is_some(),
+            "--scroll" => value()
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|v| v.is_finite() && *v >= 0.0)
+                .map(|v| offset = v)
+                .is_some(),
+            "--page" => value()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v >= 1)
+                .map(|v| page = Some(v - 1))
+                .is_some(),
+            "--dark" => {
+                dark = true;
+                true
+            }
+            _ if source.is_none() && !arg.starts_with('-') => {
+                source = Some(arg.clone());
+                true
+            }
+            _ => false,
+        };
+        if !ok {
+            eprintln!("cpl render: bad argument {arg:?}\n{USAGE}");
+            return ExitCode::FAILURE;
+        }
+    }
+    let (Some(source), Some(out)) = (source, out) else {
+        eprintln!("cpl render needs a song (or sample name) and --out\n{USAGE}");
+        return ExitCode::FAILURE;
+    };
+    let text = match source.as_str() {
+        "page" | "page-dark" => SAMPLE.to_owned(),
+        "page-inline" => INLINE_SAMPLE.to_owned(),
+        "page-scroll" => SCROLL_SAMPLE.to_owned(),
+        path => match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                eprintln!("{path}: {error}");
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+    let dark = dark || source == "page-dark";
+    let polarity = if dark {
+        Polarity::Dark
+    } else {
+        Polarity::Light
+    };
+    let config = Config::default();
+    let mut worker = Worker {
+        setlist: Setlist::new(vec![cpl_song::parse(&text).song], config.clone(), polarity),
+        compositor: PageCompositor::default(),
+        config,
+        retained: None,
+        preloaded: None,
+        last: None,
+        next_slab_id: 0,
+        timing: false,
+    };
+    let width = (size.0 * scale as f64).round() as u32;
+    let height = (size.1 * scale as f64).round() as u32;
+    let request = PageRequest {
+        generation: 1,
+        song: 0,
+        width,
+        height,
+        scale,
+        inset: TITLE_STRIP_PT,
+        offset,
+        page,
+        polarity,
+        max_texture_side: 8192,
+    };
+    let (ready, _) = worker.answer(&request);
+    let png = cpl_render::png::encode(width, height, &present(&ready, width, height));
+    if let Err(error) = fs::write(&out, png) {
+        eprintln!("{out}: {error}");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let mut args: Vec<String> = env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
+    }
+    if args.first().is_some_and(|arg| arg == "render") {
+        return render_main(args.split_off(1));
     }
     // `--paged` anywhere opens in paged mode; trailing `--size WxH`,
     // `--song N`, `--scroll P` and `--page N` options come in any order.
