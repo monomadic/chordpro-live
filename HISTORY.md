@@ -6,6 +6,20 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **No more blank first window.** `CPL_TIMING` logs now carry a
+  millisecond stamp from process start and record window creation, each
+  accepted page and each present. They showed every launch skipping its
+  first presents as `Occluded` while the window appears; a fast page
+  (the inline sample, 7 ms) could be accepted inside that window, skipped,
+  and never presented, leaving the window blank until a keypress — the two
+  blank captures seen earlier. `Gpu::render` returns `Presented::{Yes,
+  Skipped, Reconfigure}`; a skip is remembered and retried on
+  `WindowEvent::Occluded(false)` and on a 100 ms idle tick, after which the
+  loop sleeps on `ControlFlow::Wait` again. 20 captured first-launches after
+  a rebuild (inline sample, Scarborough Fair at 980×720, sample page) all
+  drew the page; 2 of them needed the retry. `scripts/launch-check.sh`
+  automates the log half of that check. Workspace tests, the visual goldens
+  and strict Clippy passed.
 - **Visual regression goldens.** `tests/visual.rs` runs eleven `cpl render`
   cases and compares each with a committed golden in `tests/goldens/`,
   `sips`-compressed so the set is about 540 KB and every golden opens in Preview or
@@ -22,7 +36,7 @@ session. A passing headless test does not stand in for a visual window check.
   step 9, confirmed in a real window. Light and dark polarity and body sizes
   17, 18, 19, 26 and 28 pt were inspected in the goldens. Workspace tests and
   strict Clippy passed. While capturing, a fresh window stayed blank once;
-  that is the new first P1 task.
+  that became the next P1 task.
 - **Real CoreText ink checked against page bounds; three defects fixed.**
   `tests/page_bounds.rs` now covers both testdata songs at five window sizes
   and the scroll end, and wrapped lines with long chords, at 1x and 2x. It

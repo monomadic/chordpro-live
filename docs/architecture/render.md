@@ -94,3 +94,16 @@ font update but not a moved run. After an intended visual change, inspect
 `target/visual/*.png`, then run `CPL_BLESS=1 cargo test --test visual`.
 A layout constant only reaches a golden if some case exercises it; the
 crowded-chords fixture exists because no song case crowded its chords.
+
+**A skipped present is retried.** A new window reports its surface as
+`Occluded` for its first few frames, so `Gpu::render` can fail to present a
+page that arrived early. It returns `Presented::Skipped`, the host sets
+`needs_present`, and the page is presented again on
+`WindowEvent::Occluded(false)` or, failing that, on a 100 ms idle tick
+(`ControlFlow::WaitUntil`), after which the loop returns to
+`ControlFlow::Wait`. `Presented::Reconfigure` (a lost or outdated surface)
+resizes the surface and requests the page again. With `CPL_TIMING=1` every
+present, accept and worker answer is logged with milliseconds since process
+start; `scripts/launch-check.sh [--rebuild] [count] [--view …]` launches the
+viewer repeatedly and fails if any launch's last accepted page was never
+presented.

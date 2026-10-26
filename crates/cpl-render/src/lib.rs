@@ -180,6 +180,17 @@ impl View {
     }
 }
 
+/// What one `Gpu::render` call achieved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Presented {
+    Yes,
+    /// The surface was lost or outdated: reconfigure it and redraw.
+    Reconfigure,
+    /// No surface texture this time (a timeout, an occluded window); the
+    /// frame was not shown and must be retried.
+    Skipped(String),
+}
+
 pub struct Gpu {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -377,14 +388,15 @@ impl Gpu {
         self.surface.configure(&self.device, &self.config);
     }
 
-    pub fn render(&self) -> bool {
+    /// Draws the retained slab and presents it, or says why it could not.
+    pub fn render(&self) -> Presented {
         let output = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture)
             | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                return false;
+                return Presented::Reconfigure;
             }
-            _ => return true,
+            other => return Presented::Skipped(format!("{other:?}")),
         };
         let view = output
             .texture
@@ -414,7 +426,7 @@ impl Gpu {
         }
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(output);
-        true
+        Presented::Yes
     }
 }
 

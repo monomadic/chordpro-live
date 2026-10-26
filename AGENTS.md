@@ -64,7 +64,9 @@ paged, `n`/`p` (or ← →) for the next and previous song, and `q` or Escape
 to close. Up/Down, Space, Page Up/Down, Home, and End scroll or turn pages. Capture
 the window with
 `screencapture -x -l "$(swift scripts/window-id.swift | head -1)" shot.png`;
-`CPL_TIMING=1` logs each worker answer (`slab` or `view`) to stderr.
+`CPL_TIMING=1` logs worker answers, accepted pages and presents to stderr,
+stamped in milliseconds from process start; `scripts/launch-check.sh`
+launches the viewer repeatedly and fails if a page was never presented.
 `cargo run -- render song.cho --out page.png --scale 1 --size 420x720`
 writes exactly what the window would show, headless; use it for 1x checks.
 `cargo test --test visual` compares eleven such renders with

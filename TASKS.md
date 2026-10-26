@@ -8,14 +8,17 @@ automated checks. When every task in an epic is checked, the epic moves to
 
 ## P1 — dependable performance behavior
 
-- [ ] A freshly launched window sometimes stays blank (window background,
-  no page) although the worker logged its first page: seen twice in about
-  twenty `--view` launches. Suspect `Gpu::render` returning early on a
-  surface timeout or an occluded window without anyone asking for another
-  present. Reproduce by launching repeatedly and capturing, make a skipped
-  present retry on the idle tick and on `Occluded(false)`, and capture 20
-  clean launches.
-
+- [x] A freshly launched window sometimes stayed blank (window background, no
+  page). Cause, from `CPL_TIMING` logs: every launch's first presents are
+  skipped because the surface reports `Occluded` while the window comes up,
+  and when a page composed fast (the inline sample's 7 ms slab) its accept
+  landed inside that window, its present was skipped, and nothing asked for
+  another. `Gpu::render` now says `Yes`, `Skipped` or `Reconfigure`; a skip
+  sets `needs_present`, which `Occluded(false)` and a 100 ms idle-tick retry
+  clear by presenting again. Checked with 20 captured first-launches after a
+  rebuild across three pages: 20 pages drawn, and in 2 the accepted page was
+  skipped and shown by the retry. `scripts/launch-check.sh` repeats the
+  log check.
 - [x] Move song measurement and page preparation off the window callback.
   A worker measures, lays out and rasterises complete pages; stale results
   are discarded and resize keeps the previous texture until replacement.

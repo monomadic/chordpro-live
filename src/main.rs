@@ -1,5 +1,5 @@
 use cpl_app::{App, Config, Frame, Polarity, Setlist};
-use cpl_render::{CoreText, Gpu, PageCompositor, PageImage, View};
+use cpl_render::{CoreText, Gpu, PageCompositor, PageImage, Presented, View};
 use std::{
     env, fs,
     path::Path,
@@ -10,8 +10,9 @@ use std::{
 };
 use winit::{
     application::ApplicationHandler,
+    event::StartCause,
     event::{ElementState, KeyEvent, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{Key, NamedKey},
     window::{Window, WindowId},
 };
@@ -45,7 +46,25 @@ const TITLE_STRIP_PT: f32 = 0.0;
 /// at most ~35 MB resident.
 const SLAB_VIEWPORTS: u32 = 3;
 
+/// Process start, for `CPL_TIMING` stamps.
+static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+fn since_start() -> u128 {
+    START.get_or_init(Instant::now).elapsed().as_millis()
+}
+
+/// How long a skipped present waits before it is retried, when no
+/// visibility change arrives first: switchblade's idle tick.
+const PRESENT_RETRY: std::time::Duration = std::time::Duration::from_millis(100);
+
 struct Viewer {
+    /// `CPL_TIMING`: log presents and skips, stamped from process start.
+    timing: bool,
+    /// The last present was skipped (the window was occluded or the surface
+    /// timed out), so the page on the GPU has not been shown. A page that
+    /// arrives while a new window is still occluded otherwise stays unseen
+    /// until the next keypress.
+    needs_present: bool,
     config: Config,
     polarity: Polarity,
     initial_size: (f64, f64),
@@ -420,6 +439,13 @@ impl Viewer {
                     gpu.upload_status(status);
                 }
                 gpu.set_view(page.view);
+                if self.timing {
+                    eprintln!(
+                        "accept generation {} @ {} ms",
+                        page.generation,
+                        since_start()
+                    );
+                }
                 window.set_title(&if self.song_count > 1 {
                     format!(
                         "{}  ·  {} / {}  —  chordpro-live",
@@ -492,6 +518,14 @@ impl ApplicationHandler<PageReady> for Viewer {
         let gpu =
             block_on(Gpu::new(instance, surface, size.width, size.height)).expect("initialize GPU");
         self.max_texture_side = gpu.max_texture_side;
+        if self.timing {
+            eprintln!(
+                "window {}×{} @ {} ms",
+                size.width,
+                size.height,
+                since_start()
+            );
+        }
         self.window = Some(window);
         self.gpu = Some(gpu);
         self.request_page();
@@ -592,15 +626,49 @@ impl ApplicationHandler<PageReady> for Viewer {
                 _ => {}
             },
             WindowEvent::RedrawRequested => {
-                if let Some(gpu) = &self.gpu
-                    && !gpu.render()
-                {
-                    let size = self.window.as_ref().unwrap().inner_size();
-                    self.gpu.as_mut().unwrap().resize(size.width, size.height);
-                    self.request_page();
+                let Some(gpu) = &self.gpu else {
+                    return;
+                };
+                let presented = gpu.render();
+                if self.timing {
+                    eprintln!("present {presented:?} @ {} ms", since_start());
+                }
+                match presented {
+                    Presented::Yes => self.needs_present = false,
+                    Presented::Skipped(_) => self.needs_present = true,
+                    Presented::Reconfigure => {
+                        self.needs_present = true;
+                        let size = self.window.as_ref().unwrap().inner_size();
+                        self.gpu.as_mut().unwrap().resize(size.width, size.height);
+                        self.request_page();
+                    }
                 }
             }
+            // The window became visible: show whatever an occluded present skipped.
+            WindowEvent::Occluded(false) if self.needs_present => {
+                self.window.as_ref().unwrap().request_redraw();
+            }
             _ => {}
+        }
+    }
+
+    /// While a present is owed, wake on the idle tick to retry it; otherwise
+    /// sleep until an event. A truly hidden window costs ten wakes a second
+    /// only until it is shown.
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(if self.needs_present {
+            ControlFlow::WaitUntil(Instant::now() + PRESENT_RETRY)
+        } else {
+            ControlFlow::Wait
+        });
+    }
+
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        if matches!(cause, StartCause::ResumeTimeReached { .. })
+            && self.needs_present
+            && let Some(window) = &self.window
+        {
+            window.request_redraw();
         }
     }
 
@@ -996,6 +1064,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let timing = env::var_os("CPL_TIMING").is_some();
+    since_start();
     std::thread::spawn(move || {
         let mut worker = Worker {
             setlist: Setlist::new(songs, worker_config.clone(), polarity),
@@ -1032,9 +1101,10 @@ fn main() -> ExitCode {
             let (page, composed_slab) = worker.answer(&request);
             if worker.timing {
                 eprintln!(
-                    "{} {:?}",
+                    "{} {:?} @ {} ms",
                     if composed_slab { "slab" } else { "view" },
-                    started.elapsed()
+                    started.elapsed(),
+                    since_start()
                 );
             }
             if result_tx.send(page).is_err() || proxy.send_event(PageReady).is_err() {
@@ -1044,6 +1114,8 @@ fn main() -> ExitCode {
         }
     });
     let mut viewer = Viewer {
+        timing,
+        needs_present: false,
         config,
         polarity,
         initial_size: requested_size.unwrap_or(if inline {
