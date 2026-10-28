@@ -64,6 +64,8 @@ pub struct Metrics {
     /// Chord diagram name and mark text, in body sizes.
     pub diagram_name_size: f32,
     pub diagram_mark_size: f32,
+    /// Tablature text, in body sizes.
+    pub tab_size: f32,
 }
 
 impl Metrics {
@@ -75,7 +77,7 @@ impl Metrics {
             Role::Chord => (self.chord_size, 600, Face::Monospace),
             Role::Lyric => (1.0, 400, Face::System),
             Role::InlineChord => (self.inline_chord_size, 600, Face::Monospace),
-            Role::Tab => (1.0, 400, Face::Monospace),
+            Role::Tab => (self.tab_size, 400, Face::Monospace),
             Role::Comment => (1.0, 400, Face::System),
             Role::PillLabel | Role::PillValue => (self.meta_size, 600, Face::System),
             Role::DiagramName => (self.diagram_name_size, 600, Face::Monospace),
@@ -173,29 +175,54 @@ impl MeasuredLine {
         } else {
             self.chord_gap
         };
-        let mut rows = Vec::new();
-        let mut row = RowBuilder::new(0.0, inline, gap);
+        // (segment, chord, token, last token of its segment), in order.
+        let mut items = Vec::new();
         for (index, segment) in self.segments.iter().enumerate() {
-            let mut chord = segment.chord.as_ref();
             if segment.tokens.is_empty() {
-                if let Some(chord) = chord {
-                    if row.exceeds(Some(chord), None, max_width) && row.can_break {
-                        rows.push(row.finish());
-                        row = RowBuilder::new(indent, inline, gap);
-                    }
-                    row.push(Some(chord), None, index, true);
+                if let Some(chord) = &segment.chord {
+                    items.push((index, Some(chord), None, true));
                 }
                 continue;
             }
             let last = segment.tokens.len() - 1;
             for (position, token) in segment.tokens.iter().enumerate() {
-                if row.exceeds(chord, Some(token), max_width) && row.can_break {
+                let chord = segment.chord.as_ref().filter(|_| position == 0);
+                items.push((index, chord, Some(token), position == last));
+            }
+        }
+        let mut rows = Vec::new();
+        let mut row = RowBuilder::new(0.0, inline, gap);
+        let mut start = 0;
+        while start < items.len() {
+            // A word a chord splits (`dis[E]courteously`) is one unit: a
+            // row may break before it but not inside it, so whether it fits
+            // is decided for the whole word.
+            let mut end = start;
+            while items[end]
+                .2
+                .is_some_and(|token| !token.text.ends_with(char::is_whitespace))
+                && end + 1 < items.len()
+                && items[end + 1].2.is_some()
+            {
+                end += 1;
+            }
+            let unit = &items[start..=end];
+            if row.can_break {
+                let mut probe = row.clone();
+                let exceeds = unit.iter().any(|&(index, chord, token, last)| {
+                    let over = probe.exceeds(chord, token, max_width);
+                    probe.push(chord, token, index, last);
+                    over
+                });
+                if exceeds {
                     rows.push(row.finish());
                     row = RowBuilder::new(indent, inline, gap);
                 }
-                row.push(chord, Some(token), index, position == last);
-                chord = None;
             }
+            for &(index, chord, token, last) in unit {
+                row.push(chord, token, index, last);
+            }
+            start = end + 1;
         }
         rows.push(row.finish());
         rows
@@ -205,6 +232,7 @@ impl MeasuredLine {
 /// Lays runs along one row with the chord-over-syllable rule: a chord wider
 /// than its syllable pushes the next lyric past the chord and its gap, which
 /// is exactly where the next chord can start.
+#[derive(Clone)]
 struct RowBuilder {
     inline: bool,
     gap: f32,
@@ -351,7 +379,20 @@ pub struct MeasuredSection {
     /// earlier one (ladder step 8).
     pub repeats_earlier: bool,
     pub lines: Vec<MeasuredLine>,
+    /// A tab section's staves, which wrap as units; empty otherwise.
+    pub staves: Vec<crate::Staff>,
+    /// One monospaced tab column, in em; 0 outside a tab section.
+    pub tab_advance: f32,
+    /// A folded tab's cue in the label face: the separator after a label
+    /// above the section, and the word, both in em; 0 outside a tab section.
+    pub fold_separator_width: f32,
+    pub fold_cue_width: f32,
 }
+
+/// What a folded tab section shows beside its label, and the separator
+/// between them when the label sits above the section.
+pub const FOLD_CUE: &str = "FOLDED";
+pub const FOLD_SEPARATOR: &str = "  ·  ";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Header {
@@ -457,7 +498,31 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
         .enumerate()
         .map(|(index, section)| {
             let label = section.label.to_uppercase();
+            let tab = section.kind == SectionKind::Tab;
+            let staves = if tab {
+                let lines: Vec<String> = section.lines.iter().map(Line::lyrics).collect();
+                crate::tab::staves(&lines)
+            } else {
+                Vec::new()
+            };
             MeasuredSection {
+                staves,
+                // Ten columns measured at once, for a precise advance.
+                tab_advance: if tab {
+                    m.em("0000000000", Role::Tab) / 10.0
+                } else {
+                    0.0
+                },
+                fold_separator_width: if tab {
+                    m.em(FOLD_SEPARATOR, Role::Label)
+                } else {
+                    0.0
+                },
+                fold_cue_width: if tab {
+                    m.em(FOLD_CUE, Role::Label)
+                } else {
+                    0.0
+                },
                 kind: section.kind,
                 label_width: m.em(&label, Role::Label),
                 label,
@@ -632,6 +697,7 @@ mod tests {
             meta_size: 0.5,
             diagram_name_size: 0.8,
             diagram_mark_size: 0.4,
+            tab_size: 1.0,
         }
     }
 
@@ -740,17 +806,42 @@ mod tests {
             .iter()
             .map(|row| row.runs.iter().map(|r| r.text.as_str()).collect())
             .collect();
-        // "New Or" merges into one run; "Or" cannot leave "leans" behind, so
-        // the F chord's segment overruns the limit rather than breaking.
+        // "Or" cannot leave "leans" behind, so the split word moves to its
+        // own row whole, before it, and overruns there only because it is
+        // wider than the limit on its own.
         assert_eq!(
             texts,
-            [vec!["D", "New Or", "F", "leans "], vec!["is ", "G", "far"]]
+            [
+                vec!["D", "New "],
+                vec!["Or", "F", "leans "],
+                vec!["is ", "G", "far"]
+            ]
         );
         // An unbreakable token wider than the limit stays whole and reports it.
         let (song, _) = measured("[C]Supercalifragilistic");
         let rows = song.sections[0].lines[0].rows(false, 2.0, 0.0);
         assert_eq!(rows.len(), 1);
         assert!(rows[0].width > 2.0);
+    }
+
+    #[test]
+    fn a_word_a_chord_splits_wraps_whole_before_it() {
+        // Fixed measures half an em a character at size 1.
+        let (song, _) = measured("{sov}\nTo [Am]cast me off dis[E]courteously\n{eov}");
+        let line = &song.sections[0].lines[0];
+        let rows = line.rows(false, 9.0, 0.0);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        let text = |row: &Row| -> String {
+            row.runs
+                .iter()
+                .filter(|run| run.role == Role::Lyric)
+                .map(|run| run.text.as_str())
+                .collect()
+        };
+        assert_eq!(text(&rows[0]), "To cast me off ");
+        assert_eq!(text(&rows[1]), "discourteously");
+        assert!(rows.iter().all(|row| row.width <= 9.0));
+        assert!(rows[1].runs.iter().any(|run| run.text == "E"));
     }
 
     #[test]

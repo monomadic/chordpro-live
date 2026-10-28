@@ -21,7 +21,8 @@ const PIXEL_TOLERANCE: f64 = 0.0002;
 
 /// (golden name, `cpl render` arguments). Together they cover light and dark,
 /// fit, scroll and paged pages, inline chords, wrapped lines and titles,
-/// chords crowded over short syllables, 1x and 2x, and body sizes from the
+/// chords crowded over short syllables, tablature folded by the ladder and
+/// shown in wrapped systems, 1x and 2x, and body sizes from the
 /// 17 pt floor to the 28 pt maximum.
 const CASES: &[(&str, &[&str])] = &[
     (
@@ -113,6 +114,43 @@ const CASES: &[(&str, &[&str])] = &[
             "280x840",
             "--scale",
             "1",
+        ],
+    ),
+    (
+        "greensleeves-980x720@1x",
+        &[
+            "testdata/greensleeves.cho",
+            "--size",
+            "980x720",
+            "--scale",
+            "1",
+        ],
+    ),
+    (
+        "greensleeves-tabs-980x720@1x",
+        &[
+            "testdata/greensleeves.cho",
+            "--size",
+            "980x720",
+            "--scale",
+            "1",
+            "--tabs",
+            "show",
+        ],
+    ),
+    (
+        "greensleeves-tabs-dark-420x720-page5@1x",
+        &[
+            "testdata/greensleeves.cho",
+            "--size",
+            "420x720",
+            "--scale",
+            "1",
+            "--tabs",
+            "show",
+            "--dark",
+            "--page",
+            "5",
         ],
     ),
 ];

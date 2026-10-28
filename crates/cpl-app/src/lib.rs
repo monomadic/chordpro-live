@@ -2,6 +2,7 @@
 
 mod setlist;
 
+pub use cpl_layout::Tabs;
 pub use cpl_layout::{Face, Measure};
 use cpl_layout::{MeasuredSong, Metrics, Options, PageMetrics, Role, Solution, Viewport};
 use cpl_song::{SectionKind, Song};
@@ -137,6 +138,15 @@ pub struct Config {
     pub diagram_line: f32,
     pub diagram_nut: f32,
     pub diagram_dot: f32,
+    /// Tablature, in body sizes: text size, row height and the baseline in
+    /// it, the gap between systems, the text's inset from the rule at its
+    /// left, and the rule's width.
+    pub tab_size: f32,
+    pub tab_row: f32,
+    pub tab_baseline: f32,
+    pub tab_system_gap: f32,
+    pub tab_inset: f32,
+    pub tab_rule: f32,
     pub status_height: f32,
     pub max_columns: f32,
 }
@@ -238,6 +248,12 @@ impl Config {
             diagram_line: take!("diagram_line"),
             diagram_nut: take!("diagram_nut"),
             diagram_dot: take!("diagram_dot"),
+            tab_size: take!("tab_size"),
+            tab_row: take!("tab_row"),
+            tab_baseline: take!("tab_baseline"),
+            tab_system_gap: take!("tab_system_gap"),
+            tab_inset: take!("tab_inset"),
+            tab_rule: take!("tab_rule"),
             status_height: take!("status_height"),
             max_columns: take!("max_columns"),
         };
@@ -248,6 +264,7 @@ impl Config {
             || config.lyric_baseline >= config.line_height
             || config.inline_chord_baseline >= config.inline_lyric_baseline
             || config.inline_lyric_baseline >= config.inline_line_height
+            || config.tab_baseline >= config.tab_row
         {
             return Err("invalid chord/lyric baseline order".into());
         }
@@ -280,6 +297,7 @@ impl Config {
             meta_size: self.meta_size,
             diagram_name_size: self.diagram_name_size,
             diagram_mark_size: self.diagram_mark_size,
+            tab_size: self.tab_size,
         }
     }
 }
@@ -291,6 +309,8 @@ pub struct App {
     larger: Vec<(f32, MeasuredSong)>,
     prepared: RefCell<Option<(u32, u32, Arc<PreparedPage>)>>,
     pub polarity: Polarity,
+    /// The viewer's tablature choice; `set_tabs` changes it.
+    tabs: Tabs,
 }
 
 enum PreparedPage {
@@ -349,25 +369,13 @@ impl App {
     /// Measures the floor and each whole-point candidate up to the configured
     /// maximum. Resizing, scrolling and polarity then need no host measurement.
     pub fn new(song: Song, config: Config, polarity: Polarity, measure: &impl Measure) -> Self {
-        // Keep the parsed source intact. Tablature is temporarily omitted from
-        // the performance page until it has a deliberate, readable layout.
-        let display_song = Song {
-            metadata: song.metadata.clone(),
-            defines: song.defines.clone(),
-            sections: song
-                .sections
-                .iter()
-                .filter(|section| section.kind != SectionKind::Tab)
-                .cloned()
-                .collect(),
-        };
-        let measured = cpl_layout::measure_song(&display_song, &config.metrics(), measure);
+        let measured = cpl_layout::measure_song(&song, &config.metrics(), measure);
         let mut larger = Vec::new();
         let mut size = config.body_size.floor() + 1.0;
         while size <= config.max_body_size {
             larger.push((
                 size,
-                cpl_layout::measure_song(&display_song, &config.metrics_at(size), measure),
+                cpl_layout::measure_song(&song, &config.metrics_at(size), measure),
             ));
             size += 1.0;
         }
@@ -378,11 +386,7 @@ impl App {
         {
             larger.push((
                 config.max_body_size,
-                cpl_layout::measure_song(
-                    &display_song,
-                    &config.metrics_at(config.max_body_size),
-                    measure,
-                ),
+                cpl_layout::measure_song(&song, &config.metrics_at(config.max_body_size), measure),
             ));
         }
         Self {
@@ -392,11 +396,40 @@ impl App {
             larger,
             prepared: RefCell::new(None),
             polarity,
+            tabs: Tabs::Auto,
         }
     }
 
     pub fn song(&self) -> &Song {
         &self.song
+    }
+
+    pub fn tabs(&self) -> Tabs {
+        self.tabs
+    }
+
+    /// Pins tablature shown or folded, or hands it back to the ladder. The
+    /// page is laid out again; nothing is measured.
+    pub fn set_tabs(&mut self, tabs: Tabs) {
+        if tabs != self.tabs {
+            self.tabs = tabs;
+            *self.prepared.borrow_mut() = None;
+        }
+    }
+
+    /// Whether this viewport's page folds a tab the song has, so a toggle
+    /// can unfold what is folded and fold what is shown.
+    pub fn tabs_folded(&self, width: f32, height: f32) -> bool {
+        self.song
+            .sections
+            .iter()
+            .any(|section| section.kind == SectionKind::Tab)
+            && match self.prepared(width, height).as_ref() {
+                PreparedPage::Fit(_) | PreparedPage::NeedsWidth(_) => {
+                    self.fit_solution(width, height).2.options.fold_tabs
+                }
+                PreparedPage::Scroll { .. } => self.tabs == Tabs::Fold,
+            }
     }
 
     pub fn config(&self) -> &Config {
@@ -436,6 +469,9 @@ impl App {
             diagram_cell_gap: c.diagram_cell_gap,
             diagram_row_gap: c.diagram_row_gap,
             diagram_top_gap: c.diagram_top_gap,
+            tab_row: c.tab_row,
+            tab_system_gap: c.tab_system_gap,
+            tab_inset: c.tab_inset,
         }
     }
 
@@ -742,7 +778,10 @@ impl App {
         // viewport: past half of it, drop what the ladder drops first —
         // diagrams (step 4), then pills (step 6), then the title (step 7).
         let view_height = self.viewport(width, height, body).height;
-        let mut base = Options::default();
+        let mut base = Options {
+            fold_tabs: self.tabs == Tabs::Fold,
+            ..Options::default()
+        };
         let too_tall = |o: &Options| {
             o.header(&self.measured.header, &metrics, tall.width).height > view_height / 2.0
         };
@@ -776,6 +815,7 @@ impl App {
             }
             return PreparedPage::NeedsWidth(fit);
         }
+        let long_options = long.options;
         let mut long = self.compose(width, height, body, &self.measured, &long);
         long.text.pop(); // the long page's status strip belongs below its viewport
         let content_end = height - c.margin_bottom - c.status_height * body;
@@ -806,7 +846,7 @@ impl App {
             .sections
             .iter()
             .map(|section| {
-                let count = section.lines.len().max(1);
+                let count = long_options.groups(section, &metrics, tall.width);
                 let name = if section.label.is_empty() {
                     match section.kind {
                         SectionKind::Verse => "VERSE",
@@ -840,11 +880,19 @@ impl App {
 
     /// The least-reduced page that fits, or the most-reduced candidate marked unfit.
     pub fn frame(&self, width: f32, height: f32) -> Frame {
+        let (body, measured, solution) = self.fit_solution(width, height);
+        self.compose(width, height, body, measured, &solution)
+    }
+
+    /// The fitted page's body size, measurement and layout: the ladder's
+    /// choice at the floor, drawn at the largest size that keeps it.
+    fn fit_solution(&self, width: f32, height: f32) -> (f32, &MeasuredSong, Solution) {
         let floor = self.config.body_size;
-        let solution = cpl_layout::solve(
+        let solution = cpl_layout::solve_with(
             &self.measured,
             &self.page_metrics(floor),
             self.viewport(width, height, floor),
+            self.tabs,
         );
         if solution.fits {
             for (body, measured) in self.larger.iter().rev() {
@@ -859,11 +907,11 @@ impl App {
                 // than the floor does: a line broken in three at 28 pt reads
                 // worse than the same line whole at 20 pt.
                 if larger.fits && larger.wrapped_rows <= solution.wrapped_rows {
-                    return self.compose(width, height, *body, measured, &larger);
+                    return (*body, measured, larger);
                 }
             }
         }
-        self.compose(width, height, floor, &self.measured, &solution)
+        (floor, &self.measured, solution)
     }
 
     /// One fingering diagram with its cell's top-left corner at `at`, in
@@ -1128,7 +1176,9 @@ impl App {
                             } else {
                                 column_x
                             },
-                            baseline: if o.side_labels {
+                            baseline: if o.side_labels && o.tab_shown(section) {
+                                section_y + c.tab_baseline * body
+                            } else if o.side_labels {
                                 section_y
                                     + (if section.lines.first().is_some_and(|line| line.chord_only)
                                         || inline
@@ -1149,9 +1199,71 @@ impl App {
                             face: Face::Monospace,
                             ink: Ink::Soft,
                         });
+                        if o.tab_folded(section) {
+                            // The cue says the tab is there and folded, so an
+                            // empty label never reads as a missing section.
+                            let label = frame.text.last().unwrap().clone();
+                            let (content, x) = if o.side_labels {
+                                (cpl_layout::FOLD_CUE.to_owned(), column_x)
+                            } else {
+                                (
+                                    format!(
+                                        "{}{}",
+                                        cpl_layout::FOLD_SEPARATOR,
+                                        cpl_layout::FOLD_CUE
+                                    ),
+                                    label.x + section.label_width * body,
+                                )
+                            };
+                            frame.text.push(Text {
+                                content,
+                                x,
+                                ink: Ink::Faint,
+                                weight: 600,
+                                ..label
+                            });
+                        }
                         if !o.side_labels {
                             section_y += c.label_gap * body;
                         }
+                    }
+                    if o.tab_shown(section) {
+                        // Each system is one group: a rule down its left and
+                        // its rows, small and soft, so the tab reads as a
+                        // part for the player and never outweighs the words.
+                        for (index, system) in o.tab_systems(section, &m, wrap).iter().enumerate() {
+                            if index > 0 {
+                                section_y += c.tab_system_gap * body;
+                            }
+                            let top = section_y;
+                            for row in &system.rows {
+                                if !row.is_empty() {
+                                    frame.text.push(Text {
+                                        group: line_group,
+                                        content: row.clone(),
+                                        x: column_x + c.tab_inset * body,
+                                        baseline: section_y + c.tab_baseline * body,
+                                        size: c.tab_size * body,
+                                        weight: 400,
+                                        face: Face::Monospace,
+                                        ink: Ink::Soft,
+                                    });
+                                }
+                                section_y += c.tab_row * body;
+                            }
+                            frame.shapes.push(Shape {
+                                group: line_group,
+                                x: column_x,
+                                y: top,
+                                width: c.tab_rule * body,
+                                height: section_y - top,
+                                radius: 0.0,
+                                stroke: None,
+                                ink: Ink::Faint,
+                            });
+                            line_group += 1;
+                        }
+                        continue;
                     }
                     let visible = o.visible_lines(section);
                     for line in section.lines.iter().take(visible) {
@@ -1404,7 +1516,7 @@ mod tests {
     }
 
     #[test]
-    fn tablature_is_preserved_in_the_song_but_hidden_from_the_page() {
+    fn tablature_draws_small_and_soft_beside_a_rule_and_stays_in_the_source() {
         let app = app(
             "{title: Test}\n{start_of_tab: Intro}\ne|--3---|\nB|--1---|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
         );
@@ -1412,9 +1524,161 @@ mod tests {
         assert_eq!(app.song().sections[0].lines[0].lyrics(), "e|--3---|");
         let frame = app.frame(900.0, 600.0);
         assert!(frame.fits);
-        assert_eq!(count(&frame, "INTRO"), 0);
-        assert_eq!(count(&frame, "e|--3---|"), 0);
-        assert_eq!(count(&frame, "Alpha"), 1);
+        assert_eq!(count(&frame, "INTRO"), 1);
+        let (e, b, alpha) = (
+            find(&frame, "e|--3---|"),
+            find(&frame, "B|--1---|"),
+            find(&frame, "Alpha"),
+        );
+        assert_eq!(e.face, Face::Monospace);
+        assert_eq!(e.ink, Ink::Soft);
+        assert!(
+            e.size < alpha.size,
+            "tab {} under lyric {}",
+            e.size,
+            alpha.size
+        );
+        assert_eq!(e.group, b.group, "a staff is one group");
+        assert!(e.baseline < b.baseline && b.baseline < alpha.baseline);
+        let rule = frame
+            .shapes
+            .iter()
+            .find(|shape| shape.group == e.group)
+            .expect("a rule beside the staff");
+        assert_eq!(rule.ink, Ink::Faint);
+        assert!(rule.x < e.x);
+        assert!(rule.y < e.baseline - e.size * 0.7 && rule.y + rule.height > b.baseline);
+        assert!(!app.tabs_folded(900.0, 600.0));
+    }
+
+    #[test]
+    fn a_wide_staff_breaks_into_systems_that_scroll_and_page_whole() {
+        let mut source = String::from("{title: Test}\n{start_of_tab: Riff}\n");
+        for string in ["e", "B", "G", "D", "A", "E"] {
+            source.push_str(string);
+            source.push('|');
+            for _ in 0..8 {
+                source.push_str("--3--5--7--|");
+            }
+            source.push('\n');
+        }
+        source.push_str("{end_of_tab}\n{start_of_verse: A}\n");
+        for index in 0..12 {
+            source.push_str(&format!("[C]Line {index}\n"));
+        }
+        source.push_str("{end_of_verse}");
+        let mut app = app(&source);
+        app.set_tabs(Tabs::Show);
+        let (width, height) = (420.0, 300.0);
+        let page = app.page(width, height);
+        let rows: Vec<&Text> = page
+            .text
+            .iter()
+            .filter(|item| item.content.starts_with("e|"))
+            .collect();
+        assert!(rows.len() > 1, "the staff wraps");
+        for row in &rows {
+            assert!(
+                row.x + row.content.len() as f32 * row.size * 0.5 <= width - app.config().margin_x
+            );
+        }
+        // Each system's six rows share one group, so a view shows all of a
+        // system or none of it.
+        for offset in [0.0, 40.0, 90.0, 140.0, 200.0] {
+            let (view, _) = app.frame_scrolled(width, height, offset);
+            let staff_row = |i: &Text| i.content.chars().nth(1) == Some('|');
+            for item in view.text.iter().filter(|i| i.content.starts_with("e|")) {
+                let group = item.group;
+                let shown = view
+                    .text
+                    .iter()
+                    .filter(|i| i.group == group && staff_row(i))
+                    .count();
+                assert_eq!(shown, 6, "offset {offset}: system cut");
+            }
+        }
+        for page in 0..app.page_count(width, height) {
+            let view = app.page_view(width, height, page);
+            let (top, bottom) = view.band;
+            let shown: Vec<Text> = page_items(&app, width, height, view.offset, top, bottom);
+            for item in shown.iter().filter(|i| i.content.starts_with("e|")) {
+                let rows = shown
+                    .iter()
+                    .filter(|i| i.group == item.group && i.content.chars().nth(1) == Some('|'));
+                assert_eq!(rows.count(), 6);
+            }
+        }
+    }
+
+    fn page_items(
+        app: &App,
+        width: f32,
+        height: f32,
+        offset: f32,
+        top: f32,
+        bottom: f32,
+    ) -> Vec<Text> {
+        app.page(width, height)
+            .text
+            .into_iter()
+            .filter(|item| {
+                let baseline = item.baseline - offset;
+                baseline - item.size >= top - 1e-3 && baseline <= bottom + 1e-3
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_viewer_pins_tabs_shown_or_folded() {
+        // A staff too wide to sit in a column beside the verse.
+        let mut source = String::from("{title: Test}\n{start_of_tab: Intro}\n");
+        for string in ["e", "B", "G", "D", "A", "E"] {
+            source.push_str(&format!(
+                "{string}|--3---|--1---|--0---|--2---|--3---|--0---|\n"
+            ));
+        }
+        source.push_str("{end_of_tab}\n{start_of_verse: A}\n");
+        // Lines too long for two columns, so folding the tab is what makes room.
+        for index in 0..6 {
+            source.push_str(&format!("[C]Line {index} of a long and winding verse\n"));
+        }
+        source.push_str("{end_of_verse}");
+        let mut app = app(&source);
+        let width = 600.0;
+        let auto = at_step(&app, width, 5);
+        let height = auto.height;
+        assert!(app.tabs_folded(width, height));
+        let staff = |frame: &Frame| {
+            frame
+                .text
+                .iter()
+                .filter(|item| item.content.starts_with("e|"))
+                .count()
+        };
+        assert_eq!(staff(&auto), 0);
+        assert_eq!(count(&auto, "INTRO"), 1);
+        // Beside the label, whether that sits above the section or in the
+        // margin (step 2 runs before step 5).
+        let cue = auto
+            .text
+            .iter()
+            .find(|item| item.content.ends_with("FOLDED"))
+            .expect("a folded tab says so");
+        assert_eq!(cue.ink, Ink::Faint);
+        assert_eq!(cue.baseline, find(&auto, "INTRO").baseline);
+        assert!(cue.x > find(&auto, "INTRO").x);
+        app.set_tabs(Tabs::Show);
+        assert!(!app.tabs_folded(width, height));
+        assert!(
+            app.page(width, height)
+                .text
+                .iter()
+                .all(|item| !item.content.ends_with("FOLDED"))
+        );
+        assert_eq!(staff(&app.page(width, height)), 1);
+        app.set_tabs(Tabs::Fold);
+        assert!(app.tabs_folded(1400.0, 1400.0));
+        assert_eq!(staff(&app.frame(1400.0, 1400.0)), 0);
     }
 
     #[test]
@@ -1449,7 +1713,7 @@ mod tests {
     }
 
     #[test]
-    fn tablature_stays_hidden_in_scroll_mode() {
+    fn tablature_scrolls_with_the_song() {
         let mut source = String::from(
             "{title: Test}\n{start_of_tab: Tab}\ne|--3---|\n{end_of_tab}\n{start_of_verse: A}\n",
         );
@@ -1460,14 +1724,15 @@ mod tests {
         let app = app(&source);
         let (first, max_offset) = app.frame_scrolled(450.0, 260.0, 0.0);
         assert!(max_offset > 0.0);
-        assert!(first.text.iter().all(|item| item.content != "TAB"));
+        assert_eq!(count(&first, "TAB"), 1);
+        assert_eq!(count(&first, "e|--3---|"), 1);
         let (last, _) = app.frame_scrolled(450.0, 260.0, max_offset);
-        assert!(last.text.iter().all(|item| item.content != "e|--3---|"));
+        assert_eq!(count(&last, "e|--3---|"), 0);
         assert_eq!(count(&last, "Line 17"), 1);
     }
 
     #[test]
-    fn first_scroll_view_shows_the_intro_after_a_hidden_tab() {
+    fn first_scroll_view_shows_the_intro_after_a_tab() {
         let mut source = String::from(
             "{title: Test}\n{start_of_tab: Tab}\ne|--3---|\n{end_of_tab}\n{start_of_verse: Intro}\n[G] [Am] [C] [G]\n{end_of_verse}\n{start_of_verse: Verse 1}\n",
         );
@@ -1478,19 +1743,19 @@ mod tests {
         let app = app(&source);
         let (first, max_offset) = app.frame_scrolled(450.0, 260.0, 0.0);
         assert!(max_offset > 0.0);
+        assert_eq!(count(&first, "e|--3---|"), 1);
         assert_eq!(count(&first, "INTRO"), 1);
         assert_eq!(count(&first, "Am"), 1);
-        assert_eq!(count(&first, "e|--3---|"), 0);
         assert!(!first.text.iter().any(|item| item.content.trim().is_empty()));
     }
 
     #[test]
-    fn plain_text_after_a_hidden_tab_remains_visible() {
+    fn plain_text_after_a_tab_remains_visible() {
         let app = app(
             "{title: Test}\n{start_of_tab}\ne|--3--|\n{end_of_tab}\nSlide up on repeat\n{start_of_verse: Verse 1}\n[C]Hello\n{end_of_verse}",
         );
         let frame = app.frame(900.0, 600.0);
-        assert_eq!(count(&frame, "e|--3--|"), 0);
+        assert_eq!(count(&frame, "e|--3--|"), 1);
         assert_eq!(count(&frame, "Slide up on repeat"), 1);
     }
 

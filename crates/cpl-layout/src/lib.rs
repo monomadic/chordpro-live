@@ -2,15 +2,19 @@
 
 mod ladder;
 mod measure;
+mod tab;
+
+pub use tab::{Staff, System, staves};
 
 pub use ladder::{
-    HeaderLayout, LADDER, Options, PageMetrics, Solution, Step, Viewport, layout, solve,
+    HeaderLayout, LADDER, Options, PageMetrics, Solution, Step, Tabs, Viewport, layout, solve,
+    solve_with,
 };
 
 pub use measure::{
-    Face, Header, Measure, MeasuredChord, MeasuredDiagram, MeasuredLine, MeasuredPill,
-    MeasuredSection, MeasuredSegment, MeasuredSong, Metrics, PILLS, Role, Row, Run, Style, Token,
-    measure_song,
+    FOLD_CUE, FOLD_SEPARATOR, Face, Header, Measure, MeasuredChord, MeasuredDiagram, MeasuredLine,
+    MeasuredPill, MeasuredSection, MeasuredSegment, MeasuredSong, Metrics, PILLS, Role, Row, Run,
+    Style, Token, measure_song,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]

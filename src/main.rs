@@ -1,4 +1,4 @@
-use cpl_app::{App, Config, Frame, Polarity, Setlist};
+use cpl_app::{App, Config, Frame, Polarity, Setlist, Tabs};
 use cpl_render::{CoreText, Gpu, PageCompositor, PageImage, Presented, View};
 use std::{
     env, fs,
@@ -67,6 +67,10 @@ struct Viewer {
     needs_present: bool,
     config: Config,
     polarity: Polarity,
+    /// The tablature choice; `t` unfolds a folded tab or folds a shown one.
+    tabs: Tabs,
+    /// Whether the accepted page has tablature, and whether it is folded.
+    page_tabs: Option<bool>,
     initial_size: (f64, f64),
     scroll_offset: f32,
     scroll_max: f32,
@@ -102,6 +106,7 @@ struct PageRequest {
     /// Paged mode's page; `offset` is ignored when set.
     page: Option<usize>,
     polarity: Polarity,
+    tabs: Tabs,
     max_texture_side: u32,
 }
 
@@ -141,6 +146,8 @@ struct ReadyPage {
     pages: usize,
     /// The offset in points the view shows, so scroll mode can resume there.
     view_offset: f32,
+    /// `Some(folded)` when the song has tablature.
+    tabs: Option<bool>,
     slab: Arc<Slab>,
     /// A freshly composed status strip, when the page does not carry its own.
     status: Option<PageImage>,
@@ -155,6 +162,7 @@ struct ViewKey {
     scale: u32,
     inset: u32,
     polarity: Polarity,
+    tabs: Tabs,
 }
 
 impl ViewKey {
@@ -165,6 +173,7 @@ impl ViewKey {
             scale: request.scale.to_bits(),
             inset: request.inset.to_bits(),
             polarity: request.polarity,
+            tabs: request.tabs,
         }
     }
 }
@@ -225,6 +234,7 @@ fn retain(
     offset_px: i32,
 ) -> Retained {
     app.polarity = request.polarity;
+    app.set_tabs(request.tabs);
     let (width, height) = request.logical();
     let page = app.page(width, height);
     let page_px = ((page.height * request.scale).round() as u32).max(1);
@@ -252,14 +262,24 @@ impl Worker {
         // Where the content sits decides which slab is needed, so the view
         // comes first; it reads the prepared page and measures nothing.
         let (width, height) = request.logical();
-        let (scroll, pages) = {
+        let (scroll, pages, tabs) = {
             let app = self.setlist.current(&CoreText);
             app.polarity = request.polarity;
+            app.set_tabs(request.tabs);
             let scroll = match request.page {
                 Some(page) => app.page_view(width, height, page),
                 None => app.view(width, height, request.offset),
             };
-            (scroll, app.page_count(width, height))
+            let has_tabs = app
+                .song()
+                .sections
+                .iter()
+                .any(|section| section.kind == cpl_song::SectionKind::Tab);
+            (
+                scroll,
+                app.page_count(width, height),
+                has_tabs.then(|| app.tabs_folded(width, height)),
+            )
         };
         let offset_px = request.px(scroll.offset);
         let fresh = self
@@ -345,6 +365,7 @@ impl Worker {
                 max_offset: scroll.max_offset,
                 pages,
                 view_offset: scroll.offset,
+                tabs,
                 slab: Arc::clone(&retained.slab),
                 status,
                 view,
@@ -414,6 +435,7 @@ impl Viewer {
             offset: self.scroll_offset,
             page: self.paged.then_some(self.page),
             polarity: self.polarity,
+            tabs: self.tabs,
             max_texture_side: self.max_texture_side,
         });
     }
@@ -425,6 +447,7 @@ impl Viewer {
             }
             self.scroll_max = page.max_offset;
             self.page_count = page.pages;
+            self.page_tabs = page.tabs;
             self.page = self.page.min(page.pages.saturating_sub(1));
             // Leaving paged mode resumes scrolling where the page was.
             if self.paged {
@@ -564,6 +587,14 @@ impl ApplicationHandler<PageReady> for Viewer {
                     };
                     self.request_page();
                 }
+                Key::Character(key) if key.eq_ignore_ascii_case("t") => {
+                    // Flip what the performer sees; a song without
+                    // tablature leaves the choice alone.
+                    if let Some(folded) = self.page_tabs {
+                        self.tabs = if folded { Tabs::Show } else { Tabs::Fold };
+                        self.request_page();
+                    }
+                }
                 Key::Character(key) if key.eq_ignore_ascii_case("n") => self.change_song(1),
                 Key::Character(key) if key.eq_ignore_ascii_case("p") => self.change_song(-1),
                 Key::Named(NamedKey::ArrowRight) => self.change_song(1),
@@ -690,12 +721,13 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
        cpl --view <song.cho> --scroll 300 open scrolled 300 points down the song
        cpl --view <song.cho> --paged      open in paged mode (`v` toggles)
        cpl --view <song.cho> --page 2     open paged on the second page
+       cpl --view <song.cho> --tabs fold  open with tablature folded (or show)
        cpl <song.cho>                     print the parsed lyrics
        cpl render <song.cho|sample> --out page.png [--size 980x720]
-           [--scale 1|2] [--dark] [--scroll P | --page N]
+           [--scale 1|2] [--dark] [--scroll P | --page N] [--tabs show|fold]
                                           write what the window would show
-In the viewer: i polarity, v scroll or paged, n / p or ← → next and
-previous song, ↑ ↓ / Space / Page Up / Page Down / Home / End scroll or turn
+In the viewer: i polarity, v scroll or paged, t fold or show tablature,
+n / p or ← → next and previous song, ↑ ↓ / Space / Page Up / Page Down / Home / End scroll or turn
 pages, q or Escape closes.";
 
 const SONG_EXTENSIONS: [&str; 6] = ["cho", "chopro", "chordpro", "crd", "pro", "cp"];
@@ -737,6 +769,15 @@ fn expand_paths(args: &[String]) -> Result<Vec<String>, String> {
 }
 
 const SAMPLES: [&str; 4] = ["page", "page-dark", "page-inline", "page-scroll"];
+
+fn parse_tabs(value: &str) -> Option<Tabs> {
+    match value {
+        "show" => Some(Tabs::Show),
+        "fold" => Some(Tabs::Fold),
+        "auto" => Some(Tabs::Auto),
+        _ => None,
+    }
+}
 
 fn parse_size(value: &str) -> Option<(f64, f64)> {
     let (width, height) = value.split_once('x')?;
@@ -794,6 +835,7 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
     let mut dark = false;
     let mut offset = 0.0_f32;
     let mut page = None;
+    let mut tabs = Tabs::Auto;
     let mut source = None;
     while !args.is_empty() {
         let arg = args.remove(0);
@@ -824,6 +866,10 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
                 .and_then(|v| v.parse::<usize>().ok())
                 .filter(|v| *v >= 1)
                 .map(|v| page = Some(v - 1))
+                .is_some(),
+            "--tabs" => value()
+                .and_then(|v| parse_tabs(&v))
+                .map(|v| tabs = v)
                 .is_some(),
             "--dark" => {
                 dark = true;
@@ -885,6 +931,7 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
         offset,
         page,
         polarity,
+        tabs,
         max_texture_side: 8192,
     };
     let (ready, _) = worker.answer(&request);
@@ -917,15 +964,24 @@ fn main() -> ExitCode {
     let mut start_song = 0;
     let mut start_offset = 0.0f32;
     let mut start_page = 0;
+    let mut tabs = None;
     while args.len() >= 2
         && matches!(
             args[args.len() - 2].as_str(),
-            "--size" | "--song" | "--scroll" | "--page"
+            "--size" | "--song" | "--scroll" | "--page" | "--tabs"
         )
     {
         let value = args.pop().unwrap();
         let flag = args.pop().unwrap();
-        if flag == "--size" {
+        if flag == "--tabs" {
+            match parse_tabs(&value) {
+                Some(choice) => tabs = Some(choice),
+                None => {
+                    eprintln!("invalid --tabs {value:?}; expected show, fold or auto");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else if flag == "--size" {
             match parse_size(&value) {
                 Some(size) => requested_size = Some(size),
                 None => {
@@ -981,8 +1037,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if (requested_size.is_some() || start_song > 0 || start_offset > 0.0 || paged) && !view {
-        eprintln!("--size, --song, --scroll, --page and --paged require --view");
+    if (requested_size.is_some() || start_song > 0 || start_offset > 0.0 || paged || tabs.is_some())
+        && !view
+    {
+        eprintln!("--size, --song, --scroll, --page, --paged and --tabs require --view");
         return ExitCode::FAILURE;
     }
     let paths = match expand_paths(&paths) {
@@ -1119,6 +1177,8 @@ fn main() -> ExitCode {
         needs_present: false,
         config,
         polarity,
+        tabs: tabs.unwrap_or_default(),
+        page_tabs: None,
         initial_size: requested_size.unwrap_or(if inline {
             // 200 pt of page under the 28 pt title strip: tight enough
             // that the sample needs ladder step 9, inline chords.

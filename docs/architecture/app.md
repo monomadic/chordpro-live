@@ -2,8 +2,7 @@
 
 `cpl-app` owns the current headless `App`, `Config`, and plain `Frame` data.
 `App::new` takes a parsed `Song` and the host's text `Measure`. It keeps the
-source song intact but excludes tablature sections from the measured display
-song for now. It measures the display song at the floor and larger whole-point
+source song intact and measures it whole, tablature included. It measures the display song at the floor and larger whole-point
 sizes up to the configured maximum. `frame` and `frame_scrolled` then take
 only logical window dimensions and the scroll offset, and never measure, so
 resize, scroll and polarity changes need no new CoreText measurement. The
@@ -33,9 +32,25 @@ chords only if a line is too wide, and selects complete chord/lyric line
 groups for the viewport. The macOS host owns the offset and handles arrow,
 Page Up/Down, Home, and End keys. The scroll status names the section
 containing the first visible song line, even after its label leaves the
-viewport. Timed scroll modes, diagram and
-pill reductions, per-step on/off/auto pins, and normalised input events in
-the proposal are not implemented yet. The default config is embedded at
+viewport. Timed scroll modes, per-step on/off/auto pins (other than the
+tablature pin), and normalised input events in the proposal are not
+implemented yet.
+
+## Tablature
+
+A shown tab section draws each system of its staves (see
+[layout](layout.md)) as one group: its rows in the monospaced face at
+`tab_size`, in the soft ink, `tab_inset` right of a faint rule `tab_rule`
+wide that runs down the system's rows. Rows are `tab_row` apart, with the
+baseline at `tab_baseline`, and systems are `tab_system_gap` apart. A
+paged or scrolled view therefore never cuts a system. A folded tab draws its
+label and a faint `· FOLDED` cue, or `FOLDED` in the column when the label
+sits in the margin. `App::set_tabs` takes the reader's `Tabs` choice, drops
+the prepared page, and applies the choice to the fit and to the scroll page.
+`tabs_folded` tells the host whether this viewport folds a tab, so the `t`
+key can unfold a folded tab or fold a shown one; a song without tablature
+ignores `t`. `--tabs show|fold` opens the viewer, or `cpl render`, with the
+choice pinned. The default config is embedded at
 build time; hot reload has not landed.
 
 ## Setlist

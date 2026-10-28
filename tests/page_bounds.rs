@@ -1,7 +1,7 @@
 //! Real CoreText ink against the page bounds the layout promised, at 1x and
 //! 2x: what the fit arithmetic measured must be what the rasteriser draws.
 
-use cpl_app::{App, Config, Frame, Polarity};
+use cpl_app::{App, Config, Frame, Polarity, Tabs};
 use cpl_render::CoreText;
 
 /// Ink extents of `item` in page points: (left, right, top, bottom).
@@ -91,6 +91,36 @@ fn real_songs_stay_inside_at_every_size_they_fit_or_scroll() {
             if max_offset > 0.0 {
                 let (frame, _) = app.frame_scrolled(width, height, max_offset);
                 assert_ink_inside(&app, &frame, width, height, &format!("{path} (end)"));
+            }
+        }
+    }
+}
+
+#[test]
+fn long_tablature_stays_inside_shown_or_folded() {
+    let source = std::fs::read_to_string("testdata/greensleeves.cho").expect("test song");
+    let mut app = app(&source);
+    for tabs in [Tabs::Auto, Tabs::Show] {
+        app.set_tabs(tabs);
+        for (width, height) in [
+            (980.0, 720.0),
+            (744.0, 1133.0),
+            (420.0, 720.0),
+            (280.0, 840.0),
+        ] {
+            let what = format!("greensleeves {tabs:?}");
+            let (frame, max_offset) = app.frame_scrolled(width, height, 0.0);
+            assert_ink_inside(&app, &frame, width, height, &what);
+            if max_offset > 0.0 {
+                let (frame, _) = app.frame_scrolled(width, height, max_offset);
+                assert_ink_inside(&app, &frame, width, height, &format!("{what} (end)"));
+            }
+            if tabs == Tabs::Show {
+                let page = app.page(width, height);
+                assert!(
+                    page.text.iter().any(|item| item.content.starts_with("e|")),
+                    "{what} {width}×{height} shows the staves"
+                );
             }
         }
     }

@@ -42,8 +42,29 @@ larger premeasured sizes in descending order and draws the largest that fits.
 Each candidate is checked using font advances measured at its actual point
 size. A viewport's prepared scroll page stays at the floor. Point-size
 presets and paged mode are still to come.
-The app currently omits tablature from the display song before measuring, so
-step 5 is inactive for the macOS viewer while the source model retains the tab.
+`solve_with` takes the reader's `Tabs` choice: `Auto` lets step 5 fold
+tablature, while `Show` and `Fold` pin it and skip step 5.
+
+## Tablature
+
+`measure_song` reads a tab section's lines into **staves** (`tab.rs`):
+blank lines separate them, and each staff's rows share columns. It also
+measures the monospaced column advance at `tab_size` once per section.
+`Staff::new` finds the string-name prefix every row shares (`e|`, a blank
+chord-name row agreeing), the **bar** columns where every row that reaches
+them has `|`, and the **gaps** where a cut splits no fret number, technique
+or word in any row. `Staff::systems(max)` breaks a staff wider than `max`
+columns into systems: each ends after the last bar that fills at least half
+its room, otherwise at the last gap, and a continuation repeats the prefix.
+It then narrows the width while the system count holds, so eight bars over
+two systems break four and four. A stretch with no break at all stays whole
+and overflows, which the fit reports as unfit like any unbreakable run.
+`Options::tab_systems` breaks every staff at the content width beside
+`tab_inset`. A shown tab block is `tab_row` per row plus `tab_system_gap`
+between systems. `groups` counts one scroll group per system.
+`wrapped_rows` counts systems beyond one per staff. A folded tab
+(`tab_folded`) keeps its label plus the `FOLDED` cue, and its block is
+wide enough for both.
 
 ## Wrapping
 
@@ -55,7 +76,9 @@ word or at a chord's syllable split (`Or[F]leans`), a chord stays over the
 first word of its segment, consecutive words of one segment merge into one
 run, and continuation rows start at `PageMetrics::wrap_indent`. The
 unwrapped `above` and `inline` runs are the one-row flow of the same
-function, so the two cannot disagree. Tab rows are one token and never wrap;
+function, so the two cannot disagree. A word that a chord splits
+(`dis[E]courteously`) is one unit: the row breaks before it when the whole
+word would not fit, never inside it. Tab lines wrap as staves (below);
 comments wrap by words. `Options::block` wraps at the viewport width and
 `layout` counts each candidate's continuation rows in `Solution::wrapped_rows`;
 the app accepts a larger body size only while it wraps no more rows than the

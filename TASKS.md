@@ -102,9 +102,22 @@ automated checks. When every task in an epic is checked, the epic moves to
   and step 4 drops them. A scroll page keeps its header under half the
   viewport by dropping diagrams, then pills, then the title. Captured in
   light and dark 2x windows and checked at 1x through `cpl render`.
-- [ ] Reintroduce tablature only after a compact, readable layout is designed
+- [x] Reintroduce tablature only after a compact, readable layout is designed
   and tested with long real tabs. Its visibility should be a deliberate viewer
-  choice; parser retention stays independent of that choice.
+  choice; parser retention stays independent of that choice. Tabs draw at
+  0.78 of the body in the soft ink beside a faint rule; a staff wider than
+  the page breaks into balanced systems at a shared bar line (or between
+  frets), repeating the string names, and each system is one scroll/page
+  group. Step 5 folds a tab to its label with a `FOLDED` cue; `t` (and
+  `--tabs show|fold`) pins it, taking step 5 out of the ladder. Tested with
+  `testdata/greensleeves.cho`, a sixteen-bar fingerstyle arrangement written
+  for the fixture (154-column staves, chord names over the bars, a
+  hammer-on/pull-off outro and a text note), since no scraped tab in
+  `~/src/tab-scraper` has a tab block. Captured folded and shown in 2x
+  windows; headless at 420 and 1x dark. Not yet: the key-driven `t` toggle
+  in a window.
+- [ ] Check tablature against real scraped tabs once the corpus has some:
+  irregular staves, missing bars, tabs mixed with lyrics, and legends.
 - [ ] Build the library, search, sidecar metadata, and setlist navigation.
 - [ ] Run ChordPro 6 conformance against the reference implementation and
   generate the directive status table from the results.

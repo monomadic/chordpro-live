@@ -51,6 +51,11 @@ pub struct PageMetrics {
     pub diagram_cell_gap: f32,
     pub diagram_row_gap: f32,
     pub diagram_top_gap: f32,
+    /// Tablature: the height of one tab row, the gap between systems, and
+    /// the inset of the tab text from the rule at its left.
+    pub tab_row: f32,
+    pub tab_system_gap: f32,
+    pub tab_inset: f32,
 }
 
 impl PageMetrics {
@@ -133,8 +138,49 @@ impl Options {
         self.inline_chords && section.kind != SectionKind::Tab
     }
 
+    /// Whether a tab section draws its staves: it is not folded and has
+    /// something to draw.
+    pub fn tab_shown(&self, section: &MeasuredSection) -> bool {
+        section.kind == SectionKind::Tab && !self.fold_tabs && !section.staves.is_empty()
+    }
+
+    /// A tab section the reader folded or step 5 folded, which shows its
+    /// label and the fold cue.
+    pub fn tab_folded(&self, section: &MeasuredSection) -> bool {
+        section.kind == SectionKind::Tab && self.fold_tabs && !section.staves.is_empty()
+    }
+
+    /// A shown tab section's staves broken into systems that fit `wrap` em
+    /// beside the rule, in order; empty when the section is not shown.
+    pub fn tab_systems(
+        &self,
+        section: &MeasuredSection,
+        m: &PageMetrics,
+        wrap: f32,
+    ) -> Vec<crate::System> {
+        if !self.tab_shown(section) || section.tab_advance <= 0.0 {
+            return Vec::new();
+        }
+        let columns = ((wrap - m.tab_inset) / section.tab_advance + 1e-4).max(0.0) as usize;
+        section
+            .staves
+            .iter()
+            .flat_map(|staff| staff.systems(columns))
+            .collect()
+    }
+
+    /// The scroll groups a section draws: one per tab system, one per
+    /// visible line, or the label's own row when nothing else shows.
+    pub fn groups(&self, section: &MeasuredSection, m: &PageMetrics, wrap: f32) -> usize {
+        if self.tab_shown(section) {
+            self.tab_systems(section, m, wrap).len()
+        } else {
+            self.visible_lines(section).max(1)
+        }
+    }
+
     pub fn visible_lines(&self, section: &MeasuredSection) -> usize {
-        if self.fold_tabs && section.kind == SectionKind::Tab {
+        if section.kind == SectionKind::Tab && !self.tab_shown(section) {
             0
         } else if self.collapse_repeats && section.repeats_earlier {
             section.lines.len().min(1)
@@ -191,6 +237,27 @@ impl Options {
 
     /// The section's block with lines wrapped at `wrap` em.
     pub fn block(&self, section: &MeasuredSection, m: &PageMetrics, wrap: f32) -> Block {
+        let label = if section.label.is_empty() || self.side_labels {
+            0.0
+        } else {
+            m.label_height + m.label_gap
+        };
+        if self.tab_shown(section) {
+            let systems = self.tab_systems(section, m, wrap);
+            let columns = systems.iter().map(|s| s.columns).max().unwrap_or(0);
+            let width = m.tab_inset + columns as f32 * section.tab_advance;
+            let rows: usize = systems.iter().map(|s| s.rows.len()).sum();
+            return Block {
+                width: if self.side_labels {
+                    width
+                } else {
+                    section.label_width.max(width)
+                },
+                height: label
+                    + rows as f32 * m.tab_row
+                    + systems.len().saturating_sub(1) as f32 * m.tab_system_gap,
+            };
+        }
         let visible = self.visible_lines(section);
         let line_width = section
             .lines
@@ -199,16 +266,20 @@ impl Options {
             .flat_map(|line| self.rows(section, line, m, wrap))
             .map(|row| row.width)
             .fold(0.0, f32::max);
-        let label = if section.label.is_empty() || self.side_labels {
+        // A folded tab's cue follows its label, or fills its row when the
+        // label is in the margin.
+        let cue = if !self.tab_folded(section) {
             0.0
+        } else if self.side_labels {
+            section.fold_cue_width
         } else {
-            m.label_height + m.label_gap
+            section.label_width + section.fold_separator_width + section.fold_cue_width
         };
         Block {
             width: if self.side_labels {
-                line_width
+                line_width.max(cue)
             } else {
-                section.label_width.max(line_width)
+                section.label_width.max(line_width).max(cue)
             },
             height: label
                 + section
@@ -452,17 +523,29 @@ pub fn layout(
         .iter()
         .map(|s| options.block(s, m, view.width))
         .collect();
-    let wrapped_rows = song
+    // A staff broken into more than one system wraps too.
+    let tab_breaks: usize = song
         .sections
         .iter()
-        .flat_map(|section| {
-            section
-                .lines
-                .iter()
-                .take(options.visible_lines(section))
-                .map(move |line| options.rows(section, line, m, view.width).len() - 1)
+        .map(|section| {
+            options
+                .tab_systems(section, m, view.width)
+                .len()
+                .saturating_sub(section.staves.len())
         })
         .sum();
+    let wrapped_rows = tab_breaks
+        + song
+            .sections
+            .iter()
+            .flat_map(|section| {
+                section
+                    .lines
+                    .iter()
+                    .take(options.visible_lines(section))
+                    .map(move |line| options.rows(section, line, m, view.width).len() - 1)
+            })
+            .sum::<usize>();
     let fit = fit(
         &blocks,
         FitOptions {
@@ -497,9 +580,30 @@ pub fn layout(
 /// applicable step in order. When nothing fits it returns the last candidate
 /// tried, unfit, and the caller scrolls.
 pub fn solve(song: &MeasuredSong, m: &PageMetrics, view: Viewport) -> Solution {
-    let mut options = Options::default();
+    solve_with(song, m, view, Tabs::Auto)
+}
+
+/// The viewer's choice for tablature: let ladder step 5 fold it when the
+/// page needs room, or pin it shown or folded, which takes step 5 out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum Tabs {
+    #[default]
+    Auto,
+    Show,
+    Fold,
+}
+
+/// `solve` with the tablature choice applied before the ladder runs.
+pub fn solve_with(song: &MeasuredSong, m: &PageMetrics, view: Viewport, tabs: Tabs) -> Solution {
+    let mut options = Options {
+        fold_tabs: tabs == Tabs::Fold,
+        ..Options::default()
+    };
     let mut solution = layout(song, m, view, options, 0);
-    for step in LADDER.iter().filter(|s| (s.applies)(song, m, view)) {
+    for step in LADDER
+        .iter()
+        .filter(|s| (s.applies)(song, m, view) && (s.number != 5 || tabs == Tabs::Auto))
+    {
         if solution.fits {
             break;
         }
@@ -581,6 +685,9 @@ mod tests {
         diagram_cell_gap: 1.1,
         diagram_row_gap: 0.55,
         diagram_top_gap: 0.65,
+        tab_row: 1.0,
+        tab_system_gap: 0.5,
+        tab_inset: 0.5,
     };
 
     fn song(source: &str) -> MeasuredSong {
@@ -596,6 +703,7 @@ mod tests {
             meta_size: 0.7,
             diagram_name_size: 0.78,
             diagram_mark_size: 0.42,
+            tab_size: 1.0,
         };
         measure_song(&cpl_song::parse(source).song, &metrics, &Fixed)
     }
@@ -678,9 +786,70 @@ mod tests {
         }
     }
 
+    const WIDE_TAB: &str = "{title: T}\n{start_of_tab: Riff}\ne|-----0-----|-----0-----|-----0-----|-----0-----|\nB|---1---1---|---1---1---|---3---3---|---1---1---|\n{end_of_tab}\n{sov: A}\n[C]Alpha\n{eov}";
+
+    #[test]
+    fn a_wide_staff_wraps_into_systems_and_counts_as_wrapping() {
+        let song = song(WIDE_TAB);
+        let tab = &song.sections[0];
+        // Fixed measures half an em a column; fifty columns and the inset.
+        assert_eq!(tab.tab_advance, 0.5);
+        let roomy = layout(
+            &song,
+            &PAGE,
+            Viewport {
+                width: 40.0,
+                height: 100.0,
+            },
+            Options::default(),
+            0,
+        );
+        assert_eq!(roomy.wrapped_rows, 0);
+        assert_eq!(roomy.blocks[0].width, PAGE.tab_inset + 25.0);
+        let narrow = Viewport {
+            width: 16.0,
+            height: 100.0,
+        };
+        let wrapped = layout(&song, &PAGE, narrow, Options::default(), 0);
+        let systems = Options::default().tab_systems(tab, &PAGE, narrow.width);
+        assert_eq!(systems.len(), 2);
+        assert_eq!(wrapped.wrapped_rows, 1);
+        assert!(wrapped.fits);
+        assert!(wrapped.blocks[0].width <= narrow.width);
+        assert_eq!(
+            wrapped.blocks[0].height,
+            PAGE.label_height + PAGE.label_gap + 4.0 * PAGE.tab_row + PAGE.tab_system_gap
+        );
+        assert_eq!(Options::default().groups(tab, &PAGE, narrow.width), 2);
+    }
+
+    #[test]
+    fn a_pinned_tab_choice_takes_step_five_out_of_the_ladder() {
+        let song = song(SONGS[2]);
+        for view in views() {
+            let shown = solve_with(&song, &PAGE, view, Tabs::Show);
+            assert!(!shown.options.fold_tabs, "{view:?}");
+            let folded = solve_with(&song, &PAGE, view, Tabs::Fold);
+            assert!(folded.options.fold_tabs, "{view:?}");
+            assert_ne!(folded.step, 5);
+            assert_eq!(
+                Options {
+                    fold_tabs: true,
+                    ..Options::default()
+                }
+                .groups(&song.sections[0], &PAGE, view.width),
+                1
+            );
+        }
+    }
+
     #[test]
     fn a_header_too_wide_for_one_line_does_not_block_later_steps() {
-        let song = song(SONGS[1]);
+        // A six-string tab, taller than the verse, so folding it is what
+        // makes room.
+        let song = song(
+            "{title: A rather long song title}\n{artist: Somebody Famous}\n{start_of_tab: Intro}\ne|--3---|\nB|--1---|\nG|--0---|\nD|--2---|\nA|--3---|\nE|------|\n{end_of_tab}\n{sov: Verse One}\n[C]Alpha\n{eov}",
+        );
         let narrow = Viewport {
             width: song.header.title_width + 0.1,
             height: 0.0,

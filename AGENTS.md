@@ -18,8 +18,9 @@ view uniform, so a scroll step uploads only the status strip;
 `src/main.rs` hosts the chromeless winit window and owns the page worker,
 which also holds the `Setlist`: several songs or a folder open as an ordered
 setlist, the next song's page is composed while the worker is idle, and a
-song change shows the old page until the new one is complete. The viewer
-currently hides tablature blocks while preserving them in the parsed song.
+song change shows the old page until the new one is complete. Tablature
+draws as small, soft staves that wrap into systems at bar lines; ladder
+step 5 folds it, and `t` pins it shown or folded.
 The header carries metadata pills and a chord diagram for every chord used.
 An overflowing song scrolls or, with `v`, turns pages.
 Library, search,
@@ -59,9 +60,11 @@ overflow with `cargo run -- --view page-scroll`; or open a song with
 black), or several songs or a folder as a setlist (`--view testdata`); append
 `--size 980x720` to a `--view` command for a repeatable logical-point window
 size, `--song 2` to open on a given song, `--scroll 120` to open scrolled
-that many points, and `--paged` or `--page 2` to open in paged mode.
+that many points, `--paged` or `--page 2` to open in paged mode, and
+`--tabs show` or `--tabs fold` to pin tablature (`testdata/greensleeves.cho`
+has long tabs).
 `cpl --help` lists the forms. Press `i` for polarity, `v` for scroll or
-paged, `n`/`p` (or ← →) for the next and previous song, and `q` or Escape
+paged, `t` to fold or show tablature, `n`/`p` (or ← →) for the next and previous song, and `q` or Escape
 to close. Up/Down, Space, Page Up/Down, Home, and End scroll or turn pages. Capture
 the window with
 `screencapture -x -l "$(swift scripts/window-id.swift | head -1)" shot.png`;
@@ -70,7 +73,7 @@ stamped in milliseconds from process start; `scripts/launch-check.sh`
 launches the viewer repeatedly and fails if a page was never presented.
 `cargo run -- render song.cho --out page.png --scale 1 --size 420x720`
 writes exactly what the window would show, headless; use it for 1x checks.
-`cargo test --test visual` compares eleven such renders with
+`cargo test --test visual` compares fourteen such renders with
 `tests/goldens/`; after an intended visual change, inspect `target/visual/`
 and re-bless with `CPL_BLESS=1 cargo test --test visual`.
 `cargo run -- song.cho` prints the parsed lyrics.

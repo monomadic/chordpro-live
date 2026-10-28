@@ -1,12 +1,11 @@
 # chordpro-live — technical proposal
 
 *Status: implementation started, 2026-10-20. A partial parser and a
-multi-column macOS viewer exist; reduction steps 1–3, 5 and 7–9 are built.
-Keyboard scroll fallback is built for songs whose lines fit the window width.
-Tablature is parsed and retained but temporarily hidden from the performance
-page because the current rendering overwhelms the song text.
-Diagram and pill steps 4 and 6, the library, conformance work, and iOS host
-remain proposed. Where a decision is settled it says so; where
+multi-column macOS viewer exist; all nine reduction steps are built, then
+scrolling or paging. Tablature draws as small, soft monospaced staves that
+wrap into systems at bar lines (see the ladder's step 5), and the reader can
+pin it shown or folded. The library, conformance work, and iOS host remain
+proposed. Where a decision is settled it says so; where
 it is an unknown it says what will settle it.*
 
 ## The pitch in one paragraph
@@ -104,7 +103,7 @@ over), a generic metadata multimap, a `{define}` map, `TransposeBy`. What
 | **`{key}`, `{capo}`, `{transpose: n}`** and their interaction (transpose applies from that point on, creates `key_actual`) | Honoured; a mid-song `{transpose}` is a per-section offset in the model |
 | **`{define}`** for string instruments (`base-fret`, `frets`, `fingers`, keys), for keyboards (`keys`), `{chord}` to show a diagram inline, and the `copy`/`display`/`diagram` modifiers | Parsed; string and keyboard diagrams both render in the chord viewer |
 | **Environments** — verse, chorus, bridge, tab, grid, with labels; `{chorus}` and `{chorus: Label}` recall | Parsed; a recalled chorus is a reference in the model, which is what makes ladder step 8 (collapse repeated choruses) spec-native rather than a heuristic |
-| **`tab`** — verbatim, whitespace significant, `[` not a chord | Parsed and preserved; temporarily hidden from the performance page until its layout is readable |
+| **`tab`** — verbatim, whitespace significant, `[` not a chord | Rendered monospaced, verbatim within each system; a staff wider than the page breaks into systems at a shared bar line (or between frets), repeating the string names |
 | **`grid`** — cells, `.`, `/`, `~`, every bar symbol and volta, `shape=` and margins | Parsed and rendered as a chord grid (new; the TUI never had it) |
 | **Layout hints** — `{new_page}`, `{column_break}`, `{columns: n}` | Parsed and honoured as hints by the fit engine: a `{columns}` pins the column count when it fits the floor, a break is a hard block boundary |
 | **Formatting directives** — the `*font`, `*size`, `*colour` families, `{titles}`, `{diagrams}` | Parsed, **deliberately not applied**. The spec says the format defines the source, not the appearance; this viewer owns the appearance. They are listed in the conformance note as "accepted, ignored", never as unsupported |
@@ -189,9 +188,17 @@ Least destructive first:
 2. Section labels move to the side margin (if the margin does not cost a column).
 3. The header collapses: title, artist and metadata on one line.
 4. Chord diagrams leave the header.
-5. Tablature sections fold to their label.
-   For now the viewer omits tablature sections before fitting, so this step is
-   inactive in the macOS page. The source song and parser retain them.
+5. Tablature sections fold to their label, which says `FOLDED`.
+   **Settled (2026-10-29): tablature is a part for the player, not the
+   singer's text.** It is set in the monospaced face at `tab_size` (0.78 of
+   the body) in the soft ink, beside a faint rule, so it never outweighs the
+   words; its first rendering at body size and strong ink overwhelmed them.
+   A staff (consecutive tab lines) is one unit: when it is wider than the
+   page it breaks every row at the same column, preferring a bar line,
+   otherwise between frets, never inside a fret number or technique, as
+   evenly as the fewest systems allow, and each continuation system repeats
+   the string names. A system is one scroll and page group. The reader's
+   `t` pins tabs shown or folded and takes this step out of the ladder.
 6. Metadata pills drop.
 7. The title drops.
 8. *(new)* Repeated choruses after the first collapse to their label and first

@@ -4,6 +4,31 @@ This is a record of implemented work and observed checks. `TASKS.md` holds
 open work; `PROPOSAL.md` holds design decisions. Dates are local to the project
 session. A passing headless test does not stand in for a visual window check.
 
+## 2026-10-29
+
+- **Tablature is back, compact.** Tab sections draw again, now as a part for
+  the player: the monospaced face at 0.78 of the body in the soft ink,
+  beside a faint rule, so a long tab no longer outweighs the lyrics. Each
+  staff (a run of tab lines) wraps as a unit: a staff wider than the page
+  breaks every row at the same column, preferring a bar line, otherwise
+  between frets and never inside a fret number or technique. The breaks are
+  balanced (eight bars over two systems go four and four), and each
+  continuation repeats the string names (`crates/cpl-layout/src/tab.rs`).
+  Every system is one scroll and page group, so a turn never cuts one.
+  Ladder step 5 folds a tab to its label with a faint `FOLDED` cue. The
+  reader's choice, `t` in the window or `--tabs show|fold` on `--view` and
+  `cpl render`, pins it and takes step 5 out (`Tabs`, `solve_with`,
+  `App::set_tabs`). Config gains `tab_size`, `tab_row`, `tab_baseline`,
+  `tab_system_gap`, `tab_inset` and `tab_rule`. A long fixture,
+  `testdata/greensleeves.cho`, also exposed a wrap bug, now fixed: a line
+  with a word split by a chord (`dis[E]courteously`) did not break before
+  that word even when it could. New tests cover staves, bars, gaps,
+  balancing, overflow, the pin, groups, the fold cue, CoreText bounds for the
+  fixture shown and folded at four sizes, and three new goldens. Checked in
+  real 2x windows at 980×720, folded and shown, and with six launch checks.
+  Not checked: the key-driven `t` toggle in a window, and tabs from a real
+  scraped corpus (none on hand).
+
 ## 2026-10-21
 
 - **Chord diagrams and ladder step 4.** Every chord a song uses (outside
