@@ -119,6 +119,26 @@ automated checks. When every task in an epic is checked, the epic moves to
 - [ ] Check tablature against real scraped tabs once the corpus has some:
   irregular staves, missing bars, tabs mixed with lyrics, and legends.
 - [ ] Build the library, search, sidecar metadata, and setlist navigation.
+  Split into:
+  - [x] Library scan on the worker: every ChordPro file under the library
+    folders, parsed metadata cached by size and mtime, fingerprinted by the
+    SHA-256 of its normalised text; file-authored `{tag}`s read.
+  - [x] `library.toml` sidecar keyed by fingerprint holding tags and rating,
+    written atomically on the worker, never touching a song file.
+  - [x] Search surface after the Figma mock: `/` or `o` opens it; fuzzy
+    title/artist match (`l:` adds lyrics) with matched letters in bold;
+    columns that drop narrowest first; tag and minimum-rating filter pills;
+    sort pill; digits rate and `#` tags the selected song. Captured in a 2x
+    window via `--search`; goldens at 1x light and 2x dark narrow. The keys
+    themselves (typing, rating, tagging, Escape) are covered by headless
+    tests of the worker, not yet by a window run.
+  - [ ] Opening a song from search makes the visible results the setlist,
+    so `n`/`p` step through what was filtered, in its order. Built and
+    tested headless (`Worker::search_input` with Enter); still to do: a
+    window run that opens a row and steps with `n`/`p`, which needs a
+    `--view` flag that reaches the opened state without keystrokes.
+  - [ ] Saved setlists in the sidecar, last-opened and transpose-at-open,
+    and a live rescan when a library folder changes.
 - [ ] Run ChordPro 6 conformance against the reference implementation and
   generate the directive status table from the results.
 - [ ] Add the iOS host after the app and renderer boundaries are stable.

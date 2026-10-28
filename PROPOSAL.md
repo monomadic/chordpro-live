@@ -306,11 +306,15 @@ tempo-derived speed; in sync mode they adjust the `{duration}` and `space`
 plays and pauses the progress line, both exactly as chordpro-tui.
 
 **Search** — the library. `o` or `/`. A fuzzy match over title, artist and
-(opt-in, it is slower) lyric text; rows in labelled columns — title, artist,
+(opt-in with `l:`) lyric text; rows in labelled columns — title, artist,
 key, capo, tempo, year, rating, tags — that drop narrowest first as the window
 narrows, chordpro-tui's finder rule. Filter pills for tag and minimum rating,
-in the shape of switchblade's filter bar. `n`/`p`/`r` step the folder without
-opening it.
+in the shape of switchblade's filter bar. **Settled (2026-10-29): filters are
+typed, since every letter belongs to the query.** `+tag␣` adds a tag pill,
+`*3` a minimum-rating pill, and Backspace on an empty query removes the
+newest. Tab cycles the sort. Enter opens the selected row with every row,
+in order, as the setlist, so `n`/`p` on the page step through what was
+filtered; this replaces stepping the folder from inside search.
 
 **Chords** — `c`. Fingering diagrams for every chord in the current song,
 following the live transpose, `{define}` winning over the database, the
@@ -318,7 +322,8 @@ following the live transpose, `{define}` winning over the database, the
 and need no image assets.
 
 **Tags and ratings** — a small editor over library metadata only, never over
-the song file. `★`/digits rate, `#` tags. Where this is stored is a settled
+the song file. In search, digits 0–5 rate the selected row (0 clears) and
+`#name⏎` toggles a tag. Where this is stored is a settled
 decision below.
 
 **Live performance affordances**, each a line of code somewhere and each a

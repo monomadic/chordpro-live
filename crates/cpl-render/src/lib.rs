@@ -65,6 +65,10 @@ fn ink_level(polarity: Polarity, ink: Ink) -> u8 {
         (Polarity::Dark, Ink::Strong) => 255,
         (Polarity::Dark, Ink::Soft) => 181,
         (Polarity::Dark, Ink::Faint) => 110,
+        (Polarity::Light, Ink::Paper) => 255,
+        (Polarity::Dark, Ink::Paper) => 0,
+        (Polarity::Light, Ink::Wash) => 238,
+        (Polarity::Dark, Ink::Wash) => 34,
     }
 }
 

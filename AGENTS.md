@@ -23,9 +23,12 @@ draws as small, soft staves that wrap into systems at bar lines; ladder
 step 5 folds it, and `t` pins it shown or folded.
 The header carries metadata pills and a chord diagram for every chord used.
 An overflowing song scrolls or, with `v`, turns pages.
-Library, search,
-sidecar metadata, full ChordPro 6 conformance, text atlas, and iOS host are
-still planned. Do not describe these as implemented.
+`/` or `o` opens search over the library: the folders named on the command
+line, scanned on the worker and fingerprinted by content. Ratings and tags
+are kept in the `library.toml` sidecar, and opening a row makes the search
+results the setlist ([library](docs/architecture/library.md)). Saved
+setlists, full ChordPro 6 conformance, text atlas, and iOS host are still
+planned. Do not describe these as implemented.
 
 [PROPOSAL.md](PROPOSAL.md) remains the source of truth for design decisions,
 ranked unknowns, and phases. Read the relevant section before structural
@@ -47,7 +50,8 @@ message alone.
 
 Architecture notes: [song](docs/architecture/chordpro.md),
 [layout](docs/architecture/layout.md), [app](docs/architecture/app.md),
-[render](docs/architecture/render.md).
+[render](docs/architecture/render.md),
+[library](docs/architecture/library.md).
 Add a `docs/architecture/<subsystem>.md` note as each subsystem lands,
 and keep these notes as specifications rather than history.
 
@@ -62,9 +66,13 @@ black), or several songs or a folder as a setlist (`--view testdata`); append
 size, `--song 2` to open on a given song, `--scroll 120` to open scrolled
 that many points, `--paged` or `--page 2` to open in paged mode, and
 `--tabs show` or `--tabs fold` to pin tablature (`testdata/greensleeves.cho`
-has long tabs).
+has long tabs), and `--search ris` to open in search with a query typed;
+`--store tests/fixtures/library.toml` (or `$CPL_LIBRARY_STORE`) points the
+sidecar at a file other than the one in Application Support, which tests
+and captures must do.
 `cpl --help` lists the forms. Press `i` for polarity, `v` for scroll or
-paged, `t` to fold or show tablature, `n`/`p` (or ← →) for the next and previous song, and `q` or Escape
+paged, `t` to fold or show tablature, `/` or `o` to search (where
+digits rate, `#` tags, Tab sorts, Enter opens and Escape returns), `n`/`p` (or ← →) for the next and previous song, and `q` or Escape
 to close. Up/Down, Space, Page Up/Down, Home, and End scroll or turn pages. Capture
 the window with
 `screencapture -x -l "$(swift scripts/window-id.swift | head -1)" shot.png`;
@@ -73,7 +81,7 @@ stamped in milliseconds from process start; `scripts/launch-check.sh`
 launches the viewer repeatedly and fails if a page was never presented.
 `cargo run -- render song.cho --out page.png --scale 1 --size 420x720`
 writes exactly what the window would show, headless; use it for 1x checks.
-`cargo test --test visual` compares fourteen such renders with
+`cargo test --test visual` compares sixteen such renders with
 `tests/goldens/`; after an intended visual change, inspect `target/visual/`
 and re-bless with `CPL_BLESS=1 cargo test --test visual`.
 `cargo run -- song.cho` prints the parsed lyrics.

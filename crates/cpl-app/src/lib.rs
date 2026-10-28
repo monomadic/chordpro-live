@@ -1,13 +1,20 @@
 //! Headless song-page composition. No window or GPU types cross this boundary.
 
+pub mod library;
+pub mod search;
 mod setlist;
+mod sha256;
+pub mod store;
 
 pub use cpl_layout::Tabs;
 pub use cpl_layout::{Face, Measure};
 use cpl_layout::{MeasuredSong, Metrics, Options, PageMetrics, Role, Solution, Viewport};
 use cpl_song::{SectionKind, Song};
+pub use library::{Entry, Library};
+pub use search::{Search, SearchAction, SearchInput, SortBy};
 pub use setlist::Setlist;
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+pub use store::Store;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Polarity {
@@ -20,6 +27,10 @@ pub enum Ink {
     Strong,
     Soft,
     Faint,
+    /// The paper itself, for text on a filled shape (a filter pill).
+    Paper,
+    /// A tint just off the paper, for the selected row.
+    Wash,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +160,21 @@ pub struct Config {
     pub tab_rule: f32,
     pub status_height: f32,
     pub max_columns: f32,
+    /// The search screen, in points: query, label and row text sizes, the
+    /// header and row heights, pill height and padding, the gap after each
+    /// column, the results box's outline and corner, and the narrowest the
+    /// title and artist columns may get before metadata columns drop.
+    pub search_query_size: f32,
+    pub search_label_size: f32,
+    pub search_text_size: f32,
+    pub search_header_row: f32,
+    pub search_row: f32,
+    pub search_pill_height: f32,
+    pub search_pill_pad: f32,
+    pub search_column_gap: f32,
+    pub search_box_stroke: f32,
+    pub search_box_radius: f32,
+    pub search_min_title: f32,
 }
 
 impl Default for Config {
@@ -256,6 +282,17 @@ impl Config {
             tab_rule: take!("tab_rule"),
             status_height: take!("status_height"),
             max_columns: take!("max_columns"),
+            search_query_size: take!("search_query_size"),
+            search_label_size: take!("search_label_size"),
+            search_text_size: take!("search_text_size"),
+            search_header_row: take!("search_header_row"),
+            search_row: take!("search_row"),
+            search_pill_height: take!("search_pill_height"),
+            search_pill_pad: take!("search_pill_pad"),
+            search_column_gap: take!("search_column_gap"),
+            search_box_stroke: take!("search_box_stroke"),
+            search_box_radius: take!("search_box_radius"),
+            search_min_title: take!("search_min_title"),
         };
         if let Some(key) = values.keys().next() {
             return Err(format!("unknown page key: {key}"));

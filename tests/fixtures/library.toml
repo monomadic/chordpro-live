@@ -1,0 +1,16 @@
+# chordpro-live library: a fixture for the search goldens.
+
+[song.79ca65eb82b2640e54072c544b987965625e2671a274b26f9bcbc023195ec11e]
+title = "Greensleeves"
+rating = 3
+tags = ["ballad"]
+
+[song.68fe5323421211acbe84fbc596f69254bb56d015da30b1f3bd25c62b7668cb9c]
+title = "House of the Rising Sun"
+rating = 4
+tags = ["gig-set", "folk"]
+
+[song.4110251ce68beeb3f6bf1fa1da78d86cef5c6fbe302fb4a2a1051db880d40517]
+title = "Scarborough Fair"
+rating = 5
+tags = ["gig-set", "folk", "slow"]

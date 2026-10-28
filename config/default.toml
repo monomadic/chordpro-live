@@ -56,3 +56,15 @@ tab_inset = 0.7
 tab_rule = 0.05
 status_height = 1.5
 max_columns = 4
+# The search screen, in points (the Figma mock's Search frame).
+search_query_size = 22
+search_label_size = 12
+search_text_size = 15
+search_header_row = 31
+search_row = 36
+search_pill_height = 27
+search_pill_pad = 10
+search_column_gap = 12
+search_box_stroke = 2
+search_box_radius = 10
+search_min_title = 160

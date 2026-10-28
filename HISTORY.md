@@ -6,6 +6,25 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-29
 
+- **Library, sidecar and search (first slice of the P2 library epic).**
+  `/` or `o` opens a search screen built after the Figma mock. It lists every
+  ChordPro file under the folders named on the command line, scanned on the
+  worker and re-read only when size or mtime change
+  (`cpl-app/src/library.rs`). Each song is fingerprinted by a hand-written
+  SHA-256 of its normalised text, checked against the FIPS vectors. Ratings
+  (digits 0–5) and tags (`#name⏎`) go to a `library.toml` sidecar keyed by
+  that fingerprint (`store.rs`): written atomically, unknown keys kept, never
+  overwritten when unreadable, and song files never touched. The fuzzy
+  match is ported with its tests from chordpro-tui's
+  `internal/tui/picker.go`; `l:` adds lyrics. `+tag␣` and `*3` become filter
+  pills, Tab cycles the sort, and the metadata columns drop narrowest first
+  (`search.rs`). Enter makes the rows the setlist. The host sends search keys
+  as messages that are never coalesced. New flags: `--search`, `--store`,
+  and `cpl render <folder>`. New inks: `Paper` and `Wash`. Checked: 22 new
+  unit and worker tests, two search goldens (1x light, 2x dark narrow with
+  pills), a real 2x window opened in search, and launch checks. Not
+  checked: the search keys and an open-then-`n`/`p` run in a window.
+
 - **Tablature is back, compact.** Tab sections draw again, now as a part for
   the player: the monospaced face at 0.78 of the body in the soft ink,
   beside a faint rule, so a long tab no longer outweighs the lyrics. Each

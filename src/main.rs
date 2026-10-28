@@ -1,8 +1,10 @@
-use cpl_app::{App, Config, Frame, Polarity, Setlist, Tabs};
+use cpl_app::{
+    App, Config, Frame, Library, Polarity, Search, SearchAction, SearchInput, Setlist, Store, Tabs,
+};
 use cpl_render::{CoreText, Gpu, PageCompositor, PageImage, Presented, View};
 use std::{
     env, fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::ExitCode,
     sync::{Arc, mpsc},
     task::Waker,
@@ -71,6 +73,10 @@ struct Viewer {
     tabs: Tabs,
     /// Whether the accepted page has tablature, and whether it is folded.
     page_tabs: Option<bool>,
+    /// Keys go to search rather than the page.
+    searching: bool,
+    /// The worker's setlist this viewer is in; search may replace it.
+    setlist: u64,
     initial_size: (f64, f64),
     scroll_offset: f32,
     scroll_max: f32,
@@ -86,7 +92,7 @@ struct Viewer {
     /// nothing but the status strip.
     uploaded_slab: Option<u64>,
     max_texture_side: u32,
-    requests: mpsc::Sender<PageRequest>,
+    requests: mpsc::Sender<ToWorker>,
     results: mpsc::Receiver<ReadyPage>,
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
@@ -107,7 +113,19 @@ struct PageRequest {
     page: Option<usize>,
     polarity: Polarity,
     tabs: Tabs,
+    /// The setlist the host thinks it is in; an open from search makes a
+    /// new one, and `song` then means nothing until the host catches up.
+    setlist: u64,
     max_texture_side: u32,
+}
+
+/// What the window thread sends the worker. Page requests may be coalesced
+/// to the newest; search keys never are, so none is lost while typing.
+enum ToWorker {
+    Page(PageRequest),
+    /// Open search over the library, with this query typed.
+    OpenSearch(String),
+    Search(SearchInput),
 }
 
 impl PageRequest {
@@ -148,6 +166,10 @@ struct ReadyPage {
     view_offset: f32,
     /// `Some(folded)` when the song has tablature.
     tabs: Option<bool>,
+    /// The worker is showing search, not a song.
+    searching: bool,
+    setlist: u64,
+    song_count: usize,
     slab: Arc<Slab>,
     /// A freshly composed status strip, when the page does not carry its own.
     status: Option<PageImage>,
@@ -190,6 +212,19 @@ struct Retained {
 
 struct Worker {
     setlist: Setlist,
+    /// Bumped whenever search replaces the setlist.
+    setlist_id: u64,
+    /// The file behind each setlist song, when it came from one.
+    setlist_paths: Vec<Option<PathBuf>>,
+    /// Folders search lists; scanned when search opens.
+    folders: Vec<PathBuf>,
+    library: Option<Library>,
+    store: Store,
+    /// Where the sidecar lives; `None` once it failed to load, so a file
+    /// this build cannot read is never overwritten.
+    store_path: Option<PathBuf>,
+    store_loaded: bool,
+    search: Option<Search>,
     compositor: PageCompositor,
     config: Config,
     retained: Option<Retained>,
@@ -254,6 +289,19 @@ impl Worker {
     /// scroll composes only the status strip. Returns whether a slab was
     /// composed, for the timing log.
     fn answer(&mut self, request: &PageRequest) -> (ReadyPage, bool) {
+        if self.search.is_some() {
+            return (self.answer_search(request), true);
+        }
+        // A request from before search replaced the setlist opens the new
+        // setlist where search put it, at the top of the song.
+        let mut request = *request;
+        if request.setlist != self.setlist_id {
+            request.song = self.setlist.position();
+            request.offset = 0.0;
+            request.page = request.page.map(|_| 0);
+            request.setlist = self.setlist_id;
+        }
+        let request = &request;
         if request.song != self.setlist.position() {
             self.setlist.go_to(request.song);
         }
@@ -366,12 +414,170 @@ impl Worker {
                 pages,
                 view_offset: scroll.offset,
                 tabs,
+                searching: false,
+                setlist: self.setlist_id,
+                song_count: self.setlist.len(),
                 slab: Arc::clone(&retained.slab),
                 status,
                 view,
             },
             composed_slab,
         )
+    }
+
+    /// Opens search: rescans the library (reusing unchanged entries), loads
+    /// the sidecar the first time, selects the current song, and types
+    /// `query`.
+    fn open_search(&mut self, query: &str) {
+        let library = Library::scan(&self.folders, self.library.as_ref());
+        let mut notice = None;
+        if !self.store_loaded {
+            self.store_loaded = true;
+            if let Some(path) = &self.store_path {
+                match Store::load(path) {
+                    Ok(store) => self.store = store,
+                    Err(error) => {
+                        // Read-only from here on: never overwrite what we
+                        // could not read.
+                        notice = Some(format!("tags and ratings are read-only: {error}"));
+                        self.store_path = None;
+                    }
+                }
+            }
+        }
+        let mut search = Search::new(&library, &self.store);
+        if let Some(Some(current)) = self.setlist_paths.get(self.setlist.position())
+            && let Some(entry) = library.entries.iter().position(|e| &e.path == current)
+        {
+            search.select(entry);
+        }
+        for c in query.chars() {
+            search.input(SearchInput::Char(c), &library, &self.store);
+        }
+        search.notice = notice;
+        self.library = Some(library);
+        self.search = Some(search);
+    }
+
+    /// Applies one search key: ratings and tags go to the sidecar, an open
+    /// replaces the setlist with the rows, in their order.
+    fn search_input(&mut self, input: SearchInput) {
+        let (Some(search), Some(library)) = (self.search.as_mut(), self.library.as_ref()) else {
+            return;
+        };
+        match search.input(input, library, &self.store) {
+            SearchAction::Redraw => {}
+            SearchAction::Close => {
+                self.search = None;
+                self.retained = None;
+            }
+            SearchAction::Rate { entry, rating } => {
+                let song = &library.entries[entry];
+                self.store
+                    .set_rating(&song.fingerprint, &song.title, rating);
+                let done = if rating == 0 {
+                    format!("cleared the rating of {}", song.title)
+                } else {
+                    format!("rated {} {}", song.title, "★".repeat(rating as usize))
+                };
+                search.notice = Some(save(&self.store, self.store_path.as_deref(), done));
+                search.refilter(library, &self.store);
+            }
+            SearchAction::Tag { entry, tag } => {
+                let song = &library.entries[entry];
+                let added = self.store.toggle_tag(&song.fingerprint, &song.title, &tag);
+                let done = if added {
+                    format!("tagged {} #{tag}", song.title)
+                } else if song.file_tags.contains(&tag) {
+                    format!("#{tag} is in the file itself; it stays")
+                } else {
+                    format!("removed #{tag} from {}", song.title)
+                };
+                search.notice = Some(save(&self.store, self.store_path.as_deref(), done));
+                search.refilter(library, &self.store);
+            }
+            SearchAction::Open { entries, position } => {
+                let mut songs = Vec::new();
+                let mut paths = Vec::new();
+                let mut at = 0;
+                for (row, entry) in entries.iter().enumerate() {
+                    let path = &library.entries[*entry].path;
+                    // A file that vanished since the scan is skipped.
+                    let Ok(text) = fs::read_to_string(path) else {
+                        continue;
+                    };
+                    if row <= position {
+                        at = songs.len();
+                    }
+                    songs.push(cpl_song::parse(&text).song);
+                    paths.push(Some(path.clone()));
+                }
+                if songs.is_empty() {
+                    search.notice = Some("that song can no longer be read".into());
+                    return;
+                }
+                self.setlist = Setlist::new(songs, self.config.clone(), Polarity::Light);
+                self.setlist.go_to(at);
+                self.setlist_paths = paths;
+                self.setlist_id += 1;
+                self.search = None;
+                self.retained = None;
+                self.preloaded = None;
+            }
+        }
+    }
+
+    /// The search screen, composed whole: it changes with every key.
+    fn answer_search(&mut self, request: &PageRequest) -> ReadyPage {
+        let (width, height) = request.logical();
+        let search = self.search.as_mut().unwrap();
+        let library = self.library.as_ref().unwrap();
+        let frame = search.frame(
+            width,
+            height,
+            request.polarity,
+            library,
+            &self.store,
+            &self.config,
+            &CoreText,
+        );
+        let page_px = ((height * request.scale).round() as u32).max(1);
+        let slab = compose_slab(
+            &mut self.compositor,
+            &mut self.next_slab_id,
+            &frame,
+            page_px,
+            request,
+            0,
+        );
+        // The page retained before search is stale once it closes.
+        self.retained = None;
+        ReadyPage {
+            generation: request.generation,
+            song: self.setlist.position(),
+            title: "Search".into(),
+            max_offset: 0.0,
+            pages: 1,
+            view_offset: 0.0,
+            tabs: None,
+            searching: true,
+            setlist: self.setlist_id,
+            song_count: self.setlist.len(),
+            slab,
+            status: None,
+            view: View {
+                scroll: 0,
+                band_top: 0,
+                band_bottom: i32::MAX,
+                status_top: i32::MAX,
+                inset: request.inset_px() as i32,
+                paper: if request.polarity == Polarity::Light {
+                    255
+                } else {
+                    0
+                },
+            },
+        }
     }
 
     /// Measures a missing neighbour or retains the next song's first page at
@@ -415,6 +621,49 @@ impl Worker {
 
 struct PageReady;
 
+/// Saves the sidecar after a change and says what happened, or why the
+/// change is only in memory.
+fn save(store: &Store, path: Option<&Path>, done: String) -> String {
+    match path {
+        None => format!("{done} (not saved: the library file is read-only)"),
+        Some(path) => match store.save(path) {
+            Ok(()) => done,
+            Err(error) => format!("{done} (not saved: {error})"),
+        },
+    }
+}
+
+/// Where the sidecar lives: `$CPL_LIBRARY_STORE`, else the app's folder in
+/// Application Support.
+fn default_store_path() -> Option<PathBuf> {
+    if let Some(path) = env::var_os("CPL_LIBRARY_STORE") {
+        return Some(PathBuf::from(path));
+    }
+    let home = env::var_os("HOME")?;
+    Some(PathBuf::from(home).join("Library/Application Support/chordpro-live/library.toml"))
+}
+
+/// The folders search lists: each folder named on the command line, and the
+/// folder of each song file named on it.
+fn library_folders(args: &[String]) -> Vec<PathBuf> {
+    let mut folders: Vec<PathBuf> = Vec::new();
+    for arg in args {
+        let path = Path::new(arg);
+        let folder = if path.is_dir() {
+            path.to_path_buf()
+        } else {
+            match path.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+                _ => PathBuf::from("."),
+            }
+        };
+        if !folders.contains(&folder) {
+            folders.push(folder);
+        }
+    }
+    folders
+}
+
 impl Viewer {
     fn request_page(&mut self) {
         let Some(window) = &self.window else {
@@ -425,7 +674,7 @@ impl Viewer {
             return;
         }
         self.generation += 1;
-        let _ = self.requests.send(PageRequest {
+        let _ = self.requests.send(ToWorker::Page(PageRequest {
             generation: self.generation,
             song: self.song,
             width: size.width,
@@ -436,14 +685,24 @@ impl Viewer {
             page: self.paged.then_some(self.page),
             polarity: self.polarity,
             tabs: self.tabs,
+            setlist: self.setlist,
             max_texture_side: self.max_texture_side,
-        });
+        }));
     }
 
     fn accept_ready_page(&mut self) {
         while let Ok(page) = self.results.try_recv() {
             if page.generation != self.generation {
                 continue;
+            }
+            self.searching = page.searching;
+            if page.setlist != self.setlist {
+                // Search opened a new setlist: follow it, from the top.
+                self.setlist = page.setlist;
+                self.song = page.song;
+                self.song_count = page.song_count;
+                self.scroll_offset = 0.0;
+                self.page = 0;
             }
             self.scroll_max = page.max_offset;
             self.page_count = page.pages;
@@ -470,7 +729,9 @@ impl Viewer {
                         since_start()
                     );
                 }
-                window.set_title(&if self.song_count > 1 {
+                window.set_title(&if page.searching {
+                    "Search  —  chordpro-live".to_owned()
+                } else if self.song_count > 1 {
                     format!(
                         "{}  ·  {} / {}  —  chordpro-live",
                         page.title,
@@ -576,8 +837,47 @@ impl ApplicationHandler<PageReady> for Viewer {
                         ..
                     },
                 ..
+            } if self.searching => {
+                let input = match logical_key {
+                    Key::Named(NamedKey::Escape) => Some(SearchInput::Cancel),
+                    Key::Named(NamedKey::Enter) => Some(SearchInput::Enter),
+                    Key::Named(NamedKey::Backspace) => Some(SearchInput::Backspace),
+                    Key::Named(NamedKey::ArrowUp) => Some(SearchInput::Up),
+                    Key::Named(NamedKey::ArrowDown) => Some(SearchInput::Down),
+                    Key::Named(NamedKey::PageUp) => Some(SearchInput::PageUp),
+                    Key::Named(NamedKey::PageDown) => Some(SearchInput::PageDown),
+                    Key::Named(NamedKey::Home) => Some(SearchInput::Home),
+                    Key::Named(NamedKey::End) => Some(SearchInput::End),
+                    Key::Named(NamedKey::Tab) => Some(SearchInput::Sort),
+                    Key::Named(NamedKey::Space) => Some(SearchInput::Char(' ')),
+                    Key::Character(text) => {
+                        for c in text.chars() {
+                            let _ = self.requests.send(ToWorker::Search(SearchInput::Char(c)));
+                        }
+                        None
+                    }
+                    _ => None,
+                };
+                if let Some(input) = input {
+                    let _ = self.requests.send(ToWorker::Search(input));
+                }
+                self.request_page();
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        logical_key,
+                        ..
+                    },
+                ..
             } => match logical_key {
                 Key::Named(NamedKey::Escape) => event_loop.exit(),
+                Key::Character(key) if key == "/" || key.eq_ignore_ascii_case("o") => {
+                    self.searching = true;
+                    let _ = self.requests.send(ToWorker::OpenSearch(String::new()));
+                    self.request_page();
+                }
                 Key::Character(key) if key.eq_ignore_ascii_case("q") => event_loop.exit(),
                 Key::Character(key) if key.eq_ignore_ascii_case("i") => {
                     self.polarity = if self.polarity == Polarity::Light {
@@ -730,8 +1030,6 @@ In the viewer: i polarity, v scroll or paged, t fold or show tablature,
 n / p or ← → next and previous song, ↑ ↓ / Space / Page Up / Page Down / Home / End scroll or turn
 pages, q or Escape closes.";
 
-const SONG_EXTENSIONS: [&str; 6] = ["cho", "chopro", "chordpro", "crd", "pro", "cp"];
-
 /// Each argument is a song file, or a folder whose ChordPro files are taken
 /// in name order. A folder with no songs is an error, not an empty setlist.
 fn expand_paths(args: &[String]) -> Result<Vec<String>, String> {
@@ -746,17 +1044,7 @@ fn expand_paths(args: &[String]) -> Result<Vec<String>, String> {
             .map_err(|error| format!("{arg}: {error}"))?
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
-            .filter(|path| {
-                path.is_file()
-                    && path
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .is_some_and(|ext| {
-                            SONG_EXTENSIONS
-                                .iter()
-                                .any(|known| known.eq_ignore_ascii_case(ext))
-                        })
-            })
+            .filter(|path| path.is_file() && cpl_app::library::is_song(path))
             .map(|path| path.to_string_lossy().into_owned())
             .collect();
         if found.is_empty() {
@@ -836,6 +1124,8 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
     let mut offset = 0.0_f32;
     let mut page = None;
     let mut tabs = Tabs::Auto;
+    let mut search = None;
+    let mut store = None;
     let mut source = None;
     while !args.is_empty() {
         let arg = args.remove(0);
@@ -871,6 +1161,8 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
                 .and_then(|v| parse_tabs(&v))
                 .map(|v| tabs = v)
                 .is_some(),
+            "--search" => value().map(|v| search = Some(v)).is_some(),
+            "--store" => value().map(|v| store = Some(PathBuf::from(v))).is_some(),
             "--dark" => {
                 dark = true;
                 true
@@ -890,7 +1182,19 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
         eprintln!("cpl render needs a song (or sample name) and --out\n{USAGE}");
         return ExitCode::FAILURE;
     };
-    let text = match source.as_str() {
+    // A folder renders its first song, or its search screen.
+    let song_path = if Path::new(&source).is_dir() {
+        match expand_paths(std::slice::from_ref(&source)) {
+            Ok(paths) => paths[0].clone(),
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        source.clone()
+    };
+    let text = match song_path.as_str() {
         "page" | "page-dark" => SAMPLE.to_owned(),
         "page-inline" => INLINE_SAMPLE.to_owned(),
         "page-scroll" => SCROLL_SAMPLE.to_owned(),
@@ -909,8 +1213,21 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
         Polarity::Light
     };
     let config = Config::default();
+    let sample = SAMPLES.contains(&source.as_str());
     let mut worker = Worker {
         setlist: Setlist::new(vec![cpl_song::parse(&text).song], config.clone(), polarity),
+        setlist_id: 0,
+        setlist_paths: vec![(!sample).then(|| PathBuf::from(&song_path))],
+        folders: if sample {
+            Vec::new()
+        } else {
+            library_folders(std::slice::from_ref(&source))
+        },
+        library: None,
+        store: Store::default(),
+        store_path: store.or_else(default_store_path),
+        store_loaded: false,
+        search: None,
         compositor: PageCompositor::default(),
         config,
         retained: None,
@@ -932,8 +1249,12 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
         page,
         polarity,
         tabs,
+        setlist: 0,
         max_texture_side: 8192,
     };
+    if let Some(query) = &search {
+        worker.open_search(query);
+    }
     let (ready, _) = worker.answer(&request);
     let png = cpl_render::png::encode(width, height, &present(&ready, width, height));
     if let Err(error) = fs::write(&out, png) {
@@ -965,15 +1286,21 @@ fn main() -> ExitCode {
     let mut start_offset = 0.0f32;
     let mut start_page = 0;
     let mut tabs = None;
+    let mut start_search = None;
+    let mut store_path = None;
     while args.len() >= 2
         && matches!(
             args[args.len() - 2].as_str(),
-            "--size" | "--song" | "--scroll" | "--page" | "--tabs"
+            "--size" | "--song" | "--scroll" | "--page" | "--tabs" | "--search" | "--store"
         )
     {
         let value = args.pop().unwrap();
         let flag = args.pop().unwrap();
-        if flag == "--tabs" {
+        if flag == "--search" {
+            start_search = Some(value);
+        } else if flag == "--store" {
+            store_path = Some(PathBuf::from(value));
+        } else if flag == "--tabs" {
             match parse_tabs(&value) {
                 Some(choice) => tabs = Some(choice),
                 None => {
@@ -1037,12 +1364,18 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if (requested_size.is_some() || start_song > 0 || start_offset > 0.0 || paged || tabs.is_some())
+    if (requested_size.is_some()
+        || start_song > 0
+        || start_offset > 0.0
+        || paged
+        || tabs.is_some()
+        || start_search.is_some())
         && !view
     {
-        eprintln!("--size, --song, --scroll, --page, --paged and --tabs require --view");
+        eprintln!("--size, --song, --scroll, --page, --paged, --tabs and --search require --view");
         return ExitCode::FAILURE;
     }
+    let folders = library_folders(&paths);
     let paths = match expand_paths(&paths) {
         Ok(paths) => paths,
         Err(error) => {
@@ -1104,7 +1437,7 @@ fn main() -> ExitCode {
     let event_loop = EventLoop::<PageReady>::with_user_event()
         .build()
         .expect("create event loop");
-    let (requests, request_rx) = mpsc::channel::<PageRequest>();
+    let (requests, request_rx) = mpsc::channel::<ToWorker>();
     let (result_tx, results) = mpsc::channel::<ReadyPage>();
     let proxy = event_loop.create_proxy();
     let config = Config::default();
@@ -1115,6 +1448,15 @@ fn main() -> ExitCode {
     };
     let worker_config = config.clone();
     let song_count = songs.len();
+    let setlist_paths: Vec<Option<PathBuf>> = if paths.is_empty() {
+        vec![None]
+    } else {
+        paths.iter().map(|path| Some(PathBuf::from(path))).collect()
+    };
+    let searching = start_search.is_some();
+    if let Some(query) = start_search {
+        let _ = requests.send(ToWorker::OpenSearch(query));
+    }
     if start_song >= song_count {
         eprintln!(
             "--song {}: the setlist has {song_count} song(s)",
@@ -1127,6 +1469,14 @@ fn main() -> ExitCode {
     std::thread::spawn(move || {
         let mut worker = Worker {
             setlist: Setlist::new(songs, worker_config.clone(), polarity),
+            setlist_id: 0,
+            setlist_paths,
+            folders,
+            library: None,
+            store: Store::default(),
+            store_path: store_path.or_else(default_store_path),
+            store_loaded: false,
+            search: None,
             compositor: PageCompositor::default(),
             config: worker_config,
             retained: None,
@@ -1136,8 +1486,8 @@ fn main() -> ExitCode {
             timing,
         };
         loop {
-            let mut request = match request_rx.try_recv() {
-                Ok(request) => request,
+            let first = match request_rx.try_recv() {
+                Ok(message) => message,
                 Err(mpsc::TryRecvError::Disconnected) => break,
                 Err(mpsc::TryRecvError::Empty) => {
                     // Idle: prepare the neighbours one unit at a time, checking
@@ -1146,16 +1496,27 @@ fn main() -> ExitCode {
                         continue;
                     }
                     match request_rx.recv() {
-                        Ok(request) => request,
+                        Ok(message) => message,
                         Err(_) => break,
                     }
                 }
             };
-            // Resize and scroll events can arrive faster than a page composes.
-            // Only begin the latest pending request.
-            while let Ok(newer) = request_rx.try_recv() {
-                request = newer;
+            // Resize and scroll events can arrive faster than a page composes,
+            // so only the latest page request is answered; every search key
+            // is applied, in order.
+            let mut latest = None;
+            for message in
+                std::iter::once(first).chain(std::iter::from_fn(|| request_rx.try_recv().ok()))
+            {
+                match message {
+                    ToWorker::Page(request) => latest = Some(request),
+                    ToWorker::OpenSearch(query) => worker.open_search(&query),
+                    ToWorker::Search(input) => worker.search_input(input),
+                }
             }
+            let Some(request) = latest else {
+                continue;
+            };
             let started = Instant::now();
             let (page, composed_slab) = worker.answer(&request);
             if worker.timing {
@@ -1179,6 +1540,8 @@ fn main() -> ExitCode {
         polarity,
         tabs: tabs.unwrap_or_default(),
         page_tabs: None,
+        searching,
+        setlist: 0,
         initial_size: requested_size.unwrap_or(if inline {
             // 200 pt of page under the 28 pt title strip: tight enough
             // that the sample needs ladder step 9, inline chords.
@@ -1209,7 +1572,124 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_paths, parse_size};
+    use super::{
+        CoreText, PageCompositor, PathBuf, Polarity, SearchInput, Setlist, Store, Worker,
+        expand_paths, library_folders, parse_size,
+    };
+    use cpl_app::Config;
+
+    fn worker(store: PathBuf) -> Worker {
+        let config = Config::default();
+        let text = std::fs::read_to_string("testdata/greensleeves.cho").unwrap();
+        Worker {
+            setlist: Setlist::new(
+                vec![cpl_song::parse(&text).song],
+                config.clone(),
+                Polarity::Light,
+            ),
+            setlist_id: 0,
+            setlist_paths: vec![Some(PathBuf::from("testdata/greensleeves.cho"))],
+            folders: library_folders(&["testdata".to_owned()]),
+            library: None,
+            store: Store::default(),
+            store_path: Some(store),
+            store_loaded: false,
+            search: None,
+            compositor: PageCompositor::default(),
+            config,
+            retained: None,
+            preloaded: None,
+            last: None,
+            next_slab_id: 0,
+            timing: false,
+        }
+    }
+
+    #[test]
+    fn search_opens_on_the_current_song_and_opening_a_row_makes_the_rows_the_setlist() {
+        let dir = std::env::temp_dir().join(format!("cpl-search-{}", std::process::id()));
+        let mut worker = worker(dir.join("library.toml"));
+        worker.open_search("");
+        let search = worker.search.as_ref().unwrap();
+        let library = worker.library.as_ref().unwrap();
+        let selected = &library.entries[search.selected().unwrap()];
+        assert_eq!(
+            selected.title, "Greensleeves",
+            "the current song is selected"
+        );
+        // Filter to the two folk-ish titles, move to the second, open it.
+        for c in "r".chars() {
+            worker.search_input(SearchInput::Char(c));
+        }
+        let rows = worker.search.as_ref().unwrap().results().len();
+        assert!(rows >= 2);
+        worker.search_input(SearchInput::Down);
+        let second = {
+            let search = worker.search.as_ref().unwrap();
+            worker.library.as_ref().unwrap().entries[search.selected().unwrap()]
+                .title
+                .clone()
+        };
+        worker.search_input(SearchInput::Enter);
+        assert!(worker.search.is_none());
+        assert_eq!(worker.setlist_id, 1);
+        assert_eq!(worker.setlist.len(), rows);
+        assert_eq!(worker.setlist.position(), 1);
+        assert_eq!(worker.setlist.title(1), second);
+        let _ = CoreText;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rating_and_tagging_write_the_sidecar_and_never_a_song() {
+        let dir = std::env::temp_dir().join(format!("cpl-rate-{}", std::process::id()));
+        let path = dir.join("library.toml");
+        let before = std::fs::read_to_string("testdata/greensleeves.cho").unwrap();
+        let mut worker = worker(path.clone());
+        worker.open_search("");
+        worker.search_input(SearchInput::Char('4'));
+        for c in "#Encore".chars() {
+            worker.search_input(SearchInput::Char(c));
+        }
+        worker.search_input(SearchInput::Enter);
+        let store = Store::load(&path).unwrap();
+        let fingerprint = cpl_app::library::fingerprint(&before);
+        assert_eq!(store.rating(&fingerprint), 4);
+        assert_eq!(store.tags(&fingerprint), ["encore"]);
+        let notice = worker.search.as_ref().unwrap().notice.clone().unwrap();
+        assert!(notice.contains("tagged Greensleeves #encore"), "{notice}");
+        assert_eq!(
+            std::fs::read_to_string("testdata/greensleeves.cho").unwrap(),
+            before
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreadable_sidecar_is_never_overwritten() {
+        let dir = std::env::temp_dir().join(format!("cpl-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("library.toml");
+        std::fs::write(&path, "this is not a library").unwrap();
+        let mut worker = worker(path.clone());
+        worker.open_search("");
+        assert!(
+            worker
+                .search
+                .as_ref()
+                .unwrap()
+                .notice
+                .as_ref()
+                .unwrap()
+                .contains("read-only")
+        );
+        worker.search_input(SearchInput::Char('5'));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "this is not a library"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_folder_expands_to_its_songs_in_name_order_and_files_pass_through() {

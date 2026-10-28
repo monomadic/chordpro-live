@@ -22,7 +22,8 @@ const PIXEL_TOLERANCE: f64 = 0.0002;
 /// (golden name, `cpl render` arguments). Together they cover light and dark,
 /// fit, scroll and paged pages, inline chords, wrapped lines and titles,
 /// chords crowded over short syllables, tablature folded by the ladder and
-/// shown in wrapped systems, 1x and 2x, and body sizes from the
+/// shown in wrapped systems, the search screen with its pills and
+/// dropping columns, 1x and 2x, and body sizes from the
 /// 17 pt floor to the 28 pt maximum.
 const CASES: &[(&str, &[&str])] = &[
     (
@@ -151,6 +152,35 @@ const CASES: &[(&str, &[&str])] = &[
             "--dark",
             "--page",
             "5",
+        ],
+    ),
+    (
+        "search-ris-1133x744@1x",
+        &[
+            "testdata",
+            "--search",
+            "ris",
+            "--store",
+            "tests/fixtures/library.toml",
+            "--size",
+            "1133x744",
+            "--scale",
+            "1",
+        ],
+    ),
+    (
+        "search-filters-dark-420x600@2x",
+        &[
+            "testdata",
+            "--search",
+            "+folk *4",
+            "--store",
+            "tests/fixtures/library.toml",
+            "--size",
+            "420x600",
+            "--scale",
+            "2",
+            "--dark",
         ],
     ),
 ];
