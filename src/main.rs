@@ -77,6 +77,9 @@ struct Viewer {
     searching: bool,
     /// The worker's setlist this viewer is in; search may replace it.
     setlist: u64,
+    /// `--next N`: songs to step, as `n`/`p` would, once search has opened
+    /// a setlist, so a capture can reach that state without a keypress.
+    pending_step: isize,
     initial_size: (f64, f64),
     scroll_offset: f32,
     scroll_max: f32,
@@ -703,6 +706,12 @@ impl Viewer {
                 self.song_count = page.song_count;
                 self.scroll_offset = 0.0;
                 self.page = 0;
+                let step = std::mem::take(&mut self.pending_step);
+                if step != 0 {
+                    // The opened song is still drawn below until the stepped
+                    // one arrives, exactly as after a keypress.
+                    self.change_song(step);
+                }
             }
             self.scroll_max = page.max_offset;
             self.page_count = page.pages;
@@ -1022,6 +1031,12 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
        cpl --view <song.cho> --paged      open in paged mode (`v` toggles)
        cpl --view <song.cho> --page 2     open paged on the second page
        cpl --view <song.cho> --tabs fold  open with tablature folded (or show)
+       cpl --view <folder> --search ris   open in search with a query typed
+       cpl --view <folder> --search ris --open 2 [--next 1]
+                                          open the second result as Enter would,
+                                          then step through the results as n does
+       cpl --view <folder> --store lib.toml
+                                          keep ratings and tags in another sidecar
        cpl <song.cho>                     print the parsed lyrics
        cpl render <song.cho|sample> --out page.png [--size 980x720]
            [--scale 1|2] [--dark] [--scroll P | --page N] [--tabs show|fold]
@@ -1287,17 +1302,45 @@ fn main() -> ExitCode {
     let mut start_page = 0;
     let mut tabs = None;
     let mut start_search = None;
+    let mut open_row = None;
+    let mut next_step = 0isize;
     let mut store_path = None;
     while args.len() >= 2
         && matches!(
             args[args.len() - 2].as_str(),
-            "--size" | "--song" | "--scroll" | "--page" | "--tabs" | "--search" | "--store"
+            "--size"
+                | "--song"
+                | "--scroll"
+                | "--page"
+                | "--tabs"
+                | "--search"
+                | "--store"
+                | "--open"
+                | "--next"
         )
     {
         let value = args.pop().unwrap();
         let flag = args.pop().unwrap();
         if flag == "--search" {
             start_search = Some(value);
+        } else if flag == "--open" {
+            // 1-based row of the search results, opened as Enter would.
+            match value.parse::<usize>() {
+                Ok(n) if n >= 1 => open_row = Some(n - 1),
+                _ => {
+                    eprintln!("invalid --open {value:?}; expected a 1-based row number");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else if flag == "--next" {
+            // Songs to step after the open; negative steps back, as `p` does.
+            match value.parse::<isize>() {
+                Ok(n) => next_step = n,
+                _ => {
+                    eprintln!("invalid --next {value:?}; expected a whole number of songs");
+                    return ExitCode::FAILURE;
+                }
+            }
         } else if flag == "--store" {
             store_path = Some(PathBuf::from(value));
         } else if flag == "--tabs" {
@@ -1373,6 +1416,10 @@ fn main() -> ExitCode {
         && !view
     {
         eprintln!("--size, --song, --scroll, --page, --paged, --tabs and --search require --view");
+        return ExitCode::FAILURE;
+    }
+    if (open_row.is_some() && start_search.is_none()) || (next_step != 0 && open_row.is_none()) {
+        eprintln!("--open needs --search, and --next needs --open");
         return ExitCode::FAILURE;
     }
     let folders = library_folders(&paths);
@@ -1456,6 +1503,15 @@ fn main() -> ExitCode {
     let searching = start_search.is_some();
     if let Some(query) = start_search {
         let _ = requests.send(ToWorker::OpenSearch(query));
+        // The same keys a performer would press: to the top row, down to
+        // the chosen one, Enter.
+        if let Some(row) = open_row {
+            let _ = requests.send(ToWorker::Search(SearchInput::Home));
+            for _ in 0..row {
+                let _ = requests.send(ToWorker::Search(SearchInput::Down));
+            }
+            let _ = requests.send(ToWorker::Search(SearchInput::Enter));
+        }
     }
     if start_song >= song_count {
         eprintln!(
@@ -1542,6 +1598,7 @@ fn main() -> ExitCode {
         page_tabs: None,
         searching,
         setlist: 0,
+        pending_step: next_step,
         initial_size: requested_size.unwrap_or(if inline {
             // 200 pt of page under the 28 pt title strip: tight enough
             // that the sample needs ladder step 9, inline chords.

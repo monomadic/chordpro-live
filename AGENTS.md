@@ -66,7 +66,9 @@ black), or several songs or a folder as a setlist (`--view testdata`); append
 size, `--song 2` to open on a given song, `--scroll 120` to open scrolled
 that many points, `--paged` or `--page 2` to open in paged mode, and
 `--tabs show` or `--tabs fold` to pin tablature (`testdata/greensleeves.cho`
-has long tabs), and `--search ris` to open in search with a query typed;
+has long tabs), and `--search ris` to open in search with a query typed
+(add `--open 2` to open the second result as Enter would, and `--next 1`
+to then step through the results as `n` does);
 `--store tests/fixtures/library.toml` (or `$CPL_LIBRARY_STORE`) points the
 sidecar at a file other than the one in Application Support, which tests
 and captures must do.

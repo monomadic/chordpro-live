@@ -132,11 +132,14 @@ automated checks. When every task in an epic is checked, the epic moves to
     window via `--search`; goldens at 1x light and 2x dark narrow. The keys
     themselves (typing, rating, tagging, Escape) are covered by headless
     tests of the worker, not yet by a window run.
-  - [ ] Opening a song from search makes the visible results the setlist,
-    so `n`/`p` step through what was filtered, in its order. Built and
-    tested headless (`Worker::search_input` with Enter); still to do: a
-    window run that opens a row and steps with `n`/`p`, which needs a
-    `--view` flag that reaches the opened state without keystrokes.
+  - [x] Opening a song from search makes the visible results the setlist,
+    so `n`/`p` step through what was filtered, in its order. Tested
+    headless (`Worker::search_input` with Enter) and in 2x windows through
+    `--search Q --open N [--next K]`, which sends the worker the keys a
+    performer would press (Home, Down, Enter) and then steps as `n`/`p`
+    do: rows 2 then 3 and 1 of the unfiltered library opened in order, and
+    `--search "+folk " --open 1 --next 5` stopped on the filter's last song.
+    Real keypresses in a window are still unexercised.
   - [ ] Saved setlists in the sidecar, last-opened and transpose-at-open,
     and a live rescan when a library folder changes.
 - [ ] Run ChordPro 6 conformance against the reference implementation and

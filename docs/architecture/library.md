@@ -81,6 +81,9 @@ An `Open` reads and parses the rows' files and makes them a new `Setlist`
 at the chosen song. It bumps the setlist id: the host adopts the worker's
 song, count and position, and `n`/`p` then step through what was filtered,
 in its order. `/` or `o` opens search over the page. `--search QUERY` opens
-the viewer, or `cpl render`, in search with that query typed. `cpl render
+the viewer, or `cpl render`, in search with that query typed. In the
+viewer, `--open N` then sends the worker Home, N−1 Downs and Enter, the
+same inputs as the keys, and `--next K` steps K songs once the opened
+setlist is adopted, through the same path as `n`/`p`. `cpl render
 <folder>` renders a folder's first song or, with `--search`, its search
 screen.
