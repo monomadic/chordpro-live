@@ -1,17 +1,49 @@
 //! Platform-independent song model and a ChordPro 6 parser, growing toward
 //! conformance. `~/src/chordpro-library` holds the working spec it follows.
 
+pub mod chords;
+
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Song {
     pub metadata: BTreeMap<String, Vec<String>>,
     pub sections: Vec<Section>,
+    /// `{define}` voicings by chord name; they win over the built-in table.
+    pub defines: BTreeMap<String, chords::Shape>,
 }
 
 impl Song {
     pub fn first_meta(&self, name: &str) -> Option<&str> {
         self.metadata.get(name)?.first().map(String::as_str)
+    }
+
+    /// Every chord the song uses, in first-use order, each once.
+    pub fn chord_names(&self) -> Vec<&str> {
+        let mut seen = Vec::new();
+        for segment in self
+            .sections
+            .iter()
+            .filter(|section| section.kind != SectionKind::Tab)
+            .flat_map(|section| &section.lines)
+            .flat_map(|line| &line.segments)
+        {
+            if let Some(chord) = segment.chord.as_deref()
+                && !seen.contains(&chord)
+            {
+                seen.push(chord);
+            }
+        }
+        seen
+    }
+
+    /// The fingering to draw for `name`: the song's `{define}`, else the
+    /// built-in table's.
+    pub fn shape(&self, name: &str) -> Option<chords::Shape> {
+        self.defines
+            .get(name)
+            .cloned()
+            .or_else(|| chords::lookup(name))
     }
 }
 
@@ -213,6 +245,12 @@ impl Parser {
                 self.end(number, kind, name);
             }
             "chorus" => self.recall(number, label(value)),
+            "define" => match chords::parse_define(value) {
+                Some((name, shape)) => {
+                    self.song.defines.insert(name, shape);
+                }
+                None => self.diagnose(number, "define needs a chord name and frets"),
+            },
             "comment" | "comment_italic" | "comment_box" | "highlight" => {
                 if value.is_empty() {
                     self.diagnose(number, format!("empty {name}"));
@@ -693,6 +731,19 @@ mod tests {
             messages(&result)
                 .iter()
                 .all(|m| m.starts_with("layout hint"))
+        );
+    }
+
+    #[test]
+    fn defines_are_stored_and_win_over_the_table() {
+        let result = parse("{define: Am base-fret 5 frets x 0 2 2 1 0}\n[Am]Hi [C]there [Am]again");
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        assert_eq!(result.song.shape("Am").unwrap().base_fret, 5);
+        assert_eq!(result.song.shape("C"), chords::lookup("C"));
+        assert_eq!(result.song.chord_names(), ["Am", "C"]);
+        assert_eq!(
+            messages(&parse("{define: X}")),
+            ["define needs a chord name and frets"]
         );
     }
 

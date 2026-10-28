@@ -31,6 +31,10 @@ pub enum Role {
     /// A metadata pill's name (`KEY`) and value (`Am`).
     PillLabel,
     PillValue,
+    /// A chord diagram's name, and its small marks: o and x over the nut,
+    /// finger numbers, the starting-fret note.
+    DiagramName,
+    DiagramMark,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -57,6 +61,9 @@ pub struct Metrics {
     pub inline_chord_gap: f32,
     /// Metadata pill text, in body sizes.
     pub meta_size: f32,
+    /// Chord diagram name and mark text, in body sizes.
+    pub diagram_name_size: f32,
+    pub diagram_mark_size: f32,
 }
 
 impl Metrics {
@@ -71,6 +78,8 @@ impl Metrics {
             Role::Tab => (1.0, 400, Face::Monospace),
             Role::Comment => (1.0, 400, Face::System),
             Role::PillLabel | Role::PillValue => (self.meta_size, 600, Face::System),
+            Role::DiagramName => (self.diagram_name_size, 600, Face::Monospace),
+            Role::DiagramMark => (self.diagram_mark_size, 400, Face::Monospace),
         };
         Style { size, weight, face }
     }
@@ -355,6 +364,21 @@ pub struct Header {
     pub artist_width: f32,
     /// Key, capo, tempo and time, in that order, as the song states them.
     pub pills: Vec<MeasuredPill>,
+    /// A fingering diagram for every chord the song uses that has a shape,
+    /// in first-use order.
+    pub diagrams: Vec<MeasuredDiagram>,
+    /// Width of one diagram mark character (the face is monospaced).
+    pub mark_width: f32,
+}
+
+/// One chord's fingering diagram with its name measured.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasuredDiagram {
+    pub name: String,
+    pub name_width: f32,
+    pub shape: cpl_song::chords::Shape,
+    /// The `5fr` note beside a shape above the nut, and its width.
+    pub fret_label: Option<(String, f32)>,
 }
 
 /// One metadata pill, its two runs measured in body ems.
@@ -393,6 +417,24 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
     let header = Header {
         title_width: m.em(&title, Role::Title),
         title_tokens: m.tokens(&title, Role::Title),
+        diagrams: song
+            .chord_names()
+            .into_iter()
+            .filter_map(|name| {
+                let shape = song.shape(name)?;
+                (shape.frets.len() >= 2).then(|| MeasuredDiagram {
+                    name: name.to_owned(),
+                    name_width: m.em(name, Role::DiagramName),
+                    fret_label: (shape.base_fret > 1).then(|| {
+                        let label = format!("{}fr", shape.base_fret);
+                        let width = m.em(&label, Role::DiagramMark);
+                        (label, width)
+                    }),
+                    shape,
+                })
+            })
+            .collect(),
+        mark_width: m.em("0", Role::DiagramMark),
         pills: PILLS
             .iter()
             .filter_map(|(name, label)| {
@@ -588,6 +630,8 @@ mod tests {
             inline_chord_size: 0.5,
             inline_chord_gap: 0.25,
             meta_size: 0.5,
+            diagram_name_size: 0.8,
+            diagram_mark_size: 0.4,
         }
     }
 
@@ -664,8 +708,9 @@ mod tests {
     #[test]
     fn repeated_strings_are_measured_once_per_role() {
         let (_, calls) = measured("[C]la[C]la[C]la\n[C]la[C]la");
-        // "C" as chord and as inline chord, "la" as lyric, then title "Untitled".
-        assert_eq!(calls, 4);
+        // "C" as chord, inline chord and diagram name, "la" as lyric, title
+        // "Untitled", and one diagram mark width.
+        assert_eq!(calls, 6);
     }
 
     #[test]

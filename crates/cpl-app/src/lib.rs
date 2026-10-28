@@ -119,6 +119,24 @@ pub struct Config {
     pub pill_gap: f32,
     pub pill_kv_gap: f32,
     pub pill_stroke: f32,
+    /// Chord diagrams, in body sizes: name and mark text, string and fret
+    /// spacing, fret rows shown, the name, mark and finger rows, the gaps
+    /// between diagrams, rows and above them, and the grid line, nut and
+    /// dot sizes (chordpro-tui/internal/pdf/layout.go and pdf.go).
+    pub diagram_name_size: f32,
+    pub diagram_mark_size: f32,
+    pub diagram_string_gap: f32,
+    pub diagram_fret_gap: f32,
+    pub diagram_frets: f32,
+    pub diagram_name_row: f32,
+    pub diagram_mark_row: f32,
+    pub diagram_finger_row: f32,
+    pub diagram_cell_gap: f32,
+    pub diagram_row_gap: f32,
+    pub diagram_top_gap: f32,
+    pub diagram_line: f32,
+    pub diagram_nut: f32,
+    pub diagram_dot: f32,
     pub status_height: f32,
     pub max_columns: f32,
 }
@@ -206,6 +224,20 @@ impl Config {
             pill_gap: take!("pill_gap"),
             pill_kv_gap: take!("pill_kv_gap"),
             pill_stroke: take!("pill_stroke"),
+            diagram_name_size: take!("diagram_name_size"),
+            diagram_mark_size: take!("diagram_mark_size"),
+            diagram_string_gap: take!("diagram_string_gap"),
+            diagram_fret_gap: take!("diagram_fret_gap"),
+            diagram_frets: take!("diagram_frets"),
+            diagram_name_row: take!("diagram_name_row"),
+            diagram_mark_row: take!("diagram_mark_row"),
+            diagram_finger_row: take!("diagram_finger_row"),
+            diagram_cell_gap: take!("diagram_cell_gap"),
+            diagram_row_gap: take!("diagram_row_gap"),
+            diagram_top_gap: take!("diagram_top_gap"),
+            diagram_line: take!("diagram_line"),
+            diagram_nut: take!("diagram_nut"),
+            diagram_dot: take!("diagram_dot"),
             status_height: take!("status_height"),
             max_columns: take!("max_columns"),
         };
@@ -246,6 +278,8 @@ impl Config {
             inline_chord_size: self.inline_chord_size,
             inline_chord_gap: self.inline_chord_gap,
             meta_size: self.meta_size,
+            diagram_name_size: self.diagram_name_size,
+            diagram_mark_size: self.diagram_mark_size,
         }
     }
 }
@@ -319,6 +353,7 @@ impl App {
         // the performance page until it has a deliberate, readable layout.
         let display_song = Song {
             metadata: song.metadata.clone(),
+            defines: song.defines.clone(),
             sections: song
                 .sections
                 .iter()
@@ -392,6 +427,15 @@ impl App {
             pill_gap: c.pill_gap,
             pill_kv_gap: c.pill_kv_gap,
             meta_size: c.meta_size,
+            diagram_string_gap: c.diagram_string_gap,
+            diagram_fret_gap: c.diagram_fret_gap,
+            diagram_frets: c.diagram_frets,
+            diagram_name_row: c.diagram_name_row,
+            diagram_mark_row: c.diagram_mark_row,
+            diagram_finger_row: c.diagram_finger_row,
+            diagram_cell_gap: c.diagram_cell_gap,
+            diagram_row_gap: c.diagram_row_gap,
+            diagram_top_gap: c.diagram_top_gap,
         }
     }
 
@@ -694,13 +738,21 @@ impl App {
         // scroll group, and a group taller than the viewport could never be
         // shown whole, so a title that wraps past half the content box drops
         // here exactly as ladder step 7 drops it from a fitted page.
+        // The header is one scroll group, so it must stay well inside the
+        // viewport: past half of it, drop what the ladder drops first —
+        // diagrams (step 4), then pills (step 6), then the title (step 7).
         let view_height = self.viewport(width, height, body).height;
         let mut base = Options::default();
-        if base
-            .header(&self.measured.header, &metrics, tall.width)
-            .height
-            > view_height / 2.0
-        {
+        let too_tall = |o: &Options| {
+            o.header(&self.measured.header, &metrics, tall.width).height > view_height / 2.0
+        };
+        if too_tall(&base) {
+            base.hide_diagrams = true;
+        }
+        if too_tall(&base) {
+            base.hide_pills = true;
+        }
+        if too_tall(&base) {
             base.hide_title = true;
         }
         let mut long = cpl_layout::layout(&self.measured, &metrics, tall, base, 0);
@@ -814,6 +866,144 @@ impl App {
         self.compose(width, height, floor, &self.measured, &solution)
     }
 
+    /// One fingering diagram with its cell's top-left corner at `at`, in
+    /// points: name, o/x marks, grid with nut or starting-fret note, dots and
+    /// barres, finger numbers. After chordpro-tui's internal/pdf/pdf.go
+    /// drawDiagram; barres are drawn as capsules, as in the Figma mock.
+    fn compose_diagram(
+        &self,
+        frame: &mut Frame,
+        m: &PageMetrics,
+        diagram: &cpl_layout::MeasuredDiagram,
+        (left, top): (f32, f32),
+        body: f32,
+        mark_width: f32,
+    ) {
+        let c = &self.config;
+        let shape = &diagram.shape;
+        let strings = shape.frets.len();
+        let gap = c.diagram_string_gap * body;
+        let grid_width = (strings - 1) as f32 * gap;
+        let label_room = diagram
+            .fret_label
+            .as_ref()
+            .map_or(0.0, |(_, w)| (w + 0.15) * body);
+        let cell = m.diagram_width(diagram) * body - label_room;
+        let grid_left = left + (cell - grid_width) / 2.0;
+        let string_x = |i: usize| grid_left + i as f32 * gap;
+        let small = |content: String, x: f32, baseline: f32| Text {
+            group: 0,
+            content,
+            x,
+            baseline,
+            size: c.diagram_mark_size * body,
+            weight: 400,
+            face: Face::Monospace,
+            ink: Ink::Soft,
+        };
+        let line = |x: f32, y: f32, width: f32, height: f32, radius: f32| Shape {
+            group: 0,
+            x,
+            y,
+            width,
+            height,
+            radius,
+            stroke: None,
+            ink: Ink::Strong,
+        };
+        frame.text.push(Text {
+            group: 0,
+            content: diagram.name.clone(),
+            x: grid_left + grid_width / 2.0 - diagram.name_width * body / 2.0,
+            baseline: top + 0.75 * c.diagram_name_row * body,
+            size: c.diagram_name_size * body,
+            weight: 600,
+            face: Face::Monospace,
+            ink: Ink::Strong,
+        });
+        let marks = top + c.diagram_name_row * body;
+        let mark_half = mark_width * body / 2.0;
+        for (i, &fret) in shape.frets.iter().enumerate() {
+            let mark = match fret {
+                f if f < 0 => "x",
+                0 => "o",
+                _ => continue,
+            };
+            frame.text.push(small(
+                mark.into(),
+                string_x(i) - mark_half,
+                marks + 0.34 * body,
+            ));
+        }
+        let grid_top = marks + c.diagram_mark_row * body;
+        let fret_gap = c.diagram_fret_gap * body;
+        let grid_height = c.diagram_frets * fret_gap;
+        let stroke = c.diagram_line * body;
+        for i in 0..strings {
+            frame.shapes.push(line(
+                string_x(i) - stroke / 2.0,
+                grid_top,
+                stroke,
+                grid_height,
+                0.0,
+            ));
+        }
+        for row in 0..=c.diagram_frets as usize {
+            let y = grid_top + row as f32 * fret_gap;
+            frame
+                .shapes
+                .push(line(grid_left, y - stroke / 2.0, grid_width, stroke, 0.0));
+        }
+        if shape.base_fret <= 1 {
+            let nut = c.diagram_nut * body;
+            frame
+                .shapes
+                .push(line(grid_left, grid_top - nut / 2.0, grid_width, nut, 0.0));
+        }
+        let dot = c.diagram_dot * body;
+        let row_centre = |fret: i8| grid_top + (fret as f32 - 0.5) * fret_gap;
+        for &barre in &shape.barres {
+            let held: Vec<usize> = (0..strings)
+                .filter(|&i| shape.frets[i] == barre as i8)
+                .collect();
+            if let (Some(&first), Some(&last)) = (held.first(), held.last())
+                && last > first
+            {
+                let y = row_centre(barre as i8);
+                frame.shapes.push(line(
+                    string_x(first) - dot,
+                    y - dot,
+                    string_x(last) - string_x(first) + 2.0 * dot,
+                    2.0 * dot,
+                    dot,
+                ));
+            }
+        }
+        for (i, &fret) in shape.frets.iter().enumerate() {
+            if fret > 0 && fret as f32 <= c.diagram_frets {
+                let y = row_centre(fret);
+                frame
+                    .shapes
+                    .push(line(string_x(i) - dot, y - dot, 2.0 * dot, 2.0 * dot, dot));
+            }
+        }
+        if let Some((label, _)) = &diagram.fret_label {
+            frame.text.push(small(
+                label.clone(),
+                grid_left + grid_width + 0.15 * body,
+                grid_top + fret_gap * 0.65,
+            ));
+        }
+        let fingers = grid_top + grid_height + 0.45 * body;
+        for (i, &finger) in shape.fingers.iter().enumerate().take(strings) {
+            if finger > 0 {
+                frame
+                    .text
+                    .push(small(finger.to_string(), string_x(i) - mark_half, fingers));
+            }
+        }
+    }
+
     /// Places a solved candidate in points. Draws no lyric unless it fits.
     fn compose(
         &self,
@@ -900,6 +1090,16 @@ impl App {
                 face: Face::System,
                 ink: Ink::Strong,
             });
+        }
+        for (diagram, &(x, top)) in header.diagrams.iter().zip(&solution.header.diagrams) {
+            self.compose_diagram(
+                &mut frame,
+                &m,
+                diagram,
+                (c.margin_x + x * body, c.margin_top + top * body),
+                body,
+                header.mark_width,
+            );
         }
         let y = c.margin_top + solution.header.height * body;
         let content_end = height - c.margin_bottom - c.status_height * body;
@@ -1081,11 +1281,13 @@ mod tests {
             .unwrap_or_else(|| panic!("no height at width {width} needs step {step}"))
     }
 
+    /// The first drawn item with this text, preferring the song body: a
+    /// chord also names a diagram in the header (group 0).
     fn find<'a>(frame: &'a Frame, content: &str) -> &'a Text {
-        frame
-            .text
-            .iter()
-            .find(|item| item.content == content)
+        let matching = || frame.text.iter().filter(|item| item.content == content);
+        matching()
+            .find(|item| item.group != 0)
+            .or_else(|| matching().next())
             .unwrap_or_else(|| panic!("{content:?} not drawn"))
     }
 
@@ -1588,6 +1790,34 @@ mod tests {
         }
         let (end, _) = wide_title.frame_scrolled(220.0, 300.0, max_offset);
         assert_eq!(count(&end, "Line 29"), 1, "the whole song is reachable");
+    }
+
+    #[test]
+    fn a_roomy_page_draws_a_diagram_per_chord_using_the_songs_defines() {
+        let app = app(
+            "{title: T}\n{define: Am base-fret 5 frets x 0 2 2 1 0}\n{sov: A}\n[Am]One [C]two\n{eov}",
+        );
+        let frame = app.frame(900.0, 700.0);
+        assert!(frame.fits);
+        assert_eq!(frame.ladder_step, 0);
+        let names: Vec<&str> = frame
+            .text
+            .iter()
+            .filter(|t| t.group == 0 && (t.content == "Am" || t.content == "C"))
+            .map(|t| t.content.as_str())
+            .collect();
+        assert_eq!(names, ["Am", "C"], "diagram names in first-use order");
+        assert_eq!(count(&frame, "5fr"), 1, "the define's base fret is noted");
+        assert!(
+            frame
+                .shapes
+                .iter()
+                .any(|s| s.group == 0 && s.stroke.is_none())
+        );
+        // The tallest window that needs step 4 has no diagram shapes.
+        let without = at_step(&app, 900.0, 4);
+        assert_eq!(count(&without, "5fr"), 0);
+        assert!(without.shapes.is_empty());
     }
 
     #[test]

@@ -110,6 +110,7 @@ presented.
 
 **Shapes.** The compositor draws a frame's shapes before its text: each
 pixel's coverage comes from its signed distance to the rounded box (one
-device pixel of antialiasing, the rule abner's shader uses), and an outline
-is never thinner than one device pixel. Shapes go through the same slab
+device pixel of antialiasing, the rule abner's shader uses). An outline is
+never thinner than one device pixel, and a filled shape thinner than one
+widens to one about its centre, so a diagram's grid lines hold at 1x. Shapes go through the same slab
 offset as text, so a slab of a page draws the same pixels as the whole page.

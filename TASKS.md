@@ -94,12 +94,14 @@ automated checks. When every task in an epic is checked, the epic moves to
 
 ## P2 — complete the proposed viewer
 
-- [ ] Finish the missing reduction steps for chord diagrams and metadata pills.
-  **Pills done:** key, capo, tempo and time draw as outlined capsules,
-  right-aligned beside the title block when there is room (the mock) or in
-  wrapping rows under the byline, and ladder step 6 drops them. Frames carry
-  rounded-rectangle shapes the compositor draws with SDF coverage, which the
-  diagrams will use. **Still to do:** chord diagrams in the header and step 4.
+- [x] Finish the missing reduction steps for chord diagrams and metadata pills.
+  Key, capo, tempo and time draw as header pills (beside the title when
+  there is room, else in rows under the byline) and step 6 drops them; every
+  chord the song uses draws as a fingering diagram in rows under the header,
+  from the song's `{define}` or a built-in table ported from chordpro-tui,
+  and step 4 drops them. A scroll page keeps its header under half the
+  viewport by dropping diagrams, then pills, then the title. Captured in
+  light and dark 2x windows and checked at 1x through `cpl render`.
 - [ ] Reintroduce tablature only after a compact, readable layout is designed
   and tested with long real tabs. Its visibility should be a deliberate viewer
   choice; parser retention stays independent of that choice.

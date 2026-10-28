@@ -20,8 +20,9 @@ which also holds the `Setlist`: several songs or a folder open as an ordered
 setlist, the next song's page is composed while the worker is idle, and a
 song change shows the old page until the new one is complete. The viewer
 currently hides tablature blocks while preserving them in the parsed song.
+The header carries metadata pills and a chord diagram for every chord used.
 An overflowing song scrolls or, with `v`, turns pages.
-Chord diagrams and ladder step 4, library, search,
+Library, search,
 sidecar metadata, full ChordPro 6 conformance, text atlas, and iOS host are
 still planned. Do not describe these as implemented.
 
@@ -113,10 +114,10 @@ the commit message.
   directives are accepted and ignored by design; everything else must be
   honoured. Generate the conformance note's status table; never hand-edit it.
 - **The page is always readable.** Body text never drops below the
-  readability floor. After steps 1–3, 5, and 7–9 fail, the window scrolls
+  readability floor. After ladder steps 1–9 fail, the window scrolls
   the full song at that size. Lines too wide for the window wrap at word
   boundaries; only an unbreakable run reaches the width-needed state.
-  Step 6 drops the metadata pills; the chord-diagram step 4 is not built yet.
+  Step 4 drops the chord diagrams and step 6 the metadata pills.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. Page measurement and CoreText
   rasterisation run on a worker, which preloads the next song while idle;

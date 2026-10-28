@@ -81,9 +81,21 @@ fn draw_shape(
     scale: f32,
     ink: u8,
 ) {
-    let x0 = shape.x * scale;
-    let y0 = shape.y * scale - top as f32;
-    let (w, h) = (shape.width * scale, shape.height * scale);
+    let mut x0 = shape.x * scale;
+    let mut y0 = shape.y * scale - top as f32;
+    let (mut w, mut h) = (shape.width * scale, shape.height * scale);
+    // A filled line thinner than a device pixel (a diagram's string at 1x)
+    // widens to one about its centre, so it stays a line, not a smudge.
+    if shape.stroke.is_none() {
+        if w < 1.0 {
+            x0 -= (1.0 - w) / 2.0;
+            w = 1.0;
+        }
+        if h < 1.0 {
+            y0 -= (1.0 - h) / 2.0;
+            h = 1.0;
+        }
+    }
     let radius = (shape.radius * scale).min(w.min(h) / 2.0).max(0.0);
     let stroke = shape.stroke.map(|s| (s * scale).max(1.0));
     let (cx, cy) = (x0 + w / 2.0, y0 + h / 2.0);

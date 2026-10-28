@@ -37,12 +37,41 @@ pub struct PageMetrics {
     pub pill_gap: f32,
     pub pill_kv_gap: f32,
     pub meta_size: f32,
+    /// Chord diagrams (chordpro-tui/internal/pdf/layout.go's dStrGap,
+    /// dFretGap, dFretRows, dNameLH, dMarkLH, dFingerLH, dCellGap, dRowGap,
+    /// dTopGap): string and fret spacing, fret rows shown, the rows for the
+    /// name, the o/x marks and the finger numbers, and the gaps between
+    /// diagrams, between their rows, and above them.
+    pub diagram_string_gap: f32,
+    pub diagram_fret_gap: f32,
+    pub diagram_frets: f32,
+    pub diagram_name_row: f32,
+    pub diagram_mark_row: f32,
+    pub diagram_finger_row: f32,
+    pub diagram_cell_gap: f32,
+    pub diagram_row_gap: f32,
+    pub diagram_top_gap: f32,
 }
 
 impl PageMetrics {
     /// A pill's outer width in em.
     pub fn pill_width(&self, pill: &crate::MeasuredPill) -> f32 {
         2.0 * self.pill_pad + pill.label_width + self.pill_kv_gap + pill.value_width
+    }
+
+    /// A diagram cell's width: the grid or the name, whichever is wider,
+    /// plus the starting-fret note beside a shape above the nut.
+    pub fn diagram_width(&self, diagram: &crate::MeasuredDiagram) -> f32 {
+        let grid = (diagram.shape.frets.len() - 1) as f32 * self.diagram_string_gap;
+        grid.max(diagram.name_width) + diagram.fret_label.as_ref().map_or(0.0, |(_, w)| w + 0.15)
+    }
+
+    /// A diagram cell's height: name, marks, frets, finger numbers.
+    pub fn diagram_height(&self) -> f32 {
+        self.diagram_name_row
+            + self.diagram_mark_row
+            + self.diagram_frets * self.diagram_fret_gap
+            + self.diagram_finger_row
     }
 }
 
@@ -59,6 +88,8 @@ pub struct Options {
     pub tight_sections: bool,
     pub side_labels: bool,
     pub one_line_header: bool,
+    /// Ladder step 4: the chord diagrams leave the header.
+    pub hide_diagrams: bool,
     pub fold_tabs: bool,
     pub hide_title: bool,
     /// Ladder step 6: the metadata pills drop.
@@ -80,6 +111,9 @@ pub struct HeaderLayout {
     /// Each shown pill's left edge and vertical centre, index-aligned with
     /// `Header::pills`; empty when the pills are hidden.
     pub pills: Vec<(f32, f32)>,
+    /// Each shown diagram cell's left edge and top, index-aligned with
+    /// `Header::diagrams`; empty when they are hidden.
+    pub diagrams: Vec<(f32, f32)>,
     pub artist: Option<(f32, f32)>,
     /// Where the first section starts.
     pub height: f32,
@@ -263,11 +297,31 @@ impl Options {
                 y = top + m.meta_row * (row + 1) as f32;
             }
         }
+        let mut diagrams = Vec::new();
+        if !self.hide_diagrams && !header.diagrams.is_empty() {
+            let top = if y > 0.0 { y + m.diagram_top_gap } else { y };
+            let (mut x, mut row) = (0.0_f32, 0usize);
+            for diagram in &header.diagrams {
+                let cell = m.diagram_width(diagram);
+                if x > 0.0 && x + cell > max_width + 1e-4 {
+                    x = 0.0;
+                    row += 1;
+                }
+                diagrams.push((
+                    x,
+                    top + row as f32 * (m.diagram_height() + m.diagram_row_gap),
+                ));
+                x += cell + m.diagram_cell_gap;
+                width = width.max(x - m.diagram_cell_gap);
+            }
+            y = top + (row + 1) as f32 * m.diagram_height() + row as f32 * m.diagram_row_gap;
+        }
         HeaderLayout {
             title_baseline,
             title_rows,
             width,
             pills,
+            diagrams,
             artist,
             height: y + m.header_gap,
         }
@@ -304,9 +358,8 @@ pub struct Step {
     pub apply: fn(&mut Options),
 }
 
-/// Least destructive first. Step 4 (chord diagrams) has nothing to remove
-/// yet; step 10 is the caller scrolling or paging.
-pub const LADDER: [Step; 8] = [
+/// Least destructive first; step 10 is the caller scrolling or paging.
+pub const LADDER: [Step; 9] = [
     Step {
         number: 1,
         applies: |song, _, _| song.sections.len() > 1,
@@ -321,6 +374,11 @@ pub const LADDER: [Step; 8] = [
         number: 3,
         applies: header_fits_one_line,
         apply: |o| o.one_line_header = true,
+    },
+    Step {
+        number: 4,
+        applies: |song, _, _| !song.header.diagrams.is_empty(),
+        apply: |o| o.hide_diagrams = true,
     },
     Step {
         number: 5,
@@ -514,6 +572,15 @@ mod tests {
         pill_gap: 0.55,
         pill_kv_gap: 0.3,
         meta_size: 0.7,
+        diagram_string_gap: 0.54,
+        diagram_fret_gap: 0.6,
+        diagram_frets: 4.0,
+        diagram_name_row: 1.1,
+        diagram_mark_row: 0.48,
+        diagram_finger_row: 0.65,
+        diagram_cell_gap: 1.1,
+        diagram_row_gap: 0.55,
+        diagram_top_gap: 0.65,
     };
 
     fn song(source: &str) -> MeasuredSong {
@@ -527,6 +594,8 @@ mod tests {
             inline_chord_size: 0.6,
             inline_chord_gap: 0.2,
             meta_size: 0.7,
+            diagram_name_size: 0.78,
+            diagram_mark_size: 0.42,
         };
         measure_song(&cpl_song::parse(source).song, &metrics, &Fixed)
     }
@@ -673,7 +742,7 @@ mod tests {
     #[test]
     fn a_wide_title_wraps_and_drops_only_for_height() {
         // Fixed: "A title wider than the page" is 27 em at title size 2.
-        let song = song("{title: A title wider than the page}\n[C]Hi");
+        let song = song("{title: A title wider than the page}\nHi");
         let roomy = Viewport {
             width: 7.0,
             height: 30.0,
@@ -796,6 +865,67 @@ mod tests {
         let chosen = found.expect("a height that needs the pills gone");
         assert!(chosen.options.hide_pills && !chosen.options.hide_title);
         assert!(chosen.header.pills.is_empty());
+    }
+
+    #[test]
+    fn diagrams_flow_in_rows_and_drop_at_step_four() {
+        let measured = song("{title: Hi}\n{sov: A}\n[C]One [G]two [Am]three [F]four\n{eov}");
+        assert_eq!(
+            measured
+                .header
+                .diagrams
+                .iter()
+                .map(|d| d.name.as_str())
+                .collect::<Vec<_>>(),
+            ["C", "G", "Am", "F"]
+        );
+        let wide = Options::default().header(&measured.header, &PAGE, 40.0);
+        let narrow = Options::default().header(&measured.header, &PAGE, 6.0);
+        assert_eq!(wide.diagrams.len(), 4);
+        assert!(
+            wide.diagrams
+                .iter()
+                .all(|&(_, top)| top == wide.diagrams[0].1),
+            "one row"
+        );
+        assert!(
+            narrow
+                .diagrams
+                .iter()
+                .any(|&(_, top)| top > narrow.diagrams[0].1),
+            "wraps"
+        );
+        assert!(narrow.height > wide.height);
+        let hidden = Options {
+            hide_diagrams: true,
+            ..Options::default()
+        }
+        .header(&measured.header, &PAGE, 40.0);
+        assert!(hidden.diagrams.is_empty() && hidden.height < wide.height);
+        let view = Viewport {
+            width: 30.0,
+            height: 9.0,
+        };
+        let order: Vec<u8> = LADDER
+            .iter()
+            .filter(|s| (s.applies)(&measured, &PAGE, view))
+            .map(|s| s.number)
+            .collect();
+        let four = order.iter().position(|&n| n == 4).expect("step 4 applies");
+        assert!(order[..four].iter().all(|&n| n < 4) && order[four + 1..].iter().all(|&n| n > 4));
+        let found = (5..40).find_map(|h| {
+            let s = solve(
+                &measured,
+                &PAGE,
+                Viewport {
+                    width: 30.0,
+                    height: h as f32,
+                },
+            );
+            (s.fits && s.step == 4).then_some(s)
+        });
+        let chosen = found.expect("a height that needs the diagrams gone");
+        assert!(chosen.options.hide_diagrams && chosen.header.diagrams.is_empty());
     }
 
     #[test]

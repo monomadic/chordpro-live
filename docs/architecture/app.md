@@ -85,3 +85,12 @@ filled or outlined, with a group and an ink like text. Pills are a faint
 capsule outline with the label in soft ink and the value in strong ink, the
 baseline 0.35 of the pill text size below the capsule's centre. A scroll
 page's group bounds include its shapes, so a pill shows only with its header.
+
+A diagram is composed by `App::compose_diagram`, after chordpro-pdf's
+`drawDiagram`: the name centred over the grid, o and x over open and muted
+strings, grid lines as thin filled shapes, a heavy nut (or the `Nfr` note
+for a shape above it), a dot per fretted string, a capsule for each barre,
+and finger numbers under the strings. Name, grid and dots are strong ink;
+the marks are soft. The scroll page keeps its header under half the
+viewport by dropping diagrams, then pills, then the title, the ladder's own
+order.

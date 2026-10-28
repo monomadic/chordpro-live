@@ -6,6 +6,25 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **Chord diagrams and ladder step 4.** Every chord a song uses (outside
+  tablature) gets a fingering diagram under the header, in first-use order,
+  wrapping in rows at the content width: name, o/x marks, a grid with a
+  heavy nut or an `Nfr` starting-fret note, dots, barres as capsules (as in
+  the Figma mock) and finger numbers, drawn from shapes and text with
+  chordpro-pdf's geometry (`chordpro-tui/internal/pdf/layout.go` and
+  `pdf.go`) as config keys. Shapes come from the song's `{define}` — now
+  parsed, fingers included — or a built-in table: 828 guitar chords from
+  tombatossals/chords-db (MIT), converted once from chordpro-tui's
+  `internal/chords/guitar.json` into `crates/cpl-song/data/guitar.tsv` by
+  `scripts/chords-from-json.py` rather than adding a JSON dependency, with
+  `Lookup` and its tests ported from `internal/chords/db.go`. Step 4 drops
+  the diagrams; a scroll page whose header would pass half the viewport
+  drops diagrams, then pills, then the title. Filled shapes thinner than a
+  device pixel widen to one, so grid lines hold at 1x. New tests cover the
+  table, `{define}`, diagram flow and step order, and an app page with a
+  define; four goldens gained diagrams and were re-blessed after
+  inspection; the sample page was captured in a real 2x window. This closes
+  the P2 task for diagram and pill reductions.
 - **Metadata pills and ladder step 6.** The header shows the song's key,
   capo, tempo and time as outlined capsules (key in soft ink, value in
   strong ink, faint outline), with chordpro-pdf's pill geometry from

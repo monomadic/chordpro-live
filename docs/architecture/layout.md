@@ -35,7 +35,7 @@ tried, and never leaves a failing option on for the steps after it:
 byline share one line; 5. tablature folds to its label; 7. the title drops;
 8. a repeated chorus keeps only its first line; 9. chords go inline.
 
-Step 6 drops the metadata pills. Step 4 (diagrams) has nothing to remove yet. A side
+Step 4 drops the chord diagrams and step 6 the metadata pills. A side
 label beside a section with every line hidden keeps one row. A song with no
 sections fits. The app selects the ladder step at the floor, then checks
 larger premeasured sizes in descending order and draws the largest that fits.
@@ -85,3 +85,11 @@ leaves room for the whole row; otherwise they flow in rows of `meta_row`
 height under the byline, wrapping at the content width. Ladder step 6 sets
 `hide_pills`. The geometry (`pill_height`, `pill_pad`, `pill_gap`,
 `pill_kv_gap`, `meta_row`) comes from chordpro-pdf's layout table.
+
+**Chord diagrams.** `measure_song` measures a diagram for each chord the
+song uses that has a shape (`Header::diagrams`: name, shape, and an `Nfr`
+note for a shape above the nut), plus one mark width (the mark face is
+monospaced). `Options::header` lays the cells out in rows under the pills,
+`diagram_top_gap` below the header's last line, each cell
+`PageMetrics::diagram_width` wide and `diagram_height` tall, wrapping at the
+content width. Step 4 sets `hide_diagrams`. The geometry is chordpro-pdf's.
