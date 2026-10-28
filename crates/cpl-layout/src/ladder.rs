@@ -27,6 +27,23 @@ pub struct PageMetrics {
     pub wrap_indent: f32,
     /// Baseline advance between rows of a wrapped title, in title sizes.
     pub title_leading: f32,
+    /// Metadata pills: a row's height, a pill's height, its inner padding,
+    /// the gap between pills and between a pill's label and value
+    /// (chordpro-tui/internal/pdf/layout.go's metaLH, pillH, pillPadX,
+    /// pillGap, kvGap), and the pill text size for vertical centring.
+    pub meta_row: f32,
+    pub pill_height: f32,
+    pub pill_pad: f32,
+    pub pill_gap: f32,
+    pub pill_kv_gap: f32,
+    pub meta_size: f32,
+}
+
+impl PageMetrics {
+    /// A pill's outer width in em.
+    pub fn pill_width(&self, pill: &crate::MeasuredPill) -> f32 {
+        2.0 * self.pill_pad + pill.label_width + self.pill_kv_gap + pill.value_width
+    }
 }
 
 /// The content box between the margins and above the status strip, in em.
@@ -44,6 +61,8 @@ pub struct Options {
     pub one_line_header: bool,
     pub fold_tabs: bool,
     pub hide_title: bool,
+    /// Ladder step 6: the metadata pills drop.
+    pub hide_pills: bool,
     pub collapse_repeats: bool,
     pub inline_chords: bool,
 }
@@ -58,6 +77,9 @@ pub struct HeaderLayout {
     pub title_rows: Vec<(String, f32)>,
     /// The widest header row, in em.
     pub width: f32,
+    /// Each shown pill's left edge and vertical centre, index-aligned with
+    /// `Header::pills`; empty when the pills are hidden.
+    pub pills: Vec<(f32, f32)>,
     pub artist: Option<(f32, f32)>,
     /// Where the first section starts.
     pub height: f32,
@@ -201,10 +223,51 @@ impl Options {
                 width = width.max(header.artist_width);
             }
         }
+        let mut pills = Vec::new();
+        if !self.hide_pills && !header.pills.is_empty() {
+            let widths: Vec<f32> = header.pills.iter().map(|p| m.pill_width(p)).collect();
+            let total = widths.iter().sum::<f32>() + m.pill_gap * (widths.len() - 1) as f32;
+            // Beside the title block, right-aligned on its last line, when the
+            // block leaves room (the mock's placement); otherwise in rows of
+            // their own below it.
+            let has_block = y > 0.0;
+            let last_size = if header.artist.is_some() {
+                m.subtitle_size
+            } else {
+                m.title_size
+            };
+            if has_block && width + 2.0 * m.pill_gap + total <= max_width {
+                let mut x = if max_width.is_finite() {
+                    max_width - total
+                } else {
+                    width + 2.0 * m.pill_gap
+                };
+                let centre = y - last_size * 0.35;
+                for pill_width in &widths {
+                    pills.push((x, centre));
+                    x += pill_width + m.pill_gap;
+                }
+                width = width.max(x - m.pill_gap);
+            } else {
+                let top = if has_block { y + 0.35 } else { y };
+                let (mut x, mut row) = (0.0_f32, 0usize);
+                for pill_width in &widths {
+                    if x > 0.0 && x + pill_width > max_width + 1e-4 {
+                        x = 0.0;
+                        row += 1;
+                    }
+                    pills.push((x, top + m.meta_row * (row as f32 + 0.5)));
+                    x += pill_width + m.pill_gap;
+                    width = width.max(x - m.pill_gap);
+                }
+                y = top + m.meta_row * (row + 1) as f32;
+            }
+        }
         HeaderLayout {
             title_baseline,
             title_rows,
             width,
+            pills,
             artist,
             height: y + m.header_gap,
         }
@@ -241,9 +304,9 @@ pub struct Step {
     pub apply: fn(&mut Options),
 }
 
-/// Least destructive first. Steps 4 and 6 (diagrams, metadata pills) have
-/// nothing to remove yet; step 10 is the caller scrolling or paging.
-pub const LADDER: [Step; 7] = [
+/// Least destructive first. Step 4 (chord diagrams) has nothing to remove
+/// yet; step 10 is the caller scrolling or paging.
+pub const LADDER: [Step; 8] = [
     Step {
         number: 1,
         applies: |song, _, _| song.sections.len() > 1,
@@ -263,6 +326,11 @@ pub const LADDER: [Step; 7] = [
         number: 5,
         applies: |song, _, _| song.sections.iter().any(|s| s.kind == SectionKind::Tab),
         apply: |o| o.fold_tabs = true,
+    },
+    Step {
+        number: 6,
+        applies: |song, _, _| !song.header.pills.is_empty(),
+        apply: |o| o.hide_pills = true,
     },
     Step {
         number: 7,
@@ -440,6 +508,12 @@ mod tests {
         max_columns: 4,
         wrap_indent: 1.0,
         title_leading: 1.15,
+        meta_row: 1.9,
+        pill_height: 1.25,
+        pill_pad: 0.42,
+        pill_gap: 0.55,
+        pill_kv_gap: 0.3,
+        meta_size: 0.7,
     };
 
     fn song(source: &str) -> MeasuredSong {
@@ -452,6 +526,7 @@ mod tests {
             chord_gap: 0.4,
             inline_chord_size: 0.6,
             inline_chord_gap: 0.2,
+            meta_size: 0.7,
         };
         measure_song(&cpl_song::parse(source).song, &metrics, &Fixed)
     }
@@ -644,6 +719,83 @@ mod tests {
             ..PAGE
         };
         assert!(!layout(&song, &cramped, view, side, 2).fits);
+    }
+
+    #[test]
+    fn pills_sit_beside_the_title_when_there_is_room_and_wrap_below_otherwise() {
+        let song = song("{title: Hi}\n{artist: Ada}\n{key: Am}\n{capo: 2}\n{tempo: 96}\n[C]Alpha");
+        assert_eq!(song.header.pills.len(), 3);
+        let wide = Options::default().header(&song.header, &PAGE, 40.0);
+        let narrow = Options::default().header(&song.header, &PAGE, 6.0);
+        assert_eq!(wide.pills.len(), 3);
+        // Beside: one row, right-aligned, no extra height.
+        assert!(wide.pills.iter().all(|&(_, c)| c == wide.pills[0].1));
+        let last = song.header.pills.last().unwrap();
+        let right = wide.pills.last().unwrap().0 + PAGE.pill_width(last);
+        assert!(
+            (right - 40.0).abs() < 1e-4,
+            "right-aligned to the content edge"
+        );
+        // Below: under the byline, wrapping, and the header grows.
+        assert!(narrow.pills[0].1 > narrow.artist.unwrap().1);
+        assert!(narrow.height > wide.height);
+        assert!(narrow.width <= 6.0 + 1e-4);
+        let hidden = Options {
+            hide_pills: true,
+            ..Options::default()
+        }
+        .header(&song.header, &PAGE, 6.0);
+        assert!(hidden.pills.is_empty());
+        assert!(hidden.height < narrow.height);
+    }
+
+    #[test]
+    fn pills_drop_at_step_six_after_tabs_fold_and_before_the_title() {
+        let measured = song(
+            "{title: Hi}\n{key: Am}\n{capo: 2}\n{tempo: 96}\n{time: 3/4}\n{sov: A}\n[C]Alpha\n[G]Beta\n{eov}",
+        );
+        let tried: Vec<u8> = LADDER
+            .iter()
+            .filter(|s| {
+                (s.applies)(
+                    &measured,
+                    &PAGE,
+                    Viewport {
+                        width: 8.0,
+                        height: 9.0,
+                    },
+                )
+            })
+            .map(|s| s.number)
+            .collect();
+        let six = tried.iter().position(|&n| n == 6).expect("step 6 applies");
+        let seven = tried.iter().position(|&n| n == 7).unwrap();
+        assert!(six < seven);
+        let without = song("{title: Hi}\n[C]Alpha");
+        assert!(!LADDER.iter().any(|s| s.number == 6
+            && (s.applies)(
+                &without,
+                &PAGE,
+                Viewport {
+                    width: 8.0,
+                    height: 9.0
+                }
+            )));
+        // Some viewport needs exactly step 6 to fit.
+        let found = (8..40).find_map(|h| {
+            let s = solve(
+                &measured,
+                &PAGE,
+                Viewport {
+                    width: 8.0,
+                    height: h as f32,
+                },
+            );
+            (s.fits && s.step == 6).then_some(s)
+        });
+        let chosen = found.expect("a height that needs the pills gone");
+        assert!(chosen.options.hide_pills && !chosen.options.hide_title);
+        assert!(chosen.header.pills.is_empty());
     }
 
     #[test]

@@ -21,7 +21,7 @@ setlist, the next song's page is composed while the worker is idle, and a
 song change shows the old page until the new one is complete. The viewer
 currently hides tablature blocks while preserving them in the parsed song.
 An overflowing song scrolls or, with `v`, turns pages.
-The diagram and metadata-pill reduction steps, library, search,
+Chord diagrams and ladder step 4, library, search,
 sidecar metadata, full ChordPro 6 conformance, text atlas, and iOS host are
 still planned. Do not describe these as implemented.
 
@@ -116,7 +116,7 @@ the commit message.
   readability floor. After steps 1–3, 5, and 7–9 fail, the window scrolls
   the full song at that size. Lines too wide for the window wrap at word
   boundaries; only an unbreakable run reaches the width-needed state.
-  Diagram and pill steps 4 and 6 are not built yet.
+  Step 6 drops the metadata pills; the chord-diagram step 4 is not built yet.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. Page measurement and CoreText
   rasterisation run on a worker, which preloads the next song while idle;

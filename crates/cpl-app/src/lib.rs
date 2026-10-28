@@ -34,12 +34,31 @@ pub struct Text {
     pub ink: Ink,
 }
 
+/// A rounded rectangle in page points, filled or outlined: pill outlines,
+/// chord-diagram grid lines and finger dots. Drawn beneath the text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shape {
+    /// Scroll group, as for `Text`: a shape shows only with its whole group.
+    pub group: usize,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    /// Corner radius; half the shorter side makes a capsule or a circle.
+    pub radius: f32,
+    /// `None` fills the shape; `Some(w)` draws an outline `w` points wide,
+    /// inside the edge.
+    pub stroke: Option<f32>,
+    pub ink: Ink,
+}
+
 #[derive(Debug, Clone)]
 pub struct Frame {
     pub width: f32,
     pub height: f32,
     pub polarity: Polarity,
     pub text: Vec<Text>,
+    pub shapes: Vec<Shape>,
     pub fits: bool,
     pub columns: usize,
     pub ladder_step: u8,
@@ -91,6 +110,15 @@ pub struct Config {
     pub wrap_indent: f32,
     /// Baseline advance between rows of a wrapped title, in title sizes.
     pub title_leading: f32,
+    /// Metadata pills, in body sizes: text size, row and pill heights, inner
+    /// padding, gaps between pills and between label and value, outline.
+    pub meta_size: f32,
+    pub meta_row: f32,
+    pub pill_height: f32,
+    pub pill_pad: f32,
+    pub pill_gap: f32,
+    pub pill_kv_gap: f32,
+    pub pill_stroke: f32,
     pub status_height: f32,
     pub max_columns: f32,
 }
@@ -171,6 +199,13 @@ impl Config {
             side_label_inset: take!("side_label_inset"),
             wrap_indent: take!("wrap_indent"),
             title_leading: take!("title_leading"),
+            meta_size: take!("meta_size"),
+            meta_row: take!("meta_row"),
+            pill_height: take!("pill_height"),
+            pill_pad: take!("pill_pad"),
+            pill_gap: take!("pill_gap"),
+            pill_kv_gap: take!("pill_kv_gap"),
+            pill_stroke: take!("pill_stroke"),
             status_height: take!("status_height"),
             max_columns: take!("max_columns"),
         };
@@ -210,6 +245,7 @@ impl Config {
             chord_gap: self.chord_gap,
             inline_chord_size: self.inline_chord_size,
             inline_chord_gap: self.inline_chord_gap,
+            meta_size: self.meta_size,
         }
     }
 }
@@ -228,6 +264,7 @@ enum PreparedPage {
     NeedsWidth(Frame),
     Scroll {
         content: Vec<Text>,
+        shapes: Vec<Shape>,
         bounds: BTreeMap<usize, (f32, f32)>,
         sections: Vec<ScrollSection>,
         max_offset: f32,
@@ -349,6 +386,12 @@ impl App {
             max_columns: c.max_columns as usize,
             wrap_indent: c.wrap_indent,
             title_leading: c.title_leading,
+            meta_row: c.meta_row,
+            pill_height: c.pill_height,
+            pill_pad: c.pill_pad,
+            pill_gap: c.pill_gap,
+            pill_kv_gap: c.pill_kv_gap,
+            meta_size: c.meta_size,
         }
     }
 
@@ -382,6 +425,7 @@ impl App {
             }
             PreparedPage::Scroll {
                 content,
+                shapes,
                 max_offset,
                 ..
             } => Frame {
@@ -389,6 +433,7 @@ impl App {
                 height: height + max_offset,
                 polarity: self.polarity,
                 text: content.clone(),
+                shapes: shapes.clone(),
                 fits: false,
                 columns: 1,
                 ladder_step: 10,
@@ -564,6 +609,7 @@ impl App {
             }
             PreparedPage::Scroll {
                 content,
+                shapes,
                 bounds,
                 sections,
                 max_offset,
@@ -573,11 +619,23 @@ impl App {
                 let body = c.body_size;
                 let offset = offset.clamp(0.0, *max_offset);
                 let content_end = height - c.margin_bottom - c.status_height * body;
+                let visible = |group: usize| {
+                    let (top, bottom) = bounds[&group];
+                    top - offset >= c.margin_top && bottom - offset <= content_end
+                };
                 let mut frame = Frame {
                     width,
                     height,
                     polarity: self.polarity,
                     text: Vec::new(),
+                    shapes: shapes
+                        .iter()
+                        .filter(|shape| visible(shape.group))
+                        .map(|shape| Shape {
+                            y: shape.y - offset,
+                            ..shape.clone()
+                        })
+                        .collect(),
                     fits: false,
                     columns: 1,
                     ladder_step: 10,
@@ -683,6 +741,13 @@ impl App {
             bounds.0 = bounds.0.min(item.baseline - item.size);
             bounds.1 = bounds.1.max(item.baseline + item.size * 0.25);
         }
+        for shape in &long.shapes {
+            let bounds = group_bounds
+                .entry(shape.group)
+                .or_insert((f32::INFINITY, f32::NEG_INFINITY));
+            bounds.0 = bounds.0.min(shape.y);
+            bounds.1 = bounds.1.max(shape.y + shape.height);
+        }
         let mut first_group = 1;
         let sections = self
             .measured
@@ -713,6 +778,7 @@ impl App {
         let pages = page_starts(&group_bounds, c.margin_top, content_end);
         PreparedPage::Scroll {
             content: long.text,
+            shapes: long.shapes,
             bounds: group_bounds,
             sections,
             max_offset,
@@ -766,6 +832,7 @@ impl App {
             height,
             polarity: self.polarity,
             text: Vec::new(),
+            shapes: Vec::new(),
             fits: solution.fits,
             columns: if solution.fits {
                 solution.fit.columns.len()
@@ -796,6 +863,42 @@ impl App {
                 weight: 400,
                 face: Face::System,
                 ink: Ink::Soft,
+            });
+        }
+        for (pill, &(x, centre)) in header.pills.iter().zip(&solution.header.pills) {
+            let left = c.margin_x + x * body;
+            let centre = c.margin_top + centre * body;
+            frame.shapes.push(Shape {
+                group: 0,
+                x: left,
+                y: centre - c.pill_height * body / 2.0,
+                width: m.pill_width(pill) * body,
+                height: c.pill_height * body,
+                radius: c.pill_height * body / 2.0,
+                stroke: Some(c.pill_stroke * body),
+                ink: Ink::Faint,
+            });
+            // A centred cap height puts the baseline 0.35 em below the middle.
+            let baseline = centre + 0.35 * c.meta_size * body;
+            frame.text.push(Text {
+                group: 0,
+                content: pill.label.clone(),
+                x: left + c.pill_pad * body,
+                baseline,
+                size: c.meta_size * body,
+                weight: 600,
+                face: Face::System,
+                ink: Ink::Soft,
+            });
+            frame.text.push(Text {
+                group: 0,
+                content: pill.value.clone(),
+                x: left + (c.pill_pad + pill.label_width + c.pill_kv_gap) * body,
+                baseline,
+                size: c.meta_size * body,
+                weight: 600,
+                face: Face::System,
+                ink: Ink::Strong,
             });
         }
         let y = c.margin_top + solution.header.height * body;

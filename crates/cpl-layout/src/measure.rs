@@ -28,6 +28,9 @@ pub enum Role {
     Tab,
     /// A visible `{comment}` line: lyric-sized, in the soft ink.
     Comment,
+    /// A metadata pill's name (`KEY`) and value (`Am`).
+    PillLabel,
+    PillValue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -52,6 +55,8 @@ pub struct Metrics {
     pub chord_gap: f32,
     pub inline_chord_size: f32,
     pub inline_chord_gap: f32,
+    /// Metadata pill text, in body sizes.
+    pub meta_size: f32,
 }
 
 impl Metrics {
@@ -65,6 +70,7 @@ impl Metrics {
             Role::InlineChord => (self.inline_chord_size, 600, Face::Monospace),
             Role::Tab => (1.0, 400, Face::Monospace),
             Role::Comment => (1.0, 400, Face::System),
+            Role::PillLabel | Role::PillValue => (self.meta_size, 600, Face::System),
         };
         Style { size, weight, face }
     }
@@ -347,7 +353,26 @@ pub struct Header {
     pub title_tokens: Vec<Token>,
     pub artist: Option<String>,
     pub artist_width: f32,
+    /// Key, capo, tempo and time, in that order, as the song states them.
+    pub pills: Vec<MeasuredPill>,
 }
+
+/// One metadata pill, its two runs measured in body ems.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasuredPill {
+    pub label: String,
+    pub label_width: f32,
+    pub value: String,
+    pub value_width: f32,
+}
+
+/// The metadata the header shows as pills, with the label each wears.
+pub const PILLS: [(&str, &str); 4] = [
+    ("key", "KEY"),
+    ("capo", "CAPO"),
+    ("tempo", "TEMPO"),
+    ("time", "TIME"),
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeasuredSong {
@@ -368,6 +393,18 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
     let header = Header {
         title_width: m.em(&title, Role::Title),
         title_tokens: m.tokens(&title, Role::Title),
+        pills: PILLS
+            .iter()
+            .filter_map(|(name, label)| {
+                let value = song.first_meta(name)?.trim();
+                (!value.is_empty()).then(|| MeasuredPill {
+                    label: label.to_string(),
+                    label_width: m.em(label, Role::PillLabel),
+                    value: value.to_owned(),
+                    value_width: m.em(value, Role::PillValue),
+                })
+            })
+            .collect(),
         artist_width: artist.as_deref().map_or(0.0, |a| m.em(a, Role::Subtitle)),
         title,
         artist,
@@ -550,6 +587,7 @@ mod tests {
             chord_gap: 0.5,
             inline_chord_size: 0.5,
             inline_chord_gap: 0.25,
+            meta_size: 0.5,
         }
     }
 

@@ -95,6 +95,11 @@ automated checks. When every task in an epic is checked, the epic moves to
 ## P2 — complete the proposed viewer
 
 - [ ] Finish the missing reduction steps for chord diagrams and metadata pills.
+  **Pills done:** key, capo, tempo and time draw as outlined capsules,
+  right-aligned beside the title block when there is room (the mock) or in
+  wrapping rows under the byline, and ladder step 6 drops them. Frames carry
+  rounded-rectangle shapes the compositor draws with SDF coverage, which the
+  diagrams will use. **Still to do:** chord diagrams in the header and step 4.
 - [ ] Reintroduce tablature only after a compact, readable layout is designed
   and tested with long real tabs. Its visibility should be a deliberate viewer
   choice; parser retention stays independent of that choice.

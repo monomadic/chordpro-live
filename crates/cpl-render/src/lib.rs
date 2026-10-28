@@ -6,7 +6,7 @@ mod text;
 
 pub use text::CoreText;
 
-use cpl_app::{Face, Frame, Ink, Polarity};
+use cpl_app::{Face, Frame, Ink, Polarity, Shape};
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Hash, PartialEq, Eq)]
@@ -57,6 +57,65 @@ impl RasterCache {
     }
 }
 
+fn ink_level(polarity: Polarity, ink: Ink) -> u8 {
+    match (polarity, ink) {
+        (Polarity::Light, Ink::Strong) => 0,
+        (Polarity::Light, Ink::Soft) => 74,
+        (Polarity::Light, Ink::Faint) => 145,
+        (Polarity::Dark, Ink::Strong) => 255,
+        (Polarity::Dark, Ink::Soft) => 181,
+        (Polarity::Dark, Ink::Faint) => 110,
+    }
+}
+
+/// Draws a rounded rectangle into the slab whose first row is page row
+/// `top`, with coverage from its signed distance (one device pixel of
+/// antialiasing, the SDF rule abner's shader uses). An outline is never
+/// thinner than one device pixel, so a hairline stays a line.
+fn draw_shape(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    top: i32,
+    shape: &Shape,
+    scale: f32,
+    ink: u8,
+) {
+    let x0 = shape.x * scale;
+    let y0 = shape.y * scale - top as f32;
+    let (w, h) = (shape.width * scale, shape.height * scale);
+    let radius = (shape.radius * scale).min(w.min(h) / 2.0).max(0.0);
+    let stroke = shape.stroke.map(|s| (s * scale).max(1.0));
+    let (cx, cy) = (x0 + w / 2.0, y0 + h / 2.0);
+    let (hx, hy) = (w / 2.0 - radius, h / 2.0 - radius);
+    let rows = (y0.floor() as i32 - 1).max(0)..((y0 + h).ceil() as i32 + 1).min(height as i32);
+    let cols = (x0.floor() as i32 - 1).max(0)..((x0 + w).ceil() as i32 + 1).min(width as i32);
+    for py in rows {
+        for px in cols.clone() {
+            // Distance from the pixel centre to the rounded box's edge.
+            let dx = ((px as f32 + 0.5 - cx).abs() - hx).max(0.0);
+            let dy = ((py as f32 + 0.5 - cy).abs() - hy).max(0.0);
+            let inside = ((px as f32 + 0.5 - cx).abs() - hx)
+                .max((py as f32 + 0.5 - cy).abs() - hy)
+                .min(0.0);
+            let distance = (dx * dx + dy * dy).sqrt() + inside - radius;
+            let coverage = match stroke {
+                None => 0.5 - distance,
+                Some(stroke) => 0.5 - ((distance + stroke / 2.0).abs() - stroke / 2.0),
+            }
+            .clamp(0.0, 1.0);
+            if coverage <= 0.0 {
+                continue;
+            }
+            let alpha = (coverage * 255.0).round() as u16;
+            let at = (py as usize * width as usize + px as usize) * 4;
+            for channel in &mut pixels[at..at + 3] {
+                *channel = (((*channel as u16) * (255 - alpha) + ink as u16 * alpha) / 255) as u8;
+            }
+        }
+    }
+}
+
 pub struct PageImage {
     pub width: u32,
     pub height: u32,
@@ -94,18 +153,22 @@ impl PageCompositor {
         for pixel in pixels.chunks_exact_mut(4) {
             pixel[3] = 255;
         }
+        for shape in &frame.shapes {
+            draw_shape(
+                &mut pixels,
+                width,
+                height,
+                top,
+                shape,
+                scale,
+                ink_level(frame.polarity, shape.ink),
+            );
+        }
         for item in &frame.text {
             let Some(raster) = self.rasters.get(item, scale) else {
                 continue;
             };
-            let ink = match (frame.polarity, item.ink) {
-                (Polarity::Light, Ink::Strong) => 0,
-                (Polarity::Light, Ink::Soft) => 74,
-                (Polarity::Light, Ink::Faint) => 145,
-                (Polarity::Dark, Ink::Strong) => 255,
-                (Polarity::Dark, Ink::Soft) => 181,
-                (Polarity::Dark, Ink::Faint) => 110,
-            };
+            let ink = ink_level(frame.polarity, item.ink);
             let left = (item.x * scale).round() as i32 - text::RASTER_PAD;
             let item_top = (item.baseline * scale).round() as i32 - raster.baseline as i32 - top;
             if item_top >= height as i32 || item_top + (raster.height as i32) <= 0 {
@@ -543,6 +606,7 @@ mod cache_tests {
                     ink: Ink::Strong,
                 })
                 .collect(),
+            shapes: Vec::new(),
             fits: false,
             columns: 1,
             ladder_step: 10,
@@ -552,6 +616,56 @@ mod cache_tests {
         assert_eq!(slab.height, 70);
         assert_eq!(&slab.pixels[..], &whole.pixels[50 * 120 * 4..120 * 120 * 4]);
         assert!(slab.pixels.chunks_exact(4).any(|pixel| pixel[0] < 255));
+    }
+
+    #[test]
+    fn shapes_fill_and_outline_with_crisp_edges() {
+        let mut compositor = PageCompositor::default();
+        let frame = Frame {
+            width: 100.0,
+            height: 60.0,
+            polarity: Polarity::Light,
+            text: Vec::new(),
+            shapes: vec![
+                Shape {
+                    group: 0,
+                    x: 10.0,
+                    y: 10.0,
+                    width: 20.0,
+                    height: 20.0,
+                    radius: 10.0,
+                    stroke: None,
+                    ink: Ink::Strong,
+                },
+                Shape {
+                    group: 0,
+                    x: 50.0,
+                    y: 10.0,
+                    width: 40.0,
+                    height: 20.0,
+                    radius: 0.0,
+                    stroke: Some(1.0),
+                    ink: Ink::Strong,
+                },
+            ],
+            fits: true,
+            columns: 1,
+            ladder_step: 0,
+        };
+        let image = compositor.compose(&frame, 1.0, 100, 60);
+        let at = |x: usize, y: usize| image.pixels[(y * 100 + x) * 4];
+        assert_eq!(at(20, 20), 0, "the dot's centre is solid ink");
+        assert_eq!(
+            at(10, 10),
+            255,
+            "a circle leaves its bounding corner as paper"
+        );
+        assert_eq!(at(70, 10), 0, "the outline's top edge is a full pixel");
+        assert_eq!(at(70, 20), 255, "an outline is hollow");
+        assert_eq!(at(50, 20), 0, "and closed on its left");
+        // A slab of the same frame starting lower draws the same pixels.
+        let slab = compositor.compose_slab(&frame, 1.0, 100, 30, 10);
+        assert_eq!(&slab.pixels[..], &image.pixels[10 * 100 * 4..40 * 100 * 4]);
     }
 
     #[test]
@@ -586,6 +700,7 @@ mod cache_tests {
                 face: Face::System,
                 ink: Ink::Strong,
             }],
+            shapes: Vec::new(),
             fits: true,
             columns: 1,
             ladder_step: 0,

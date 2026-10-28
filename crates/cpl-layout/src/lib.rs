@@ -8,8 +8,8 @@ pub use ladder::{
 };
 
 pub use measure::{
-    Face, Header, Measure, MeasuredChord, MeasuredLine, MeasuredSection, MeasuredSegment,
-    MeasuredSong, Metrics, Role, Row, Run, Style, Token, measure_song,
+    Face, Header, Measure, MeasuredChord, MeasuredLine, MeasuredPill, MeasuredSection,
+    MeasuredSegment, MeasuredSong, Metrics, PILLS, Role, Row, Run, Style, Token, measure_song,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]

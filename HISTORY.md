@@ -6,6 +6,20 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-10-21
 
+- **Metadata pills and ladder step 6.** The header shows the song's key,
+  capo, tempo and time as outlined capsules (key in soft ink, value in
+  strong ink, faint outline), with chordpro-pdf's pill geometry from
+  `chordpro-tui/internal/pdf/layout.go` as config keys. They sit
+  right-aligned on the header's last line when the title block leaves room,
+  as in the Figma mock, and otherwise flow in rows under the byline. Step 6
+  drops them, after tabs fold and before the title goes. To draw them, frames
+  gained `Shape`s: rounded rectangles, filled or outlined, drawn beneath the
+  text by the compositor with signed-distance coverage and a one-device-pixel
+  minimum stroke, scrolled and banded by group like text. New tests cover
+  shape coverage and slabs, pill placement beside and below the title, and
+  the ladder order; three goldens changed as intended (House gained pills,
+  Crowded Chords now needs step 6, Scarborough at 280 pt wraps its pills)
+  and were re-blessed; House was captured in a dark 2x window.
 - **No more blank first window.** `CPL_TIMING` logs now carry a
   millisecond stamp from process start and record window creation, each
   accepted page and each present. They showed every launch skipping its

@@ -329,6 +329,7 @@ impl Worker {
                 height: strip,
                 polarity: request.polarity,
                 text: vec![text],
+                shapes: Vec::new(),
                 fits: false,
                 columns: 1,
                 ladder_step: 10,

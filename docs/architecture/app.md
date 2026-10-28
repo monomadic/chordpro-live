@@ -79,3 +79,9 @@ A scroll page lays its header out at the content width like any other. If
 the wrapped title would take more than half the content box, the scroll page
 drops it, as ladder step 7 would: the header is one scroll group, and a
 group taller than the viewport could never be shown whole.
+
+Frames carry `Shape`s beside `Text`: rounded rectangles in page points,
+filled or outlined, with a group and an ink like text. Pills are a faint
+capsule outline with the label in soft ink and the value in strong ink, the
+baseline 0.35 of the pill text size below the capsule's centre. A scroll
+page's group bounds include its shapes, so a pill shows only with its header.

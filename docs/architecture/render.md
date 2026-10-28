@@ -107,3 +107,9 @@ present, accept and worker answer is logged with milliseconds since process
 start; `scripts/launch-check.sh [--rebuild] [count] [--view …]` launches the
 viewer repeatedly and fails if any launch's last accepted page was never
 presented.
+
+**Shapes.** The compositor draws a frame's shapes before its text: each
+pixel's coverage comes from its signed distance to the rounded box (one
+device pixel of antialiasing, the rule abner's shader uses), and an outline
+is never thinner than one device pixel. Shapes go through the same slab
+offset as text, so a slab of a page draws the same pixels as the whole page.
