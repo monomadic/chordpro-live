@@ -140,8 +140,22 @@ automated checks. When every task in an epic is checked, the epic moves to
     do: rows 2 then 3 and 1 of the unfiltered library opened in order, and
     `--search "+folk " --open 1 --next 5` stopped on the filter's last song.
     Real keypresses in a window are still unexercised.
-  - [ ] Saved setlists in the sidecar, last-opened and transpose-at-open,
-    and a live rescan when a library folder changes.
+  - [x] Last-opened in the sidecar and a live rescan. The worker notes
+    `opened` (a UTC date-time) once per song change, after the page has
+    gone out, and search's Tab sort gains RECENT. While search is open the
+    library folders are rescanned every `search_rescan_seconds` (2), keeping
+    the selection on the same file. Checked in a 2x window: a song saved
+    into the folder appeared and a deleted one went within one interval;
+    an `--open 2 --next 2` run wrote both shown songs' `opened`. The RECENT
+    sort is covered headless only; no flag reaches it.
+  - [ ] Saved setlists in the sidecar: an ordered list of fingerprints,
+    named, opened from search. Needs a design first: how a setlist is
+    built, named, and chosen (no Figma frame exists for it yet).
+  - [ ] Transpose-at-open: remember each song's transpose in the sidecar
+    and restore it when the song opens. Waits on live transpose below.
+- [ ] Live transpose (`[` `]`, `0` resets) with chordpro-tui's spelling
+  rules and `{transpose}` honoured, chord diagrams following it, and the
+  status strip showing the offset (PROPOSAL.md, "The app").
 - [ ] Run ChordPro 6 conformance against the reference implementation and
   generate the directive status table from the results.
 - [ ] Add the iOS host after the app and renderer boundaries are stable.

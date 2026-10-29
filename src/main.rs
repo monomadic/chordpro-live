@@ -227,7 +227,14 @@ struct Worker {
     /// this build cannot read is never overwritten.
     store_path: Option<PathBuf>,
     store_loaded: bool,
+    /// Why the sidecar is read-only, shown each time search opens.
+    store_error: Option<String>,
     search: Option<Search>,
+    /// Note in the sidecar when each song is shown (the viewer does; `cpl
+    /// render` and tests do not).
+    record_opens: bool,
+    /// The setlist and song last noted as shown.
+    shown: Option<(u64, usize)>,
     compositor: PageCompositor,
     config: Config,
     retained: Option<Retained>,
@@ -433,21 +440,8 @@ impl Worker {
     /// `query`.
     fn open_search(&mut self, query: &str) {
         let library = Library::scan(&self.folders, self.library.as_ref());
-        let mut notice = None;
-        if !self.store_loaded {
-            self.store_loaded = true;
-            if let Some(path) = &self.store_path {
-                match Store::load(path) {
-                    Ok(store) => self.store = store,
-                    Err(error) => {
-                        // Read-only from here on: never overwrite what we
-                        // could not read.
-                        notice = Some(format!("tags and ratings are read-only: {error}"));
-                        self.store_path = None;
-                    }
-                }
-            }
-        }
+        self.load_store();
+        let notice = self.store_error.clone();
         let mut search = Search::new(&library, &self.store);
         if let Some(Some(current)) = self.setlist_paths.get(self.setlist.position())
             && let Some(entry) = library.entries.iter().position(|e| &e.path == current)
@@ -460,6 +454,74 @@ impl Worker {
         search.notice = notice;
         self.library = Some(library);
         self.search = Some(search);
+    }
+
+    /// While search is open: rescans the library folders, reusing every
+    /// unchanged entry. Returns whether what search lists changed, so the
+    /// caller redraws only then.
+    fn rescan(&mut self) -> bool {
+        let (Some(search), Some(old)) = (self.search.as_mut(), self.library.as_ref()) else {
+            return false;
+        };
+        let library = Library::scan(&self.folders, Some(old));
+        if library.entries == old.entries {
+            return false;
+        }
+        search.rescanned(old, &library, &self.store);
+        self.library = Some(library);
+        true
+    }
+
+    /// Loads the sidecar the first time it is needed. A file that cannot be
+    /// read leaves the store read-only for the session, never overwritten,
+    /// and search says why.
+    fn load_store(&mut self) {
+        if self.store_loaded {
+            return;
+        }
+        self.store_loaded = true;
+        let Some(path) = &self.store_path else {
+            return;
+        };
+        match Store::load(path) {
+            Ok(store) => self.store = store,
+            Err(error) => {
+                self.store_path = None;
+                self.store_error = Some(format!("tags and ratings are read-only: {error}"));
+            }
+        }
+    }
+
+    /// Notes in the sidecar that the current song is being shown, once per
+    /// song change. Runs after the page has gone to the host, so the read
+    /// and write never delay it; a sample with no file is not noted.
+    fn note_shown(&mut self) {
+        let now = (self.setlist_id, self.setlist.position());
+        if !self.record_opens || self.search.is_some() || self.shown == Some(now) {
+            return;
+        }
+        self.shown = Some(now);
+        let Some(Some(path)) = self.setlist_paths.get(now.1) else {
+            return;
+        };
+        let Ok(text) = fs::read_to_string(path) else {
+            return;
+        };
+        let entry = cpl_app::Entry::from_source(path, &text);
+        self.load_store();
+        let Some(store_path) = self.store_path.clone() else {
+            return;
+        };
+        let when = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        self.store
+            .set_opened(&entry.fingerprint, &entry.title, when);
+        if let Err(error) = self.store.save(&store_path)
+            && self.timing
+        {
+            eprintln!("library store not saved: {error}");
+        }
     }
 
     /// Applies one search key: ratings and tags go to the sidecar, an open
@@ -1242,7 +1304,10 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
         store: Store::default(),
         store_path: store.or_else(default_store_path),
         store_loaded: false,
+        store_error: None,
         search: None,
+        record_opens: false,
+        shown: None,
         compositor: PageCompositor::default(),
         config,
         retained: None,
@@ -1522,6 +1587,7 @@ fn main() -> ExitCode {
     }
     let timing = env::var_os("CPL_TIMING").is_some();
     since_start();
+    let rescan_every = std::time::Duration::from_secs_f32(config.search_rescan_seconds.max(0.25));
     std::thread::spawn(move || {
         let mut worker = Worker {
             setlist: Setlist::new(songs, worker_config.clone(), polarity),
@@ -1532,7 +1598,10 @@ fn main() -> ExitCode {
             store: Store::default(),
             store_path: store_path.or_else(default_store_path),
             store_loaded: false,
+            store_error: None,
             search: None,
+            record_opens: true,
+            shown: None,
             compositor: PageCompositor::default(),
             config: worker_config,
             retained: None,
@@ -1547,13 +1616,35 @@ fn main() -> ExitCode {
                 Err(mpsc::TryRecvError::Disconnected) => break,
                 Err(mpsc::TryRecvError::Empty) => {
                     // Idle: prepare the neighbours one unit at a time, checking
-                    // for a request between units, then block.
+                    // for a request between units, then block. While search
+                    // is open, wake to rescan the library and redraw the
+                    // current search screen if a song came, went or changed.
                     if worker.preload_step() {
                         continue;
                     }
-                    match request_rx.recv() {
-                        Ok(message) => message,
-                        Err(_) => break,
+                    if worker.search.is_some() {
+                        match request_rx.recv_timeout(rescan_every) {
+                            Ok(message) => message,
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                            Err(mpsc::RecvTimeoutError::Timeout) => {
+                                if worker.rescan()
+                                    && let Some(request) = worker.last
+                                {
+                                    let (page, _) = worker.answer(&request);
+                                    if result_tx.send(page).is_err()
+                                        || proxy.send_event(PageReady).is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                    } else {
+                        match request_rx.recv() {
+                            Ok(message) => message,
+                            Err(_) => break,
+                        }
                     }
                 }
             };
@@ -1587,6 +1678,7 @@ fn main() -> ExitCode {
                 break;
             }
             worker.last = Some(request);
+            worker.note_shown();
         }
     });
     let mut viewer = Viewer {
@@ -1651,7 +1743,10 @@ mod tests {
             store: Store::default(),
             store_path: Some(store),
             store_loaded: false,
+            store_error: None,
             search: None,
+            record_opens: false,
+            shown: None,
             compositor: PageCompositor::default(),
             config,
             retained: None,
@@ -1660,6 +1755,61 @@ mod tests {
             next_slab_id: 0,
             timing: false,
         }
+    }
+
+    #[test]
+    fn an_open_search_picks_up_a_song_saved_into_the_folder() {
+        let dir = std::env::temp_dir().join(format!("cpl-rescan-{}", std::process::id()));
+        let songs = dir.join("songs");
+        std::fs::create_dir_all(&songs).unwrap();
+        std::fs::copy("testdata/greensleeves.cho", songs.join("greensleeves.cho")).unwrap();
+        let mut worker = worker(dir.join("library.toml"));
+        worker.folders = vec![songs.clone()];
+        assert!(!worker.rescan(), "nothing to rescan before search opens");
+        worker.open_search("");
+        assert_eq!(worker.search.as_ref().unwrap().results().len(), 1);
+        assert!(!worker.rescan(), "an unchanged folder redraws nothing");
+        std::fs::write(songs.join("new.cho"), "{title: Brand New}\n[C]Words").unwrap();
+        assert!(worker.rescan());
+        let search = worker.search.as_ref().unwrap();
+        assert_eq!(search.results().len(), 2);
+        let library = worker.library.as_ref().unwrap();
+        assert_eq!(
+            library.entries[search.selected().unwrap()].title,
+            "Greensleeves",
+            "the selection stays on the song it was on"
+        );
+        std::fs::remove_file(songs.join("new.cho")).unwrap();
+        assert!(worker.rescan());
+        assert_eq!(worker.search.as_ref().unwrap().results().len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn showing_a_song_notes_when_in_the_sidecar_once_per_change() {
+        let dir = std::env::temp_dir().join(format!("cpl-opened-{}", std::process::id()));
+        let path = dir.join("library.toml");
+        let mut worker = worker(path.clone());
+        worker.note_shown();
+        assert!(!path.exists(), "the test worker records nothing");
+        worker.record_opens = true;
+        worker.note_shown();
+        let text = std::fs::read_to_string("testdata/greensleeves.cho").unwrap();
+        let greensleeves = cpl_app::library::fingerprint(&text);
+        let first = Store::load(&path).unwrap().opened(&greensleeves);
+        assert!(first > 1_700_000_000, "a current time, not {first}");
+        // The same song again writes nothing.
+        std::fs::remove_file(&path).unwrap();
+        worker.note_shown();
+        assert!(!path.exists());
+        // Opening another song from search notes that one.
+        worker.open_search("rising");
+        worker.search_input(SearchInput::Enter);
+        worker.note_shown();
+        let store = Store::load(&path).unwrap();
+        let rising = std::fs::read_to_string("testdata/house_of_the_rising_sun.cho").unwrap();
+        assert!(store.opened(&cpl_app::library::fingerprint(&rising)) >= first);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

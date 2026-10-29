@@ -6,8 +6,11 @@ The library is every ChordPro file (`SONG_EXTENSIONS`, any case) under the
 library folders, recursively, skipping hidden entries, ordered by path. The
 macOS host's library folders are each folder named to `--view` and the
 folder of each song file named to it. `Library::scan` runs on the page
-worker when search opens. It reuses the previous scan's entry for any file
-whose size and mtime are unchanged. An unreadable file is skipped rather
+worker when search opens, and again every `search_rescan_seconds` while
+search stays open; a rescan that changes nothing redraws nothing, and one
+that does keeps the selection on the same file (`Search::rescanned`). It
+reuses the previous scan's entry for any file whose size and mtime are
+unchanged. An unreadable file is skipped rather
 than hiding the rest.
 
 An `Entry` holds what search shows and matches:
@@ -29,7 +32,13 @@ or `$CPL_LIBRARY_STORE` moves it. Each song is one `[song.<fingerprint>]`
 table:
 - `title`, a courtesy for a reader;
 - `rating`, 1–5;
-- `tags`, a string array.
+- `tags`, a string array;
+- `opened`, when the viewer last showed the song, as a TOML UTC date-time
+  (`2026-10-29T21:04:00Z`).
+
+The viewer's worker notes `opened` once per song change, after that page has
+gone to the host, for songs that came from a file; `cpl render` and the
+built-in samples note nothing.
 
 Keys this build does not know are kept verbatim and written back. A record
 with nothing left is dropped. Saving writes a temporary file and renames
@@ -47,7 +56,8 @@ order, the cursor and the matched rows. `input` takes a decoded
 - `l:` adds lyrics to the match;
 - digits 0–5 rate the selected song (`Rate`);
 - `#name⏎` toggles a sidecar tag on it (`Tag`);
-- Tab cycles the sort order (title, artist, rating) when there is no query;
+- Tab cycles the sort order (title, artist, rating, recent: newest
+  `opened` first, never-shown songs last by title) when there is no query;
 - Enter opens (`Open`: every row, in order, and the cursor's position);
 - Escape cancels tag entry or closes search (`Close`).
 

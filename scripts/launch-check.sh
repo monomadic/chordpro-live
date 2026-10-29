@@ -18,6 +18,10 @@ count=${1:-20}
 cd "$(dirname "$0")/.." || exit 1
 cargo build -q || exit 1
 log=$(mktemp)
+# The viewer notes each song it shows in the library sidecar; keep these
+# launches out of the real one.
+CPL_LIBRARY_STORE=$(mktemp)
+export CPL_LIBRARY_STORE
 bad=0
 retried=0
 i=1
@@ -38,6 +42,6 @@ while [ "$i" -le "$count" ]; do
   fi
   i=$((i + 1))
 done
-rm -f "$log"
+rm -f "$log" "$CPL_LIBRARY_STORE"
 echo "$count launches: $bad blank, $retried recovered by the present retry"
 [ "$bad" -eq 0 ]

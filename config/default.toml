@@ -68,3 +68,6 @@ search_column_gap = 12
 search_box_stroke = 2
 search_box_radius = 10
 search_min_title = 160
+# While search is open the library folders are rescanned this often, in
+# seconds; only files whose size or modification time moved are reread.
+search_rescan_seconds = 2

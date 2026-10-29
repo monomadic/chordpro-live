@@ -7,6 +7,7 @@
 //! title = "House of the Rising Sun"
 //! rating = 4
 //! tags = ["gig-set", "folk"]
+//! opened = 2026-10-29T21:04:00Z
 //! ```
 //!
 //! The title is a courtesy for a person reading the file; the fingerprint is
@@ -24,13 +25,16 @@ pub struct Record {
     /// 0 is unrated; 1–5 stars.
     pub rating: u8,
     pub tags: Vec<String>,
+    /// When the song was last shown, in seconds since the Unix epoch; 0 is
+    /// never. Written as a TOML UTC date-time.
+    pub opened: u64,
     /// Lines for keys this build does not use, verbatim.
     other: Vec<String>,
 }
 
 impl Record {
     fn is_empty(&self) -> bool {
-        self.rating == 0 && self.tags.is_empty() && self.other.is_empty()
+        self.rating == 0 && self.tags.is_empty() && self.opened == 0 && self.other.is_empty()
     }
 }
 
@@ -54,6 +58,17 @@ impl Store {
 
     pub fn tags(&self, fingerprint: &str) -> &[String] {
         self.record(fingerprint).map_or(&[], |r| r.tags.as_slice())
+    }
+
+    /// When the song was last shown, in Unix seconds; 0 is never.
+    pub fn opened(&self, fingerprint: &str) -> u64 {
+        self.record(fingerprint).map_or(0, |r| r.opened)
+    }
+
+    /// Notes that the song was shown at `when` (Unix seconds).
+    pub fn set_opened(&mut self, fingerprint: &str, title: &str, when: u64) {
+        self.entry(fingerprint, title).opened = when;
+        self.prune(fingerprint);
     }
 
     /// Sets a 0–5 rating; 0 clears it.
@@ -134,6 +149,10 @@ impl Store {
                         .filter(|r| *r <= 5)
                         .ok_or_else(|| at("rating must be 0 to 5"))?
                 }
+                "opened" => {
+                    record.opened =
+                        parse_datetime(value).ok_or_else(|| at("opened must be a UTC date-time"))?
+                }
                 "tags" => {
                     record.tags = parse_strings(value)
                         .ok_or_else(|| at("tags must be an array of strings"))?
@@ -160,6 +179,9 @@ impl Store {
             if !record.tags.is_empty() {
                 let tags: Vec<String> = record.tags.iter().map(|t| quote(t)).collect();
                 out.push_str(&format!("tags = [{}]\n", tags.join(", ")));
+            }
+            if record.opened > 0 {
+                out.push_str(&format!("opened = {}\n", format_datetime(record.opened)));
             }
             for line in &record.other {
                 out.push_str(line);
@@ -188,6 +210,74 @@ impl Store {
         fs::write(&temporary, self.to_toml())?;
         fs::rename(&temporary, path)
     }
+}
+
+/// Days since 1970-01-01 for a proleptic Gregorian date (Hinnant's
+/// `days_from_civil`).
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let mp = (month as i64 + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// `seconds` since the epoch as `YYYY-MM-DDTHH:MM:SSZ`.
+fn format_datetime(seconds: u64) -> String {
+    let days = (seconds / 86_400) as i64;
+    let rest = seconds % 86_400;
+    // Hinnant's `civil_from_days`.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rest / 3600,
+        rest / 60 % 60,
+        rest % 60
+    )
+}
+
+/// The `YYYY-MM-DDTHH:MM:SSZ` form `format_datetime` writes.
+fn parse_datetime(value: &str) -> Option<u64> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 20 || !value.is_ascii() || &value[4..5] != "-" || &value[7..8] != "-" {
+        return None;
+    }
+    if !matches!(&value[10..11], "T" | "t" | " ") || &value[13..14] != ":" || &value[16..17] != ":"
+    {
+        return None;
+    }
+    if !matches!(&value[19..], "Z" | "z") {
+        return None;
+    }
+    let number = |range: std::ops::Range<usize>| -> Option<u32> {
+        let text = &value[range];
+        text.bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| text.parse().ok())?
+    };
+    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
+    let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    let days = days_from_civil(year as i64, month, day);
+    let seconds = days * 86_400 + (hour * 3600 + minute * 60 + second) as i64;
+    u64::try_from(seconds).ok()
 }
 
 fn quote(text: &str) -> String {
@@ -269,6 +359,26 @@ mod tests {
         assert_eq!(store.tags(A), ["gig-set", "folk"]);
         assert_eq!(store.rating(B), 2);
         assert_eq!(store.rating("cccc"), 0);
+    }
+
+    #[test]
+    fn last_opened_round_trips_as_a_utc_date_time() {
+        assert_eq!(format_datetime(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format_datetime(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(format_datetime(1_761_771_845), "2025-10-29T21:04:05Z");
+        for seconds in [0, 951_782_400, 1_761_771_845, 4_102_444_799] {
+            assert_eq!(parse_datetime(&format_datetime(seconds)), Some(seconds));
+        }
+        assert_eq!(parse_datetime("2026-13-01T00:00:00Z"), None);
+        assert_eq!(parse_datetime("2026-10-29"), None);
+        let mut store = Store::default();
+        store.set_opened(A, "A", 1_761_771_845);
+        let text = store.to_toml();
+        assert!(text.contains("opened = 2025-10-29T21:04:05Z\n"));
+        assert_eq!(Store::parse(&text).unwrap().opened(A), 1_761_771_845);
+        assert_eq!(store.opened(B), 0);
+        store.set_opened(A, "A", 0);
+        assert!(store.record(A).is_none());
     }
 
     #[test]

@@ -175,6 +175,9 @@ pub struct Config {
     pub search_box_stroke: f32,
     pub search_box_radius: f32,
     pub search_min_title: f32,
+    /// Seconds between library rescans while search is open, so a song
+    /// saved into a library folder appears without reopening search.
+    pub search_rescan_seconds: f32,
 }
 
 impl Default for Config {
@@ -293,6 +296,7 @@ impl Config {
             search_box_stroke: take!("search_box_stroke"),
             search_box_radius: take!("search_box_radius"),
             search_min_title: take!("search_min_title"),
+            search_rescan_seconds: take!("search_rescan_seconds"),
         };
         if let Some(key) = values.keys().next() {
             return Err(format!("unknown page key: {key}"));

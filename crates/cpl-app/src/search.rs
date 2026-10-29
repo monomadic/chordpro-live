@@ -20,6 +20,8 @@ pub enum SortBy {
     Title,
     Artist,
     Rating,
+    /// Most recently shown first; songs never shown last, by title.
+    Recent,
 }
 
 impl SortBy {
@@ -27,7 +29,8 @@ impl SortBy {
         match self {
             Self::Title => Self::Artist,
             Self::Artist => Self::Rating,
-            Self::Rating => Self::Title,
+            Self::Rating => Self::Recent,
+            Self::Recent => Self::Title,
         }
     }
 
@@ -36,6 +39,7 @@ impl SortBy {
             Self::Title => "TITLE",
             Self::Artist => "ARTIST",
             Self::Rating => "RATING",
+            Self::Recent => "RECENT",
         }
     }
 }
@@ -242,6 +246,19 @@ impl Search {
         }
     }
 
+    /// Recomputes the rows after a rescan replaced `old` with `new`. Entry
+    /// indices move when files come and go, so the selection follows the
+    /// selected song's path; if that song is gone the best match is selected.
+    pub fn rescanned(&mut self, old: &Library, new: &Library, store: &Store) {
+        let path = self.selected().map(|entry| &old.entries[entry].path);
+        let entry = path.and_then(|path| new.entries.iter().position(|e| &e.path == path));
+        self.rematch(new, store);
+        match entry {
+            Some(entry) => self.select(entry),
+            None => self.top = 0,
+        }
+    }
+
     /// Recomputes the rows after the query or a filter changed, with the
     /// best match selected, as chordpro-tui's finder does.
     fn requery(&mut self, library: &Library, store: &Store) {
@@ -293,7 +310,7 @@ impl Search {
             }
         }
         let entries = &library.entries;
-        let key = |m: &Match| -> (u8, String) {
+        let key = |m: &Match| -> (u64, String) {
             let entry = &entries[m.entry];
             match self.sort {
                 SortBy::Title => (0, entry.title.to_lowercase()),
@@ -302,7 +319,11 @@ impl Search {
                     entry.artist.to_lowercase() + "\u{0}" + &entry.title.to_lowercase(),
                 ),
                 SortBy::Rating => (
-                    5 - store.rating(&entry.fingerprint),
+                    u64::from(5 - store.rating(&entry.fingerprint)),
+                    entry.title.to_lowercase(),
+                ),
+                SortBy::Recent => (
+                    u64::MAX - store.opened(&entry.fingerprint),
                     entry.title.to_lowercase(),
                 ),
             }
@@ -1032,6 +1053,35 @@ mod tests {
     }
 
     #[test]
+    fn a_rescan_keeps_the_selected_song_when_others_come_and_go() {
+        let (old, store) = (songs(), Store::default());
+        let mut search = Search::new(&old, &store);
+        let rise = old
+            .entries
+            .iter()
+            .position(|e| e.title == "Rise Up, Shepherd")
+            .unwrap();
+        search.select(rise);
+        // A new song sorts first, shifting every index; one song is deleted.
+        let mut new = old.clone();
+        new.entries.remove(0);
+        new.entries.insert(
+            0,
+            Entry::from_source(Path::new("a/Aardvark.cho"), "{title: Aardvark}"),
+        );
+        search.rescanned(&old, &new, &store);
+        let selected = &new.entries[search.selected().unwrap()];
+        assert_eq!(selected.title, "Rise Up, Shepherd");
+        assert_eq!(search.results().len(), new.entries.len());
+        assert!(titles(&search, &new).contains(&"Aardvark".to_owned()));
+        // When the selected song itself goes, the best match is selected.
+        let mut gone = new.clone();
+        gone.entries.retain(|e| e.title != "Rise Up, Shepherd");
+        search.rescanned(&new, &gone, &store);
+        assert_eq!(search.selected(), Some(search.results()[0]));
+    }
+
+    #[test]
     fn enter_opens_the_rows_as_a_setlist_at_the_cursor() {
         let (library, store) = (songs(), Store::default());
         let mut search = Search::new(&library, &store);
@@ -1062,6 +1112,19 @@ mod tests {
         );
         search.input(SearchInput::Sort, &library, &store);
         assert_eq!(titles(&search, &library)[0], "Rise Up, Shepherd");
+        // Recent: newest first, then the never-shown by title.
+        let (older, newer) = (&library.entries[0], &library.entries[2]);
+        store.set_opened(&older.fingerprint, &older.title, 1_000);
+        store.set_opened(&newer.fingerprint, &newer.title, 2_000);
+        search.input(SearchInput::Sort, &library, &store);
+        assert_eq!(search.sort, SortBy::Recent);
+        let shown = titles(&search, &library);
+        assert_eq!(&shown[..2], [newer.title.as_str(), older.title.as_str()]);
+        let mut rest = shown[2..].to_vec();
+        rest.sort_by_key(|t| t.to_lowercase());
+        assert_eq!(shown[2..], rest[..]);
+        search.input(SearchInput::Sort, &library, &store);
+        assert_eq!(search.sort, SortBy::Title);
     }
 
     struct Fixed;
