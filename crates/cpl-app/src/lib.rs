@@ -121,7 +121,6 @@ pub struct Config {
     pub inline_chord_size: f32,
     pub inline_chord_gap: f32,
     pub column_gutter: f32,
-    pub header_inline_gap: f32,
     pub byline_leading: f32,
     pub side_label_inset: f32,
     /// Indent of a wrapped line's continuation rows, in body sizes.
@@ -272,7 +271,6 @@ impl Config {
             inline_chord_size: take!("inline_chord_size"),
             inline_chord_gap: take!("inline_chord_gap"),
             column_gutter: take!("column_gutter"),
-            header_inline_gap: take!("header_inline_gap"),
             byline_leading: take!("byline_leading"),
             side_label_inset: take!("side_label_inset"),
             wrap_indent: take!("wrap_indent"),
@@ -557,7 +555,6 @@ impl App {
             subtitle_size: c.subtitle_size,
             byline_leading: c.byline_leading,
             header_gap: c.header_gap,
-            header_inline_gap: c.header_inline_gap,
             section_gap: c.section_gap,
             label_height: c.label_height,
             label_gap: c.label_gap,
@@ -1697,21 +1694,32 @@ mod tests {
     }
 
     #[test]
-    fn collapses_header_after_side_labels() {
+    fn the_byline_keeps_its_own_line_in_any_window() {
+        // Step 3 (title and byline on one line) is gone: a wide window used
+        // to collapse the header that a narrower one kept.
         let app = app(
             "{title: Test}\n{artist: Ada}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: B}\n[G]Bravo\n{end_of_verse}",
         );
-        let frame = at_step(&app, 190.0, 3);
-        assert_eq!(find(&frame, "Test").baseline, find(&frame, "Ada").baseline);
+        for width in [190.0, 600.0, 1900.0] {
+            for height in (40..1200).step_by(7) {
+                let frame = app.frame(width, height as f32);
+                assert_ne!(frame.ladder_step, 3, "{width}×{height}");
+                let title = frame.text.iter().find(|t| t.content == "Test");
+                let byline = frame.text.iter().find(|t| t.content == "Ada");
+                if let (Some(title), Some(byline)) = (title, byline) {
+                    assert!(byline.baseline > title.baseline, "{width}×{height}");
+                }
+            }
+        }
     }
 
     #[test]
-    fn long_labels_skip_side_margin_but_allow_header_collapse() {
+    fn long_labels_skip_side_margin() {
         let app = app(
             "{title: Test}\n{artist: Ada}\n{start_of_verse: Verse One}\n[C]Alpha\n{end_of_verse}",
         );
         assert!((40..1600).all(|h| app.frame(190.0, h as f32).ladder_step != 2));
-        let frame = at_step(&app, 190.0, 3);
+        let frame = at_step(&app, 190.0, 7);
         assert_eq!(find(&frame, "VERSE ONE").x, find(&frame, "Alpha").x);
     }
 

@@ -28,7 +28,6 @@ inline_chord_baseline = 0.6
 inline_chord_size = 0.62
 inline_chord_gap = 0.15
 column_gutter = 1.882
-header_inline_gap = 0.8
 byline_leading = 1.909
 side_label_inset = 0.25
 wrap_indent = 1.0

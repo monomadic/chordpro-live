@@ -27,15 +27,16 @@ each section's block, visible lines and line height. `layout` lays out one
 candidate; `solve` tries the full page, then each `LADDER` step in order,
 cumulatively, and returns the first that fits or the last one tried. Each
 step carries an `applies` test, so a step that cannot change this song's
-page (no tablature, no repeated chorus, a header too wide for one line,
+page (no tablature, no repeated chorus,
 labels too wide for the margin, a single section) is skipped rather than
 tried, and never leaves a failing option on for the steps after it:
 
-1. section gaps close; 2. labels move to the side margin; 3. title and
-byline share one line; 5. tablature folds to its label; 7. the title drops;
+1. section gaps close; 2. labels move to the side margin; 5. tablature folds to its label; 7. the title drops;
 8. a repeated chorus keeps only its first line; 9. chords go inline.
 
-Step 4 drops the chord diagrams and step 6 the metadata pills. A side
+Step 4 drops the chord diagrams and step 6 the metadata pills. There is
+no step 3: the header always keeps the byline on its own line (see
+PROPOSAL.md). A side
 label beside a section with every line hidden keeps one row. A song with no
 sections fits. The app selects the ladder step at the floor, then checks
 larger premeasured sizes in descending order and draws the largest that fits.

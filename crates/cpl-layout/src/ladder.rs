@@ -15,7 +15,6 @@ pub struct PageMetrics {
     pub byline_leading: f32,
     pub header_gap: f32,
     /// Space between title and byline on a one-line header.
-    pub header_inline_gap: f32,
     pub section_gap: f32,
     pub label_height: f32,
     pub label_gap: f32,
@@ -100,7 +99,6 @@ pub struct Viewport {
 pub struct Options {
     pub tight_sections: bool,
     pub side_labels: bool,
-    pub one_line_header: bool,
     /// Ladder step 4: the chord diagrams leave the header.
     pub hide_diagrams: bool,
     pub fold_tabs: bool,
@@ -336,19 +334,13 @@ impl Options {
         }
         let mut artist = None;
         if header.artist.is_some() {
-            if self.one_line_header && !self.hide_title && title_rows.len() == 1 {
-                let title_width = header.title_width * title_scale;
-                artist = Some((title_width + m.header_inline_gap, y));
-                width = title_width + m.header_inline_gap + header.artist_width;
+            y += if self.hide_title {
+                m.subtitle_size
             } else {
-                y += if self.hide_title {
-                    m.subtitle_size
-                } else {
-                    m.subtitle_size * m.byline_leading
-                };
-                artist = Some((0.0, y));
-                width = width.max(header.artist_width);
-            }
+                m.subtitle_size * m.byline_leading
+            };
+            artist = Some((0.0, y));
+            width = width.max(header.artist_width);
         }
         let mut pills = Vec::new();
         if !self.hide_pills && !header.pills.is_empty() {
@@ -455,7 +447,11 @@ pub struct Step {
 }
 
 /// Least destructive first; step 10 is the caller scrolling or paging.
-pub const LADDER: [Step; 9] = [
+///
+/// Step 3, title and byline on one line, was removed (2026-10-29): it
+/// applied only in a wide window, so maximising a window could collapse the
+/// header and shrink the text. The numbers of the other steps stand.
+pub const LADDER: [Step; 8] = [
     Step {
         number: 1,
         applies: |song, _, _| song.sections.len() > 1,
@@ -465,11 +461,6 @@ pub const LADDER: [Step; 9] = [
         number: 2,
         applies: labels_fit_side,
         apply: |o| o.side_labels = true,
-    },
-    Step {
-        number: 3,
-        applies: header_fits_one_line,
-        apply: |o| o.one_line_header = true,
     },
     Step {
         number: 4,
@@ -509,11 +500,6 @@ fn labels_fit_side(song: &MeasuredSong, m: &PageMetrics, _: Viewport) -> bool {
             .sections
             .iter()
             .all(|s| s.label_width <= m.side_label_room)
-}
-
-fn header_fits_one_line(song: &MeasuredSong, m: &PageMetrics, view: Viewport) -> bool {
-    let h = &song.header;
-    h.artist.is_some() && h.title_width + m.header_inline_gap + h.artist_width <= view.width
 }
 
 /// A laid-out candidate: the options, the ladder step they represent, the
@@ -706,7 +692,6 @@ mod tests {
         subtitle_size: 0.75,
         byline_leading: 1.8,
         header_gap: 1.0,
-        header_inline_gap: 0.8,
         section_gap: 1.0,
         label_height: 1.5,
         label_gap: 0.5,
@@ -829,11 +814,7 @@ mod tests {
         let song = song(SONGS[3]);
         for view in views() {
             let s = solve(&song, &PAGE, view);
-            assert!(
-                ![1, 2, 3, 5, 8].contains(&s.step),
-                "{view:?} chose {}",
-                s.step
-            );
+            assert!(![1, 2, 5, 8].contains(&s.step), "{view:?} chose {}", s.step);
         }
     }
 
@@ -895,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn a_header_too_wide_for_one_line_does_not_block_later_steps() {
+    fn folding_a_tab_keeps_the_title() {
         // A six-string tab, taller than the verse, so folding it is what
         // makes room.
         let song = song(
@@ -905,7 +886,6 @@ mod tests {
             width: song.header.title_width + 0.1,
             height: 0.0,
         };
-        assert!(!header_fits_one_line(&song, &PAGE, narrow));
         let folded = (2..60).find_map(|h| {
             let s = solve(
                 &song,
@@ -918,7 +898,6 @@ mod tests {
             (s.fits && s.step == 5).then_some(s)
         });
         let folded = folded.expect("folding the tab fits some height");
-        assert!(!folded.options.one_line_header);
         assert!(folded.header.title_baseline.is_some(), "the title is kept");
     }
 
@@ -944,19 +923,6 @@ mod tests {
             above.block(&song.sections[0], &PAGE, f32::INFINITY).height,
             PAGE.label_height + PAGE.label_gap
         );
-    }
-
-    #[test]
-    fn one_line_header_puts_the_byline_on_the_title_baseline() {
-        let song = song(SONGS[0]);
-        let full = Options::default().header(&song.header, &PAGE, f32::INFINITY);
-        let one = Options {
-            one_line_header: true,
-            ..Options::default()
-        }
-        .header(&song.header, &PAGE, f32::INFINITY);
-        assert_eq!(one.artist.unwrap().1, one.title_baseline.unwrap());
-        assert!(one.height < full.height);
     }
 
     #[test]

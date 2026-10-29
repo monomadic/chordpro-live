@@ -186,7 +186,11 @@ Least destructive first:
 
 1. Section spacing gives back its blank rows.
 2. Section labels move to the side margin (if the margin does not cost a column).
-3. The header collapses: title, artist and metadata on one line.
+3. *(removed 2026-10-29)* The header no longer collapses to one line. The
+   step applied only when the window was wide enough, so maximising a window
+   could collapse the header and drop the text to the floor while a smaller
+   window kept both. The header always keeps title and byline on their own
+   lines; the other steps keep their numbers.
 4. Chord diagrams leave the header.
 5. Tablature sections fold to their label, which says `FOLDED`.
    **Settled (2026-10-29): tablature is a part for the player, not the
