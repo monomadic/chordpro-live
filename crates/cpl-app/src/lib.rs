@@ -43,6 +43,8 @@ pub struct Text {
     pub size: f32,
     pub weight: u16,
     pub face: Face,
+    /// Letter-spacing after every character, as a fraction of `size`.
+    pub tracking: f32,
     pub ink: Ink,
 }
 
@@ -122,9 +124,19 @@ pub struct Config {
     pub wrap_indent: f32,
     /// Baseline advance between rows of a wrapped title, in title sizes.
     pub title_leading: f32,
-    /// Metadata pills, in body sizes: text size, row and pill heights, inner
-    /// padding, gaps between pills and between label and value, outline.
+    /// The first title row's baseline below the top margin, in body sizes.
+    pub title_baseline: f32,
+    /// The hairline under the title block: its drop below the block's last
+    /// baseline and its thickness, in body sizes.
+    pub header_rule_drop: f32,
+    pub header_rule: f32,
+    /// Metadata pills, in body sizes: text size and letter-spacing (a
+    /// fraction of the text size), row and pill heights, inner padding,
+    /// gaps between pills and between label and value, outline, and how far
+    /// a pill beside the title block centres above its last baseline.
     pub meta_size: f32,
+    pub meta_tracking: f32,
+    pub pill_rise: f32,
     pub meta_row: f32,
     pub pill_height: f32,
     pub pill_pad: f32,
@@ -256,7 +268,12 @@ impl Config {
             side_label_inset: take!("side_label_inset"),
             wrap_indent: take!("wrap_indent"),
             title_leading: take!("title_leading"),
+            title_baseline: take!("title_baseline"),
+            header_rule_drop: take!("header_rule_drop"),
+            header_rule: take!("header_rule"),
             meta_size: take!("meta_size"),
+            meta_tracking: take!("meta_tracking"),
+            pill_rise: take!("pill_rise"),
             meta_row: take!("meta_row"),
             pill_height: take!("pill_height"),
             pill_pad: take!("pill_pad"),
@@ -336,6 +353,7 @@ impl Config {
             inline_chord_size: self.inline_chord_size,
             inline_chord_gap: self.inline_chord_gap,
             meta_size: self.meta_size,
+            meta_tracking: self.meta_tracking,
             diagram_name_size: self.diagram_name_size,
             diagram_mark_size: self.diagram_mark_size,
             tab_size: self.tab_size,
@@ -481,6 +499,7 @@ impl App {
         let c = &self.config;
         PageMetrics {
             title_size: c.title_size,
+            title_baseline: c.title_baseline,
             subtitle_size: c.subtitle_size,
             byline_leading: c.byline_leading,
             header_gap: c.header_gap,
@@ -501,6 +520,8 @@ impl App {
             pill_gap: c.pill_gap,
             pill_kv_gap: c.pill_kv_gap,
             meta_size: c.meta_size,
+            pill_rise: c.pill_rise,
+            header_rule_drop: c.header_rule_drop,
             diagram_string_gap: c.diagram_string_gap,
             diagram_fret_gap: c.diagram_fret_gap,
             diagram_frets: c.diagram_frets,
@@ -650,6 +671,7 @@ impl App {
                     size: body * 0.7,
                     weight: 400,
                     face: Face::Monospace,
+                    tracking: 0.0,
                     ink: Ink::Faint,
                 };
                 ScrollView {
@@ -790,6 +812,7 @@ impl App {
                     size: body * 0.7,
                     weight: 400,
                     face: Face::Monospace,
+                    tracking: 0.0,
                     ink: Ink::Faint,
                 });
                 (frame, *max_offset)
@@ -880,6 +903,13 @@ impl App {
                 .or_insert((f32::INFINITY, f32::NEG_INFINITY));
             bounds.0 = bounds.0.min(shape.y);
             bounds.1 = bounds.1.max(shape.y + shape.height);
+        }
+        // A text's top is estimated as its baseline less its size, which for
+        // the title (set on the mock's baseline, above a full em) lands above
+        // the top margin. The header starts at the margin by construction,
+        // and a scroll at the top must show it.
+        if let Some(header) = group_bounds.get_mut(&0) {
+            header.0 = header.0.max(c.margin_top);
         }
         let mut first_group = 1;
         let sections = self
@@ -988,6 +1018,7 @@ impl App {
             size: c.diagram_mark_size * body,
             weight: 400,
             face: Face::Monospace,
+            tracking: 0.0,
             ink: Ink::Soft,
         };
         let line = |x: f32, y: f32, width: f32, height: f32, radius: f32| Shape {
@@ -1008,6 +1039,7 @@ impl App {
             size: c.diagram_name_size * body,
             weight: 600,
             face: Face::Monospace,
+            tracking: 0.0,
             ink: Ink::Strong,
         });
         let marks = top + c.diagram_name_row * body;
@@ -1126,9 +1158,10 @@ impl App {
                 content: row.clone(),
                 x: c.margin_x,
                 baseline: c.margin_top + baseline * body,
-                size: c.title_size * body,
-                weight: 600,
+                size: c.title_size * solution.header.title_scale * body,
+                weight: 700,
                 face: Face::System,
+                tracking: 0.0,
                 ink: Ink::Strong,
             });
         }
@@ -1141,6 +1174,7 @@ impl App {
                 size: c.subtitle_size * body,
                 weight: 400,
                 face: Face::System,
+                tracking: 0.0,
                 ink: Ink::Soft,
             });
         }
@@ -1155,18 +1189,21 @@ impl App {
                 height: c.pill_height * body,
                 radius: c.pill_height * body / 2.0,
                 stroke: Some(c.pill_stroke * body),
-                ink: Ink::Faint,
+                ink: Ink::Soft,
             });
-            // A centred cap height puts the baseline 0.35 em below the middle.
-            let baseline = centre + 0.35 * c.meta_size * body;
+            // The mock centres a 21 pt line box in the pill; for SF Pro that
+            // puts the baseline 0.355 of the text size below the middle.
+            let baseline = centre + 0.355 * c.meta_size * body;
+            let style = |role| c.metrics().style(role);
             frame.text.push(Text {
                 group: 0,
                 content: pill.label.clone(),
                 x: left + c.pill_pad * body,
                 baseline,
                 size: c.meta_size * body,
-                weight: 600,
+                weight: style(Role::PillLabel).weight,
                 face: Face::System,
+                tracking: c.meta_tracking,
                 ink: Ink::Soft,
             });
             frame.text.push(Text {
@@ -1175,9 +1212,22 @@ impl App {
                 x: left + (c.pill_pad + pill.label_width + c.pill_kv_gap) * body,
                 baseline,
                 size: c.meta_size * body,
-                weight: 600,
+                weight: style(Role::PillValue).weight,
                 face: Face::System,
+                tracking: c.meta_tracking,
                 ink: Ink::Strong,
+            });
+        }
+        if let Some(rule) = solution.header.rule {
+            frame.shapes.push(Shape {
+                group: 0,
+                x: c.margin_x,
+                y: c.margin_top + rule * body - c.header_rule * body,
+                width: width - 2.0 * c.margin_x,
+                height: c.header_rule * body,
+                radius: 0.0,
+                stroke: None,
+                ink: Ink::Faint,
             });
         }
         for (diagram, &(x, top)) in header.diagrams.iter().zip(&solution.header.diagrams) {
@@ -1238,6 +1288,7 @@ impl App {
                                 600
                             },
                             face: Face::Monospace,
+                            tracking: 0.0,
                             ink: Ink::Soft,
                         });
                         if o.tab_folded(section) {
@@ -1287,6 +1338,7 @@ impl App {
                                         size: c.tab_size * body,
                                         weight: 400,
                                         face: Face::Monospace,
+                                        tracking: 0.0,
                                         ink: Ink::Soft,
                                     });
                                 }
@@ -1341,6 +1393,7 @@ impl App {
                                     size: style.size * body,
                                     weight: style.weight,
                                     face: style.face,
+                                    tracking: 0.0,
                                     ink,
                                 });
                             }
@@ -1368,6 +1421,7 @@ impl App {
                 size: body,
                 weight: 600,
                 face: Face::System,
+                tracking: 0.0,
                 ink: Ink::Soft,
             });
         }
@@ -1398,6 +1452,7 @@ impl App {
             size: body * 0.7,
             weight: 400,
             face: Face::Monospace,
+            tracking: 0.0,
             ink: Ink::Faint,
         });
         frame
@@ -1522,7 +1577,7 @@ mod tests {
         assert_eq!(frame.columns, 1);
         let body = find(&frame, "Bravo").size;
         assert!(body >= 17.0);
-        assert_eq!(find(&frame, "Test").size, body * 1.7);
+        assert_eq!(find(&frame, "Test").size, body * app.config().title_size);
     }
 
     #[test]
@@ -1563,8 +1618,10 @@ mod tests {
         );
         assert_eq!(app.song().sections[0].kind, SectionKind::Tab);
         assert_eq!(app.song().sections[0].lines[0].lyrics(), "e|--3---|");
-        let frame = app.frame(900.0, 600.0);
+        // Tall and narrow, so the tab and the verse share one column.
+        let frame = app.frame(500.0, 900.0);
         assert!(frame.fits);
+        assert_eq!(frame.columns, 1);
         assert_eq!(count(&frame, "INTRO"), 1);
         let (e, b, alpha) = (
             find(&frame, "e|--3---|"),
@@ -1782,7 +1839,7 @@ mod tests {
         }
         source.push_str("{end_of_verse}");
         let app = app(&source);
-        let (first, max_offset) = app.frame_scrolled(450.0, 260.0, 0.0);
+        let (first, max_offset) = app.frame_scrolled(450.0, 300.0, 0.0);
         assert!(max_offset > 0.0);
         assert_eq!(count(&first, "e|--3---|"), 1);
         assert_eq!(count(&first, "INTRO"), 1);
@@ -2078,12 +2135,13 @@ mod tests {
         assert_eq!(count(&frame, "Line 0"), 1);
         assert!(!frame.text.iter().any(|t| t.content.starts_with("A Title")));
         // In a tall one it wraps inside the content box and stays.
-        let (tall, _) = wide_title.frame_scrolled(220.0, 900.0, 0.0);
-        let right_edge = 220.0 - wide_title.config().margin_x + 1e-2;
+        let (tall, tall_max) = wide_title.frame_scrolled(300.0, 900.0, 0.0);
+        assert!(tall_max > 0.0, "still a scrolling page");
+        let right_edge = 300.0 - wide_title.config().margin_x + 1e-2;
         let title_rows: Vec<&Text> = tall
             .text
             .iter()
-            .filter(|t| t.weight == 600 && t.group == 0)
+            .filter(|t| t.weight == 700 && t.group == 0)
             .collect();
         assert!(title_rows.len() > 1, "the title wraps");
         for row in &title_rows {
@@ -2123,7 +2181,15 @@ mod tests {
         // The tallest window that needs step 4 has no diagram shapes.
         let without = at_step(&app, 900.0, 4);
         assert_eq!(count(&without, "5fr"), 0);
-        assert!(without.shapes.is_empty());
+        // Only the header rule is left: no grid lines, nut or dots.
+        let rule = app.config().header_rule;
+        assert!(
+            without
+                .shapes
+                .iter()
+                .all(|s| s.stroke.is_none() && s.radius == 0.0 && s.height <= rule * 17.0 * 2.0)
+        );
+        assert_eq!(without.shapes.len(), 1);
     }
 
     #[test]

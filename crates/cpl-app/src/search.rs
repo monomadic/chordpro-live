@@ -367,6 +367,7 @@ impl Search {
             size,
             weight,
             face: Face::System,
+            tracking: 0.0,
             ink,
         };
         let w = |content: &str, size: f32, weight: u16| {
@@ -730,6 +731,7 @@ fn highlighted(
             size,
             weight,
             face: Face::System,
+            tracking: 0.0,
             ink: if bold { Ink::Strong } else { ink },
         });
         at += w(&run, size, weight);

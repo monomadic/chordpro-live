@@ -10,6 +10,7 @@ unsafe extern "C" {
         max_width: f64,
         tnum: c_int,
         mono: c_int,
+        kern: f64,
         out_w: *mut c_int,
         out_h: *mut c_int,
         out_baseline: *mut c_int,
@@ -56,6 +57,19 @@ impl CoreText {
         weight: u16,
         face: Face,
     ) -> Option<Raster> {
+        self.rasterize_tracked(text, size_pt, scale, weight, face, 0.0)
+    }
+
+    /// As `rasterize`, with `kern_pt` points added after every character.
+    pub fn rasterize_tracked(
+        &self,
+        text: &str,
+        size_pt: f32,
+        scale: f32,
+        weight: u16,
+        face: Face,
+        kern_pt: f32,
+    ) -> Option<Raster> {
         let text = CString::new(text).ok()?;
         let (mut width, mut height, mut baseline) = (0, 0, 0);
         let _coretext = coretext_lock();
@@ -68,6 +82,7 @@ impl CoreText {
                 0.0,
                 0,
                 i32::from(face == Face::Monospace),
+                kern_pt as f64,
                 &mut width,
                 &mut height,
                 &mut baseline,

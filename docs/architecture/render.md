@@ -26,8 +26,10 @@ runs under a `TITLE_STRIP_PT` (28 pt) strip of paper so the traffic lights
 float over it; the strip is part of the view key and shrinks the page's
 logical height. It is a constant until fullscreen exists, where it must be
 zero.
-Coverage rasters are cached by text, face, weight, size and display scale,
-with a 32 MiB cap.
+Coverage rasters are cached by text, face, weight, size, tracking and
+display scale, with a 32 MiB cap. A `Text`'s `tracking` (a fraction of its
+size) reaches CoreText as `NSKernAttributeName`, added after every
+character; measurement adds the same amount per character.
 
 The page uses the system proportional face for title, byline and lyrics,
 and the system monospaced face for chord symbols, section labels and status.

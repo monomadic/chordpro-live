@@ -92,7 +92,16 @@ A title wider than the content box wraps the same way, by its measured words
 returns `title_rows` with their baselines, `title_leading` title sizes apart,
 and the header's real `width`. Fit mode therefore keeps a long title and
 drops it at step 7 only when height requires. A single title word wider than
-the box still overflows and makes the candidate unfit.
+the box shrinks the whole title (`HeaderLayout::title_scale`) until it fits,
+but never below the body size; past that it overflows and makes the
+candidate unfit.
+
+**Header geometry** is the Figma mock's `Header` frame at body 17, in em:
+the first title baseline at `title_baseline`, wrapped title rows
+`title_leading` title sizes apart, the byline (the artist and `{subtitle}`
+joined by `BYLINE_SEPARATOR`) `byline_leading` byline sizes under the
+title, and a hairline (`HeaderLayout::rule`) `header_rule_drop` under the
+block's last baseline. Diagrams and the body start below the rule.
 
 Side labels sit in the left margin, whose width is fixed in points, so the
 room they have in em shrinks as the body size grows. `layout` marks a
@@ -102,12 +111,17 @@ no longer fit.
 
 **Metadata pills.** `measure_song` measures a pill for each of key, capo,
 tempo and time the song states (`Header::pills`, label and value as
-separate runs). `Options::header` places them right-aligned on the header's
-last line, centred on its x-height, when the title block plus two pill gaps
-leaves room for the whole row; otherwise they flow in rows of `meta_row`
-height under the byline, wrapping at the content width. Ladder step 6 sets
-`hide_pills`. The geometry (`pill_height`, `pill_pad`, `pill_gap`,
-`pill_kv_gap`, `meta_row`) comes from chordpro-pdf's layout table.
+separate runs, each widened by `meta_tracking` per character, since the
+text is letter-spaced). `Options::header` places them right-aligned,
+centred `pill_rise` above the header's last baseline (the mock's pills sit
+on the byline's text box), when the title block plus two pill gaps leaves
+room for the whole row; otherwise they flow in rows of `meta_row` height
+under the byline, wrapping at the content width. Ladder step 6 sets
+`hide_pills`. The pill follows the mock: `Page/Meta` labels in SF Pro Heavy
+and `MetaValue` values in Medium, both tracked 8%, in a full-round pill
+`pill_height` tall whose `pill_stroke` outline (ink-soft) sits inside its
+`pill_pad`, `pill_kv_gap` between label and value and `pill_gap` between
+pills.
 
 **Chord diagrams.** `measure_song` measures a diagram for each chord the
 song uses that has a shape (`Header::diagrams`: name, shape, and an `Nfr`

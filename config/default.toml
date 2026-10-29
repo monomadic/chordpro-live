@@ -2,13 +2,13 @@
 margin_x = 36
 margin_top = 28
 margin_bottom = 24
-title_size = 1.7
-subtitle_size = 0.76
+title_size = 2.176
+subtitle_size = 0.941
 label_size = 0.68
 chord_size = 0.82
 body_size = 17
 max_body_size = 28
-header_gap = 0.8
+header_gap = 0.941
 section_gap = 1.2
 line_height = 2.55
 chord_baseline = 0.72
@@ -23,17 +23,28 @@ inline_chord_size = 0.62
 inline_chord_gap = 0.15
 column_gutter = 2.8
 header_inline_gap = 0.8
-byline_leading = 1.8
+byline_leading = 1.909
 side_label_inset = 0.25
 wrap_indent = 1.0
-title_leading = 1.15
-meta_size = 0.72
+title_leading = 1.243
+# The Figma header at body 17: `Page/Title` 37/46 pt, `Page/Subtitle` 16/26
+# pt two points under it, a hairline at the foot of the subtitle's box and
+# the body 16 pt below it. Matched to the mock to the pixel at 1x.
+title_baseline = 2.067
+header_rule_drop = 0.548
+header_rule = 0.059
+# Pills: `Page/Meta` 12 pt Heavy and `MetaValue` Medium, both tracked 8%,
+# in a 25 pt pill with 9 pt padding inside its 2 pt outline (11 pt in all), a 6 pt key-value gap, 8 pt between
+# pills and a 2 pt ink-soft outline; the row sits on the byline's box.
+meta_size = 0.706
+meta_tracking = 0.08
+pill_rise = 0.599
 meta_row = 1.9
-pill_height = 1.25
-pill_pad = 0.42
-pill_gap = 0.55
-pill_kv_gap = 0.3
-pill_stroke = 0.05
+pill_height = 1.471
+pill_pad = 0.647
+pill_gap = 0.471
+pill_kv_gap = 0.353
+pill_stroke = 0.118
 diagram_name_size = 0.78
 diagram_mark_size = 0.42
 diagram_string_gap = 0.54

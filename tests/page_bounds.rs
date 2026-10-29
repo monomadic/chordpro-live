@@ -6,7 +6,14 @@ use cpl_render::CoreText;
 
 /// Ink extents of `item` in page points: (left, right, top, bottom).
 fn ink(item: &cpl_app::Text, scale: f32) -> Option<(f32, f32, f32, f32)> {
-    let raster = CoreText.rasterize(&item.content, item.size, scale, item.weight, item.face)?;
+    let raster = CoreText.rasterize_tracked(
+        &item.content,
+        item.size,
+        scale,
+        item.weight,
+        item.face,
+        item.tracking * item.size,
+    )?;
     let rows = || raster.coverage.chunks_exact(raster.width as usize);
     let leftmost = rows()
         .filter_map(|row| row.iter().position(|&a| a > 0))

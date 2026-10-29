@@ -59,8 +59,10 @@ pub struct Metrics {
     pub chord_gap: f32,
     pub inline_chord_size: f32,
     pub inline_chord_gap: f32,
-    /// Metadata pill text, in body sizes.
+    /// Metadata pill text, in body sizes, and its letter-spacing as a
+    /// fraction of that size (the mock's `Page/Meta`, 8%).
     pub meta_size: f32,
+    pub meta_tracking: f32,
     /// Chord diagram name and mark text, in body sizes.
     pub diagram_name_size: f32,
     pub diagram_mark_size: f32,
@@ -71,7 +73,7 @@ pub struct Metrics {
 impl Metrics {
     pub fn style(&self, role: Role) -> Style {
         let (size, weight, face) = match role {
-            Role::Title => (self.title_size, 600, Face::System),
+            Role::Title => (self.title_size, 700, Face::System),
             Role::Subtitle => (self.subtitle_size, 400, Face::System),
             Role::Label => (self.label_size, 700, Face::Monospace),
             Role::Chord => (self.chord_size, 600, Face::Monospace),
@@ -79,7 +81,9 @@ impl Metrics {
             Role::InlineChord => (self.inline_chord_size, 600, Face::Monospace),
             Role::Tab => (self.tab_size, 400, Face::Monospace),
             Role::Comment => (1.0, 400, Face::System),
-            Role::PillLabel | Role::PillValue => (self.meta_size, 600, Face::System),
+            // The mock's `Page/Meta` (SF Pro Heavy) and `MetaValue` (Medium).
+            Role::PillLabel => (self.meta_size, 860, Face::System),
+            Role::PillValue => (self.meta_size, 510, Face::System),
             Role::DiagramName => (self.diagram_name_size, 600, Face::Monospace),
             Role::DiagramMark => (self.diagram_mark_size, 400, Face::Monospace),
         };
@@ -401,6 +405,8 @@ pub struct Header {
     /// The title's words with their trailing spaces, measured, so a title
     /// wider than the content box can wrap instead of crossing the margin.
     pub title_tokens: Vec<Token>,
+    /// The byline under the title: the artist and the `{subtitle}`, joined
+    /// as the mock sets them (`Traditional  ·  American folk ballad`).
     pub artist: Option<String>,
     pub artist_width: f32,
     /// Key, capo, tempo and time, in that order, as the song states them.
@@ -431,6 +437,9 @@ pub struct MeasuredPill {
     pub value_width: f32,
 }
 
+/// Between the artist and the subtitle in the byline.
+pub const BYLINE_SEPARATOR: &str = "  ·  ";
+
 /// The metadata the header shows as pills, with the label each wears.
 pub const PILLS: [(&str, &str); 4] = [
     ("key", "KEY"),
@@ -454,7 +463,16 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
         cache: HashMap::new(),
     };
     let title = song.first_meta("title").unwrap_or("Untitled").to_owned();
-    let artist = song.first_meta("artist").map(str::to_owned);
+    let byline: Vec<&str> = ["artist", "subtitle"]
+        .into_iter()
+        .filter_map(|name| song.first_meta(name).map(str::trim))
+        .filter(|part| !part.is_empty())
+        .collect();
+    let artist = (!byline.is_empty()).then(|| byline.join(BYLINE_SEPARATOR));
+    // Pill text is letter-spaced: the measured advance plus the tracking
+    // after every character, which is how CoreText's kern draws it.
+    let tracked =
+        |text: &str| text.chars().count() as f32 * metrics.meta_tracking * metrics.meta_size;
     let header = Header {
         title_width: m.em(&title, Role::Title),
         title_tokens: m.tokens(&title, Role::Title),
@@ -482,9 +500,9 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
                 let value = song.first_meta(name)?.trim();
                 (!value.is_empty()).then(|| MeasuredPill {
                     label: label.to_string(),
-                    label_width: m.em(label, Role::PillLabel),
+                    label_width: m.em(label, Role::PillLabel) + tracked(label),
                     value: value.to_owned(),
-                    value_width: m.em(value, Role::PillValue),
+                    value_width: m.em(value, Role::PillValue) + tracked(value),
                 })
             })
             .collect(),
@@ -695,6 +713,7 @@ mod tests {
             inline_chord_size: 0.5,
             inline_chord_gap: 0.25,
             meta_size: 0.5,
+            meta_tracking: 0.0,
             diagram_name_size: 0.8,
             diagram_mark_size: 0.4,
             tab_size: 1.0,

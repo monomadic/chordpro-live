@@ -8,6 +8,8 @@ use cpl_song::SectionKind;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PageMetrics {
     pub title_size: f32,
+    /// The first title row's baseline below the top of the header.
+    pub title_baseline: f32,
     pub subtitle_size: f32,
     /// Byline advance under a title, in subtitle sizes.
     pub byline_leading: f32,
@@ -37,6 +39,12 @@ pub struct PageMetrics {
     pub pill_gap: f32,
     pub pill_kv_gap: f32,
     pub meta_size: f32,
+    /// A pill beside the title block centres this far above the block's
+    /// last baseline (the mock's pills sit on the byline's text box).
+    pub pill_rise: f32,
+    /// The header rule's distance below the title block's last baseline;
+    /// diagrams and the body start below it.
+    pub header_rule_drop: f32,
     /// Chord diagrams (chordpro-tui/internal/pdf/layout.go's dStrGap,
     /// dFretGap, dFretRows, dNameLH, dMarkLH, dFingerLH, dCellGap, dRowGap,
     /// dTopGap): string and fret spacing, fret rows shown, the rows for the
@@ -111,6 +119,9 @@ pub struct HeaderLayout {
     /// The title as drawn: each row's text and baseline. One row unless the
     /// title is wider than the content box.
     pub title_rows: Vec<(String, f32)>,
+    /// The title's size as a fraction of `title_size`: below 1 only when one
+    /// word is wider than the content box, and never below the body size.
+    pub title_scale: f32,
     /// The widest header row, in em.
     pub width: f32,
     /// Each shown pill's left edge and vertical centre, index-aligned with
@@ -119,6 +130,8 @@ pub struct HeaderLayout {
     /// Each shown diagram cell's left edge and top, index-aligned with
     /// `Header::diagrams`; empty when they are hidden.
     pub diagrams: Vec<(f32, f32)>,
+    /// The hairline under the title block, when there is a block.
+    pub rule: Option<f32>,
     pub artist: Option<(f32, f32)>,
     /// Where the first section starts.
     pub height: f32,
@@ -299,25 +312,34 @@ impl Options {
         let mut y = 0.0;
         let mut title_baseline = None;
         let mut title_rows = Vec::new();
+        let mut title_scale = 1.0_f32;
         let mut width: f32 = 0.0;
         if !self.hide_title {
             let rows = title_rows_within(header, max_width);
+            // A word that cannot wrap shrinks the whole title to fit, down to
+            // the body size; past that it stays wide and the page is unfit.
+            let widest = rows.iter().map(|(_, w)| *w).fold(0.0_f32, f32::max);
+            if widest > max_width && widest > 0.0 {
+                title_scale = (max_width / widest).max(1.0 / m.title_size).min(1.0);
+            }
             for (index, (text, row_width)) in rows.into_iter().enumerate() {
-                y += if index == 0 {
-                    m.title_size
-                } else {
-                    m.title_size * m.title_leading
-                };
+                y += title_scale
+                    * if index == 0 {
+                        m.title_baseline
+                    } else {
+                        m.title_size * m.title_leading
+                    };
                 title_baseline.get_or_insert(y);
-                width = width.max(row_width);
+                width = width.max(row_width * title_scale);
                 title_rows.push((text, y));
             }
         }
         let mut artist = None;
         if header.artist.is_some() {
             if self.one_line_header && !self.hide_title && title_rows.len() == 1 {
-                artist = Some((header.title_width + m.header_inline_gap, y));
-                width = header.title_width + m.header_inline_gap + header.artist_width;
+                let title_width = header.title_width * title_scale;
+                artist = Some((title_width + m.header_inline_gap, y));
+                width = title_width + m.header_inline_gap + header.artist_width;
             } else {
                 y += if self.hide_title {
                     m.subtitle_size
@@ -336,18 +358,13 @@ impl Options {
             // block leaves room (the mock's placement); otherwise in rows of
             // their own below it.
             let has_block = y > 0.0;
-            let last_size = if header.artist.is_some() {
-                m.subtitle_size
-            } else {
-                m.title_size
-            };
             if has_block && width + 2.0 * m.pill_gap + total <= max_width {
                 let mut x = if max_width.is_finite() {
                     max_width - total
                 } else {
                     width + 2.0 * m.pill_gap
                 };
-                let centre = y - last_size * 0.35;
+                let centre = y - m.pill_rise;
                 for pill_width in &widths {
                     pills.push((x, centre));
                     x += pill_width + m.pill_gap;
@@ -367,6 +384,12 @@ impl Options {
                 }
                 y = top + m.meta_row * (row + 1) as f32;
             }
+        }
+        // A hairline closes the title block: title, byline and pills.
+        let mut rule = None;
+        if y > 0.0 {
+            y += m.header_rule_drop;
+            rule = Some(y);
         }
         let mut diagrams = Vec::new();
         if !self.hide_diagrams && !header.diagrams.is_empty() {
@@ -390,9 +413,11 @@ impl Options {
         HeaderLayout {
             title_baseline,
             title_rows,
+            title_scale,
             width,
             pills,
             diagrams,
+            rule,
             artist,
             height: y + m.header_gap,
         }
@@ -567,7 +592,9 @@ pub fn layout(
         // larger body size they may no longer fit it; such a candidate is
         // unfit rather than drawn off the page.
         fits: fit.meets_floor
-            && header_width <= view.width
+            // Right-aligned pills end on the content edge, give or take the
+            // float error of summing their widths.
+            && header_width <= view.width + 1e-4
             && (!options.side_labels || labels_fit_side(song, m, view)),
         header,
         blocks,
@@ -619,6 +646,25 @@ mod tests {
     use crate::{Face, Measure, Metrics, measure_song};
 
     #[test]
+    fn a_title_word_too_wide_to_wrap_shrinks_to_fit_but_not_below_the_body() {
+        // "Scarborough" is 11 em wide at a 2 em title in the fixed measure.
+        let song = song("{title: Scarborough}\n[C]Alpha");
+        let roomy = Options::default().header(&song.header, &PAGE, 20.0);
+        assert_eq!(roomy.title_scale, 1.0);
+        let narrow = Options::default().header(&song.header, &PAGE, 8.0);
+        assert!((narrow.title_scale - 8.0 / 11.0).abs() < 1e-5);
+        assert!(narrow.width <= 8.0 + 1e-4);
+        assert!(
+            narrow.title_rows[0].1 < roomy.title_rows[0].1,
+            "a smaller title sits higher"
+        );
+        // Never smaller than the body: past that the title stays wide.
+        let tiny = Options::default().header(&song.header, &PAGE, 4.0);
+        assert_eq!(tiny.title_scale, 1.0 / PAGE.title_size);
+        assert!(tiny.width > 4.0);
+    }
+
+    #[test]
     fn a_candidate_counts_the_rows_wrapping_adds() {
         let song = song("[C]one two three four five six");
         let wide = layout(
@@ -656,6 +702,7 @@ mod tests {
 
     const PAGE: PageMetrics = PageMetrics {
         title_size: 2.0,
+        title_baseline: 2.0,
         subtitle_size: 0.75,
         byline_leading: 1.8,
         header_gap: 1.0,
@@ -676,6 +723,8 @@ mod tests {
         pill_gap: 0.55,
         pill_kv_gap: 0.3,
         meta_size: 0.7,
+        pill_rise: 0.2625,
+        header_rule_drop: 0.0,
         diagram_string_gap: 0.54,
         diagram_fret_gap: 0.6,
         diagram_frets: 4.0,
@@ -701,6 +750,7 @@ mod tests {
             inline_chord_size: 0.6,
             inline_chord_gap: 0.2,
             meta_size: 0.7,
+            meta_tracking: 0.0,
             diagram_name_size: 0.78,
             diagram_mark_size: 0.42,
             tab_size: 1.0,

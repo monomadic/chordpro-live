@@ -36,6 +36,8 @@ static NSFont *sb_font(double size, int weight, int mono) {
 }
 
 // Typographic advance of `utf8` at `size` points, without drawing anything.
+// Tracked text is measured by the caller (`kern` per character), so this
+// stays the plain advance.
 // Layout measures with this; only the renderer pays for a bitmap. Trailing
 // spaces count, because the next run starts after them.
 double sb_text_width(const char *utf8, double size, int weight, int mono) {
@@ -66,7 +68,8 @@ double sb_text_width(const char *utf8, double size, int weight, int mono) {
 //
 // `max_width` > 0 truncates with a trailing ellipsis. `tnum` selects tabular
 // (fixed-advance) figures so columns of digits don't shimmy as they change.
-// `mono` picks the system monospaced face instead of the UI face.
+// `mono` picks the system monospaced face instead of the UI face. `kern`
+// adds that many points after every character (letter-spacing); 0 is none.
 //
 // Returns a malloc'd A8 buffer of `*out_w * *out_h` bytes (rows are tightly
 // packed, one byte per pixel) and writes the baseline's distance from the top
@@ -82,7 +85,7 @@ double sb_text_width(const char *utf8, double size, int weight, int mono) {
 // them (so there is no second raster to misregister against the first).
 // Free with sb_text_free_f.
 unsigned char *sb_text_rasterize(const char *utf8, double size, double scale, int weight,
-                                 double max_width, int tnum, int mono,
+                                 double max_width, int tnum, int mono, double kern,
                                  int *out_w, int *out_h, int *out_baseline,
                                  float **out_adv, int *out_adv_n) {
     @autoreleasepool {
@@ -108,7 +111,11 @@ unsigned char *sb_text_rasterize(const char *utf8, double size, double scale, in
             if (tab) font = tab;
         }
 
-        NSDictionary *attrs = @{
+        NSDictionary *attrs = kern != 0.0 ? @{
+            NSFontAttributeName : font,
+            NSForegroundColorAttributeName : [NSColor whiteColor],
+            NSKernAttributeName : @(kern),
+        } : @{
             NSFontAttributeName : font,
             NSForegroundColorAttributeName : [NSColor whiteColor],
         };

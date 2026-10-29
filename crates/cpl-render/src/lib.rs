@@ -16,6 +16,7 @@ struct RasterKey {
     scale: u32,
     weight: u16,
     face: Face,
+    tracking: u32,
 }
 
 #[derive(Default)]
@@ -32,16 +33,18 @@ impl RasterCache {
             scale: scale.to_bits(),
             weight: item.weight,
             face: item.face,
+            tracking: item.tracking.to_bits(),
         };
         if let Some(raster) = self.entries.get(&key) {
             return Some(Arc::clone(raster));
         }
-        let raster = Arc::new(CoreText.rasterize(
+        let raster = Arc::new(CoreText.rasterize_tracked(
             &item.content,
             item.size,
             scale,
             item.weight,
             item.face,
+            item.tracking * item.size,
         )?);
         const BUDGET: usize = 32 * 1024 * 1024;
         let bytes = raster.coverage.len();
@@ -592,6 +595,7 @@ mod cache_tests {
             size: 17.0,
             weight: 400,
             face: Face::System,
+            tracking: 0.0,
             ink: Ink::Strong,
         };
         let mut cache = RasterCache::default();
@@ -619,6 +623,7 @@ mod cache_tests {
                     size: 17.0,
                     weight: 400,
                     face: Face::System,
+                    tracking: 0.0,
                     ink: Ink::Strong,
                 })
                 .collect(),
@@ -714,6 +719,7 @@ mod cache_tests {
                 size: 17.0,
                 weight: 400,
                 face: Face::System,
+                tracking: 0.0,
                 ink: Ink::Strong,
             }],
             shapes: Vec::new(),
