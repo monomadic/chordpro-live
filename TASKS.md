@@ -156,14 +156,17 @@ automated checks. When every task in an epic is checked, the epic moves to
 - [ ] Live transpose (`[` `]`, `0` resets) with chordpro-tui's spelling
   rules and `{transpose}` honoured, chord diagrams following it, and the
   status strip showing the offset (PROPOSAL.md, "The app").
-- [ ] Match the page body to the Figma mock as the header now is. Measured
-  differences at body 17: chords are `Page/Chord` SF Pro Semibold 15 pt in
-  the mock but monospaced 0.82 em here; section labels are SF Pro Bold 14 pt
-  tracked 8% (monospaced here); a chord/lyric pair is 53 pt (3.12 em, 45 pt
-  segment plus 8) against 2.55 em; sections are 18 pt apart against 1.2 em;
-  the status strip is SF Pro 12 pt in ink-soft with key hints on the right
-  (monospaced and faint here); and `ink-faint` is 184/74 against the app's
-  145/110. Each changes how much fits, so decide with the user first.
+- [x] Match the page body to the Figma mock as the header now is. Chords
+  are `Page/Chord` SF Pro Semibold 15 pt and labels `Page/Label` Bold 14 pt
+  tracked 8%, both ink-soft (a chorus label is ink); a chord/lyric pair
+  repeats every 53 pt; sections are 18 pt apart; columns 32 pt; the status
+  strip is SF Pro 12 pt ink-soft with the mode's keys flush right; the inks
+  are the mock's Polarity variables (ink-faint 184/74, ink-wash 242/22).
+  Checked against the mock at 1x through `cpl render` (label, chord, lyric
+  and pitch offsets exact) and in light and dark 2x windows; goldens
+  re-blessed. Not matched: `Page/Comment` is italic in the mock and upright
+  here (the shim has no italic face), and the mock's status keys name
+  transpose and a chord toggle that do not exist yet.
 - [ ] Run ChordPro 6 conformance against the reference implementation and
   generate the directive status table from the results.
 - [ ] Add the iOS host after the app and renderer boundaries are stable.

@@ -60,18 +60,20 @@ impl RasterCache {
     }
 }
 
+/// The Figma mock's Polarity variables: ink, ink-soft, ink-faint, paper and
+/// ink-wash, in light and dark.
 fn ink_level(polarity: Polarity, ink: Ink) -> u8 {
     match (polarity, ink) {
         (Polarity::Light, Ink::Strong) => 0,
         (Polarity::Light, Ink::Soft) => 74,
-        (Polarity::Light, Ink::Faint) => 145,
+        (Polarity::Light, Ink::Faint) => 184,
         (Polarity::Dark, Ink::Strong) => 255,
-        (Polarity::Dark, Ink::Soft) => 181,
-        (Polarity::Dark, Ink::Faint) => 110,
+        (Polarity::Dark, Ink::Soft) => 180,
+        (Polarity::Dark, Ink::Faint) => 74,
         (Polarity::Light, Ink::Paper) => 255,
         (Polarity::Dark, Ink::Paper) => 0,
-        (Polarity::Light, Ink::Wash) => 238,
-        (Polarity::Dark, Ink::Wash) => 34,
+        (Polarity::Light, Ink::Wash) => 242,
+        (Polarity::Dark, Ink::Wash) => 22,
     }
 }
 

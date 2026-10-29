@@ -43,6 +43,8 @@ pub struct Style {
     pub size: f32,
     pub weight: u16,
     pub face: Face,
+    /// Letter-spacing after every character, as a fraction of the size.
+    pub tracking: f32,
 }
 
 /// The type scale measurement needs. Sizes and gaps are in em; the reference
@@ -63,6 +65,8 @@ pub struct Metrics {
     /// fraction of that size (the mock's `Page/Meta`, 8%).
     pub meta_size: f32,
     pub meta_tracking: f32,
+    /// Section label letter-spacing (the mock's `Page/Label`, 8%).
+    pub label_tracking: f32,
     /// Chord diagram name and mark text, in body sizes.
     pub diagram_name_size: f32,
     pub diagram_mark_size: f32,
@@ -72,22 +76,29 @@ pub struct Metrics {
 
 impl Metrics {
     pub fn style(&self, role: Role) -> Style {
-        let (size, weight, face) = match role {
-            Role::Title => (self.title_size, 700, Face::System),
-            Role::Subtitle => (self.subtitle_size, 400, Face::System),
-            Role::Label => (self.label_size, 700, Face::Monospace),
-            Role::Chord => (self.chord_size, 600, Face::Monospace),
-            Role::Lyric => (1.0, 400, Face::System),
-            Role::InlineChord => (self.inline_chord_size, 600, Face::Monospace),
-            Role::Tab => (self.tab_size, 400, Face::Monospace),
-            Role::Comment => (1.0, 400, Face::System),
+        let (size, weight, face, tracking) = match role {
+            Role::Title => (self.title_size, 700, Face::System, 0.0),
+            Role::Subtitle => (self.subtitle_size, 400, Face::System, 0.0),
+            // The mock's `Page/Label` (SF Pro Bold, tracked) and `Page/Chord`
+            // (SF Pro Semibold): proportional, as the lyrics are.
+            Role::Label => (self.label_size, 700, Face::System, self.label_tracking),
+            Role::Chord => (self.chord_size, 590, Face::System, 0.0),
+            Role::Lyric => (1.0, 400, Face::System, 0.0),
+            Role::InlineChord => (self.inline_chord_size, 590, Face::System, 0.0),
+            Role::Tab => (self.tab_size, 400, Face::Monospace, 0.0),
+            Role::Comment => (1.0, 400, Face::System, 0.0),
             // The mock's `Page/Meta` (SF Pro Heavy) and `MetaValue` (Medium).
-            Role::PillLabel => (self.meta_size, 860, Face::System),
-            Role::PillValue => (self.meta_size, 510, Face::System),
-            Role::DiagramName => (self.diagram_name_size, 600, Face::Monospace),
-            Role::DiagramMark => (self.diagram_mark_size, 400, Face::Monospace),
+            Role::PillLabel => (self.meta_size, 860, Face::System, self.meta_tracking),
+            Role::PillValue => (self.meta_size, 510, Face::System, self.meta_tracking),
+            Role::DiagramName => (self.diagram_name_size, 600, Face::Monospace, 0.0),
+            Role::DiagramMark => (self.diagram_mark_size, 400, Face::Monospace, 0.0),
         };
-        Style { size, weight, face }
+        Style {
+            size,
+            weight,
+            face,
+            tracking,
+        }
     }
 }
 
@@ -471,8 +482,6 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
     let artist = (!byline.is_empty()).then(|| byline.join(BYLINE_SEPARATOR));
     // Pill text is letter-spaced: the measured advance plus the tracking
     // after every character, which is how CoreText's kern draws it.
-    let tracked =
-        |text: &str| text.chars().count() as f32 * metrics.meta_tracking * metrics.meta_size;
     let header = Header {
         title_width: m.em(&title, Role::Title),
         title_tokens: m.tokens(&title, Role::Title),
@@ -500,9 +509,9 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
                 let value = song.first_meta(name)?.trim();
                 (!value.is_empty()).then(|| MeasuredPill {
                     label: label.to_string(),
-                    label_width: m.em(label, Role::PillLabel) + tracked(label),
+                    label_width: m.em(label, Role::PillLabel),
                     value: value.to_owned(),
-                    value_width: m.em(value, Role::PillValue) + tracked(value),
+                    value_width: m.em(value, Role::PillValue),
                 })
             })
             .collect(),
@@ -588,7 +597,8 @@ impl<M: Measure> Measurer<'_, M> {
         let width = self
             .measure
             .width(text, style.size * body, style.weight, style.face)
-            / body;
+            / body
+            + text.chars().count() as f32 * style.tracking * style.size;
         cache.insert(text.to_owned(), width);
         width
     }
@@ -714,6 +724,7 @@ mod tests {
             inline_chord_gap: 0.25,
             meta_size: 0.5,
             meta_tracking: 0.0,
+            label_tracking: 0.0,
             diagram_name_size: 0.8,
             diagram_mark_size: 0.4,
             tab_size: 1.0,

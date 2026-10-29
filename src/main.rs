@@ -396,17 +396,20 @@ impl Worker {
             inset: request.inset_px() as i32,
             paper,
         };
-        let status = scroll.status.map(|mut text| {
+        let status = (!scroll.status.is_empty()).then(|| {
             let c = &self.config;
             let strip = c.margin_bottom + c.status_height * c.body_size;
             let strip_px = (strip * scale).ceil() as u32;
             view.status_top = request.content_px() as i32 - strip_px as i32;
-            text.baseline -= height - strip;
+            let mut text = scroll.status;
+            for item in &mut text {
+                item.baseline -= height - strip;
+            }
             let frame = Frame {
                 width,
                 height: strip,
                 polarity: request.polarity,
-                text: vec![text],
+                text,
                 shapes: Vec::new(),
                 fits: false,
                 columns: 1,

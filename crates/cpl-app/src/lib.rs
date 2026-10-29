@@ -88,8 +88,9 @@ pub struct ScrollView {
     /// Window-space band, in points, outside which the host paints paper so
     /// a partially visible line never shows. Empty when nothing is visible.
     pub band: (f32, f32),
-    /// The status strip of a scrolling page. A fitted page draws its own.
-    pub status: Option<Text>,
+    /// The status strip of a scrolling page: where you are on the left, key
+    /// hints on the right when there is room. A fitted page draws its own.
+    pub status: Vec<Text>,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +111,9 @@ pub struct Config {
     pub lyric_baseline: f32,
     pub label_height: f32,
     pub label_gap: f32,
+    /// The section label's baseline below the top of its row, in em.
+    pub label_baseline: f32,
+    pub label_tracking: f32,
     pub chord_gap: f32,
     pub inline_line_height: f32,
     pub inline_lyric_baseline: f32,
@@ -171,6 +175,9 @@ pub struct Config {
     pub tab_inset: f32,
     pub tab_rule: f32,
     pub status_height: f32,
+    /// Status strip text size, and its baseline above the bottom margin.
+    pub status_size: f32,
+    pub status_drop: f32,
     pub max_columns: f32,
     /// The search screen, in points: query, label and row text sizes, the
     /// header and row heights, pill height and padding, the gap after each
@@ -256,6 +263,8 @@ impl Config {
             lyric_baseline: take!("lyric_baseline"),
             label_height: take!("label_height"),
             label_gap: take!("label_gap"),
+            label_baseline: take!("label_baseline"),
+            label_tracking: take!("label_tracking"),
             chord_gap: take!("chord_gap"),
             inline_line_height: take!("inline_line_height"),
             inline_lyric_baseline: take!("inline_lyric_baseline"),
@@ -301,6 +310,8 @@ impl Config {
             tab_inset: take!("tab_inset"),
             tab_rule: take!("tab_rule"),
             status_height: take!("status_height"),
+            status_size: take!("status_size"),
+            status_drop: take!("status_drop"),
             max_columns: take!("max_columns"),
             search_query_size: take!("search_query_size"),
             search_label_size: take!("search_label_size"),
@@ -354,6 +365,7 @@ impl Config {
             inline_chord_gap: self.inline_chord_gap,
             meta_size: self.meta_size,
             meta_tracking: self.meta_tracking,
+            label_tracking: self.label_tracking,
             diagram_name_size: self.diagram_name_size,
             diagram_mark_size: self.diagram_mark_size,
             tab_size: self.tab_size,
@@ -370,7 +382,32 @@ pub struct App {
     pub polarity: Polarity,
     /// The viewer's tablature choice; `set_tabs` changes it.
     tabs: Tabs,
+    /// Each `HINTS` line's width at every body size the page may take, and a
+    /// generous width per status character, in em of the body, so composing
+    /// never measures. System text narrows as it grows, so one size is not
+    /// enough to set the hints flush with the right margin.
+    hint_widths: Vec<(f32, [f32; 3])>,
+    status_char: f32,
 }
+
+/// The status strip's key hints, set at its right edge as in the mock.
+#[derive(Clone, Copy)]
+enum Hints {
+    Fit,
+    Scroll,
+    Page,
+}
+
+const HINTS: [&str; 3] = [
+    "n p songs     v view     i invert     / search",
+    "↑ ↓ scroll     v view     i invert     / search",
+    "Space turn     v view     i invert     / search",
+];
+
+const STATUS_SEPARATOR: &str = "   ·   ";
+
+/// Status text whose width stands in for any status line's, per character.
+const STATUS_PROBE: &str = "FIT   ·   SCROLL   ·   PAGE 2 / 3   ·   stand 28 pt   ·   CHORUS";
 
 enum PreparedPage {
     Fit(Frame),
@@ -448,6 +485,21 @@ impl App {
                 cpl_layout::measure_song(&song, &config.metrics_at(config.max_body_size), measure),
             ));
         }
+        let status_pt = config.status_size * config.body_size;
+        let hint_widths = std::iter::once(config.body_size)
+            .chain(larger.iter().map(|(size, _)| *size))
+            .map(|body| {
+                let pt = config.status_size * body;
+                (
+                    body,
+                    HINTS.map(|hint| measure.width(hint, pt, 400, Face::System) / body),
+                )
+            })
+            .collect();
+        let status_char = measure.width(STATUS_PROBE, status_pt, 400, Face::System)
+            / STATUS_PROBE.chars().count() as f32
+            / config.body_size
+            * 1.15;
         Self {
             song,
             config,
@@ -456,6 +508,8 @@ impl App {
             prepared: RefCell::new(None),
             polarity,
             tabs: Tabs::Auto,
+            hint_widths,
+            status_char,
         }
     }
 
@@ -612,7 +666,7 @@ impl App {
                 offset: 0.0,
                 max_offset: 0.0,
                 band: (0.0, height),
-                status: None,
+                status: Vec::new(),
             },
             PreparedPage::Scroll {
                 bounds,
@@ -663,35 +717,84 @@ impl App {
                         self.page_status(width, page, pages.len(), first_visible_group, sections)
                     }
                 };
-                let status = Text {
-                    group: usize::MAX,
-                    content,
-                    x: c.margin_x,
-                    baseline: height - c.margin_bottom * 0.5,
-                    size: body * 0.7,
-                    weight: 400,
-                    face: Face::Monospace,
-                    tracking: 0.0,
-                    ink: Ink::Faint,
+                let hints = if page.is_some() {
+                    Hints::Page
+                } else {
+                    Hints::Scroll
                 };
+                let status = self.status_texts(width, height, body, content, hints);
                 ScrollView {
                     offset,
                     max_offset: *max_offset,
                     band,
-                    status: Some(status),
+                    status,
                 }
             }
         }
     }
 
-    fn section_prefix(first_visible_group: Option<usize>, sections: &[ScrollSection]) -> String {
+    /// The status strip: `left` at the margin and, when both fit with two em
+    /// between them, the key hints ending at the right margin.
+    fn status_texts(
+        &self,
+        width: f32,
+        height: f32,
+        body: f32,
+        left: String,
+        hints: Hints,
+    ) -> Vec<Text> {
+        let c = &self.config;
+        let baseline = height - c.margin_bottom - c.status_drop * body;
+        let text = |content: String, x: f32| Text {
+            group: usize::MAX,
+            content,
+            x,
+            baseline,
+            size: c.status_size * body,
+            weight: 400,
+            face: Face::System,
+            tracking: 0.0,
+            ink: Ink::Soft,
+        };
+        let (_, widths) = self
+            .hint_widths
+            .iter()
+            .min_by(|a, b| (a.0 - body).abs().total_cmp(&(b.0 - body).abs()))
+            .expect("the floor is always measured");
+        let hint_width = widths[hints as usize] * body;
+        let left_width = left.chars().count() as f32 * self.status_char * body;
+        let fits = left_width + 2.0 * body + hint_width <= width - 2.0 * c.margin_x;
+        let mut status = vec![text(left, c.margin_x)];
+        if fits {
+            status.push(text(
+                HINTS[hints as usize].to_owned(),
+                width - c.margin_x - hint_width,
+            ));
+        }
+        status
+    }
+
+    /// The section in view and a separator, three spaces either side in a
+    /// wide window as in the mock, two in a narrow one.
+    fn section_prefix(
+        width: f32,
+        first_visible_group: Option<usize>,
+        sections: &[ScrollSection],
+    ) -> String {
+        let separator = if width < 700.0 {
+            "  ·  "
+        } else {
+            STATUS_SEPARATOR
+        };
         first_visible_group
             .and_then(|group| {
                 sections
                     .iter()
                     .find(|section| section.groups.contains(&group))
             })
-            .map_or(String::new(), |section| format!("{}  ·  ", section.name))
+            .map_or(String::new(), |section| {
+                format!("{}{separator}", section.name)
+            })
     }
 
     fn page_status(
@@ -702,13 +805,13 @@ impl App {
         first_visible_group: Option<usize>,
         sections: &[ScrollSection],
     ) -> String {
-        let prefix = Self::section_prefix(first_visible_group, sections);
+        let prefix = Self::section_prefix(width, first_visible_group, sections);
         let page = format!("PAGE {} / {count}", page + 1);
         if width < 700.0 {
             format!("{prefix}{page}")
         } else {
             format!(
-                "{prefix}{page}  ·  stand {} pt  ·  Space / Page Down turns",
+                "{prefix}{page}{STATUS_SEPARATOR}stand {} pt",
                 self.config.body_size
             )
         }
@@ -728,7 +831,12 @@ impl App {
         } else {
             ""
         };
-        let section_prefix = Self::section_prefix(first_visible_group, sections);
+        let wide_more = if offset < max_offset {
+            format!("{STATUS_SEPARATOR}MORE ↓")
+        } else {
+            String::new()
+        };
+        let section_prefix = Self::section_prefix(width, first_visible_group, sections);
         if width < 400.0 {
             // A phone-narrow window keeps where you are and whether there is
             // more; the point size can wait.
@@ -737,7 +845,7 @@ impl App {
         } else if width < 700.0 {
             format!("{section_prefix}SCROLL  ·  {body} pt{more}")
         } else {
-            format!("{section_prefix}SCROLL  ·  stand {body} pt  ·  ↑ ↓ / Page Up Down{more}")
+            format!("{section_prefix}SCROLL{STATUS_SEPARATOR}stand {body} pt{wide_more}")
         }
     }
 
@@ -874,14 +982,15 @@ impl App {
                 if item.content == "Song needs paging at this readable size" {
                     item.content = "Widen window to show this song".into();
                 } else if item.content.starts_with("PAGE NEEDED") {
-                    item.content = format!("WIDTH NEEDED  ·  stand {} pt", body);
+                    item.content = format!("WIDTH NEEDED{STATUS_SEPARATOR}stand {} pt", body);
                 }
             }
             return PreparedPage::NeedsWidth(fit);
         }
         let long_options = long.options;
         let mut long = self.compose(width, height, body, &self.measured, &long);
-        long.text.pop(); // the long page's status strip belongs below its viewport
+        // The long page's status strip belongs below its viewport.
+        long.text.retain(|item| item.group != usize::MAX);
         let content_end = height - c.margin_bottom - c.status_height * body;
         let last_baseline = long
             .text
@@ -1245,6 +1354,7 @@ impl App {
         let wrap = self.viewport(width, height, body).width;
         if frame.fits {
             let metrics = c.metrics();
+            let label_style = metrics.style(Role::Label);
             let mut column_x = c.margin_x;
             let mut line_group = 1;
             for range in &solution.fit.columns {
@@ -1279,17 +1389,20 @@ impl App {
                                         c.lyric_baseline
                                     }) * body
                             } else {
-                                section_y
+                                section_y - (c.label_height - c.label_baseline) * body
                             },
-                            size: c.label_size * body,
-                            weight: if section.kind == SectionKind::Chorus {
-                                700
+                            size: label_style.size * body,
+                            weight: label_style.weight,
+                            face: label_style.face,
+                            tracking: label_style.tracking,
+                            // The mock sets every label in the soft ink; a
+                            // chorus label is the strong ink, so the part
+                            // that comes back is easy to find.
+                            ink: if section.kind == SectionKind::Chorus {
+                                Ink::Strong
                             } else {
-                                600
+                                Ink::Soft
                             },
-                            face: Face::Monospace,
-                            tracking: 0.0,
-                            ink: Ink::Soft,
                         });
                         if o.tab_folded(section) {
                             // The cue says the tab is there and folded, so an
@@ -1311,7 +1424,6 @@ impl App {
                                 content,
                                 x,
                                 ink: Ink::Faint,
-                                weight: 600,
                                 ..label
                             });
                         }
@@ -1393,7 +1505,7 @@ impl App {
                                     size: style.size * body,
                                     weight: style.weight,
                                     face: style.face,
-                                    tracking: 0.0,
+                                    tracking: style.tracking,
                                     ink,
                                 });
                             }
@@ -1425,36 +1537,28 @@ impl App {
                 ink: Ink::Soft,
             });
         }
-        frame.text.push(Text {
-            group: usize::MAX,
-            content: if frame.fits && width < 500.0 {
-                format!("FIT  ·  {body} pt  ·  step {}", frame.ladder_step)
-            } else if frame.fits {
-                format!(
-                    "FIT  ·  {} {}  ·  stand {} pt",
-                    frame.columns,
-                    if frame.columns == 1 {
-                        "column"
-                    } else {
-                        "columns"
-                    },
-                    body
-                ) + &if frame.ladder_step > 0 {
-                    format!("  ·  compact {}", frame.ladder_step)
+        let status = if frame.fits && width < 500.0 {
+            format!("FIT  ·  {body} pt  ·  step {}", frame.ladder_step)
+        } else if frame.fits {
+            format!(
+                "FIT{STATUS_SEPARATOR}{} {}{STATUS_SEPARATOR}stand {} pt",
+                frame.columns,
+                if frame.columns == 1 {
+                    "column"
                 } else {
-                    String::new()
-                }
+                    "columns"
+                },
+                body
+            ) + &if frame.ladder_step > 0 {
+                format!("{STATUS_SEPARATOR}compact {}", frame.ladder_step)
             } else {
-                format!("PAGE NEEDED  ·  stand {} pt", body)
-            },
-            x: c.margin_x,
-            baseline: height - c.margin_bottom * 0.5,
-            size: body * 0.7,
-            weight: 400,
-            face: Face::Monospace,
-            tracking: 0.0,
-            ink: Ink::Faint,
-        });
+                String::new()
+            }
+        } else {
+            format!("PAGE NEEDED{STATUS_SEPARATOR}stand {} pt", body)
+        };
+        let status = self.status_texts(width, height, body, status, Hints::Fit);
+        frame.text.extend(status);
         frame
     }
 }
@@ -1792,7 +1896,7 @@ mod tests {
         let app = app(
             "{title: Test}\n{start_of_chorus: A}\n[C]Echo\n[G]Again\n{end_of_chorus}\n{start_of_chorus: A}\n[C]Echo\n[G]Again\n{end_of_chorus}",
         );
-        let frame = at_step(&app, 190.0, 8);
+        let frame = at_step(&app, 150.0, 8);
         assert_eq!(count(&frame, "Echo"), 2);
         assert_eq!(count(&frame, "Again"), 1);
     }
@@ -1897,7 +2001,7 @@ mod tests {
         let mut seen = Vec::new();
         for index in 0..count {
             let view = app.page_view(width, height, index);
-            let status = view.status.as_ref().unwrap();
+            let status = view.status.first().unwrap();
             assert!(
                 status
                     .content
@@ -1926,7 +2030,7 @@ mod tests {
     fn a_fitted_song_is_one_page() {
         let app = app("{title: Test}\n{sov: A}\n[C]Hello\n{eov}");
         assert_eq!(app.page_count(900.0, 600.0), 1);
-        assert!(app.page_view(900.0, 600.0, 3).status.is_none());
+        assert!(app.page_view(900.0, 600.0, 3).status.is_empty());
     }
 
     #[test]
@@ -1981,7 +2085,7 @@ mod tests {
     #[test]
     fn a_recalled_chorus_collapses_at_step_eight() {
         let app = app("{title: Test}\n{soc: A}\n[C]Echo\n[G]Again\n{eoc}\n{chorus}");
-        let frame = at_step(&app, 190.0, 8);
+        let frame = at_step(&app, 150.0, 8);
         assert_eq!(count(&frame, "Echo"), 2);
         assert_eq!(count(&frame, "Again"), 1);
     }
@@ -2032,7 +2136,7 @@ mod tests {
             let view = app.view(width, height, offset);
             assert_eq!(view.max_offset, max_offset);
             assert_eq!(view.offset, offset.min(max_offset));
-            let status = view.status.as_ref().expect("scroll status");
+            let status = view.status.first().expect("scroll status");
             let drawn_status = frame.text.iter().find(|t| t.group == usize::MAX).unwrap();
             assert_eq!(status.content, drawn_status.content);
             // Every drawn song item sits inside the band; every page item the
@@ -2205,7 +2309,7 @@ mod tests {
         let view = app.view(900.0, 600.0, 500.0);
         assert_eq!(view.offset, 0.0);
         assert_eq!(view.band, (0.0, 600.0));
-        assert!(view.status.is_none());
+        assert!(view.status.is_empty());
     }
 
     #[test]

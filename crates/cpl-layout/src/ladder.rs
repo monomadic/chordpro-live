@@ -751,6 +751,7 @@ mod tests {
             inline_chord_gap: 0.2,
             meta_size: 0.7,
             meta_tracking: 0.0,
+            label_tracking: 0.0,
             diagram_name_size: 0.78,
             diagram_mark_size: 0.42,
             tab_size: 1.0,

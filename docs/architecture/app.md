@@ -10,9 +10,20 @@ macOS host owns `App` on a worker and submits viewport requests from the
 window thread; only the newest complete result is accepted. `cpl-app` has no
 window or GPU dependency.
 
-The page uses up to four columns. Chords and lyrics share a
-line block: the chord baseline is immediately above the lyric baseline, and
-section labels have their own gap. All page dimensions are in
+The page uses up to four columns, `column_gutter` apart. The body follows
+the Figma mock at 17 pt: a chord/lyric pair is `Page/Chord` (SF Pro
+Semibold 15/16 pt, ink-soft) four points over `Page/Lyric` (17/25 pt,
+ink), repeated every `line_height` (53 pt, the 45 pt pair plus 8);
+a section's `Page/Label` (Bold 14/27 pt, tracked 8%, ink-soft, ink for a
+chorus) sits `label_gap` above its first line, its baseline `label_baseline`
+into its row; sections are 18 pt apart (`section_gap` plus the last line's
+lead).
+
+The status strip is `Page/Status` (SF Pro 12/21 pt, ink-soft) `status_drop`
+above the bottom margin: where the page stands on the left, and the keys
+for the page's mode at the right margin when both fit with two em between
+them. The hints' widths are measured once per candidate body size in
+`App::new`, so composing never measures. All page dimensions are in
 `config/default.toml`; font sizes are points and the other values are in
 body-size units except margins, which are points. A song crossing the bottom
 margin scrolls at the same body size. A line wider than the content box
@@ -96,7 +107,7 @@ drops it, as ladder step 7 would: the header is one scroll group, and a
 group taller than the viewport could never be shown whole.
 
 Frames carry `Shape`s beside `Text`: rounded rectangles in page points,
-filled or outlined, with a group and an ink like text. Pills are a faint
+filled or outlined, with a group and an ink like text. Pills are an ink-soft
 capsule outline with the label in soft ink and the value in strong ink, the
 baseline 0.35 of the pill text size below the capsule's centre. A scroll
 page's group bounds include its shapes, so a pill shows only with its header.

@@ -31,8 +31,10 @@ display scale, with a 32 MiB cap. A `Text`'s `tracking` (a fraction of its
 size) reaches CoreText as `NSKernAttributeName`, added after every
 character; measurement adds the same amount per character.
 
-The page uses the system proportional face for title, byline and lyrics,
-and the system monospaced face for chord symbols, section labels and status.
+The page uses the system proportional face (SF Pro) for everything but
+tablature and the chord diagrams' names and marks, which are monospaced.
+The inks are the Figma mock's Polarity variables: ink 0/255, ink-soft
+74/180, ink-faint 184/74, ink-wash 242/22 and paper 255/0 (light/dark).
 Measurement and rasterisation receive the same face, size and weight, so
 switching faces preserves chord alignment. The type scale and spacing live
 in `config/default.toml`.

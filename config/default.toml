@@ -1,27 +1,33 @@
 [page]
 margin_x = 36
 margin_top = 28
-margin_bottom = 24
+margin_bottom = 16
 title_size = 2.176
 subtitle_size = 0.941
-label_size = 0.68
-chord_size = 0.82
 body_size = 17
 max_body_size = 28
 header_gap = 0.941
-section_gap = 1.2
-line_height = 2.55
-chord_baseline = 0.72
-lyric_baseline = 1.75
-label_height = 1.5
-label_gap = 0.45
+# The body at 17 pt: `Page/Chord` SF Pro Semibold 15/16 pt and `Page/Lyric`
+# 17/25 pt four points under it, a 45 pt pair repeated every 53 pt;
+# `Page/Label` Bold 14/27 pt tracked 8%, 8 pt above the first line; 18 pt
+# between sections (10 after the last line's 8 pt of lead).
+chord_size = 0.882
+label_size = 0.824
+label_tracking = 0.08
+line_height = 3.118
+chord_baseline = 0.784
+lyric_baseline = 2.267
+label_height = 1.588
+label_baseline = 1.087
+label_gap = 0.471
+section_gap = 0.588
 chord_gap = 0.38
 inline_line_height = 1.7
 inline_lyric_baseline = 1.28
 inline_chord_baseline = 0.6
 inline_chord_size = 0.62
 inline_chord_gap = 0.15
-column_gutter = 2.8
+column_gutter = 1.882
 header_inline_gap = 0.8
 byline_leading = 1.909
 side_label_inset = 0.25
@@ -65,7 +71,11 @@ tab_baseline = 0.82
 tab_system_gap = 0.6
 tab_inset = 0.7
 tab_rule = 0.05
-status_height = 1.5
+# The status strip: `Page/Status`, SF Pro 12/21 pt in ink-soft, 16 pt under
+# the body, its baseline 6.2 pt above the bottom margin, key hints at the right.
+status_height = 2.176
+status_size = 0.706
+status_drop = 0.367
 max_columns = 4
 # The search screen, in points (the Figma mock's Search frame).
 search_query_size = 22
