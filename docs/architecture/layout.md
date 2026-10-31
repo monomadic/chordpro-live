@@ -38,11 +38,12 @@ Step 4 drops the chord diagrams and step 6 the metadata pills. There is
 no step 3: the header always keeps the byline on its own line (see
 PROPOSAL.md). A side
 label beside a section with every line hidden keeps one row. A song with no
-sections fits. The app selects the ladder step at the floor, then checks
-larger premeasured sizes in descending order and draws the largest that fits.
-Each candidate is checked using font advances measured at its actual point
-size. A viewport's prepared scroll page stays at the floor. Point-size
-presets and paged mode are still to come.
+sections fits. `candidates` lists the full page and each applicable step,
+cumulatively; the app draws each one that fits at the floor at the largest
+premeasured size that keeps it, and weighs size against what the steps cost
+(see [app](app.md)). Each candidate is checked using font advances measured
+at its actual point size. A page that fits nowhere scrolls at the
+comfortable size.
 `solve_with` takes the reader's `Tabs` choice: `Auto` lets step 5 fold
 tablature, while `Show` and `Fold` pin it and skip step 5.
 

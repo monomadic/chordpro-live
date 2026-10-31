@@ -32,7 +32,13 @@ body-size units except margins, which are points. `Config::with_overrides`
 lays a user's `[page]` table over those defaults: the file names only the
 keys it changes, and a key the defaults lack is an error. `body_size` is
 the readability floor; `Config::with_floor` (the host's `--floor`) sets it
-from 6 to 72 pt and raises `max_body_size` to meet it. A song crossing the bottom
+from 6 to 72 pt and raises `max_body_size` to meet it. `App::fit_solution`
+weighs every ladder candidate that fits at the floor (`cpl_layout::candidates`)
+by `Config::size_value` of its largest fitting size less
+`Config::step_cost`, so text shrinks toward the floor before the page drops
+diagrams, pills or the title; a tab fold the reader pinned costs nothing. A
+page that fits at no candidate scrolls at `Config::scroll_size`, the
+comfortable size, as does the search screen's strip. A song crossing the bottom
 margin scrolls at the same body size. A line wider than the content box
 wraps (see [layout](layout.md)); only an unbreakable run reaches the
 width-needed state, and a scrolling page clips a too-wide title rather than

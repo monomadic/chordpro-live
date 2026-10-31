@@ -102,8 +102,23 @@ pub struct Config {
     pub subtitle_size: f32,
     pub label_size: f32,
     pub chord_size: f32,
+    /// The readability floor: body text is never smaller.
     pub body_size: f32,
+    /// The size body text reads best at, and the size a scrolling page uses.
+    pub comfort_size: f32,
     pub max_body_size: f32,
+    /// What a point of body size is worth below and above `comfort_size`,
+    /// and what each ladder step costs, in points (see `fit_solution`).
+    pub size_loss_below: f32,
+    pub size_gain_above: f32,
+    pub cost_tight_sections: f32,
+    pub cost_side_labels: f32,
+    pub cost_diagrams: f32,
+    pub cost_fold_tabs: f32,
+    pub cost_pills: f32,
+    pub cost_title: f32,
+    pub cost_collapse_repeats: f32,
+    pub cost_inline_chords: f32,
     pub header_gap: f32,
     pub section_gap: f32,
     pub line_height: f32,
@@ -303,7 +318,18 @@ impl Config {
             label_size: take!("label_size"),
             chord_size: take!("chord_size"),
             body_size: take!("body_size"),
+            comfort_size: take!("comfort_size"),
             max_body_size: take!("max_body_size"),
+            size_loss_below: take!("size_loss_below"),
+            size_gain_above: take!("size_gain_above"),
+            cost_tight_sections: take!("cost_tight_sections"),
+            cost_side_labels: take!("cost_side_labels"),
+            cost_diagrams: take!("cost_diagrams"),
+            cost_fold_tabs: take!("cost_fold_tabs"),
+            cost_pills: take!("cost_pills"),
+            cost_title: take!("cost_title"),
+            cost_collapse_repeats: take!("cost_collapse_repeats"),
+            cost_inline_chords: take!("cost_inline_chords"),
             header_gap: take!("header_gap"),
             section_gap: take!("section_gap"),
             line_height: take!("line_height"),
@@ -395,6 +421,49 @@ impl Config {
 }
 
 impl Config {
+    /// The size a scrolling page is set at: the comfortable size within the
+    /// floor and the largest size, on a whole point so it was measured.
+    pub fn scroll_size(&self) -> f32 {
+        if self.comfort_size <= self.body_size {
+            self.body_size
+        } else if self.comfort_size >= self.max_body_size {
+            self.max_body_size
+        } else {
+            self.comfort_size.floor().max(self.body_size)
+        }
+    }
+
+    /// What a candidate's text size is worth, in points: full value up to
+    /// the comfortable size, `size_gain_above` per point beyond it, and
+    /// `size_loss_below` lost per point short of it.
+    pub fn size_value(&self, size: f32) -> f32 {
+        let comfort = self.comfort_size;
+        if size >= comfort {
+            comfort + (size - comfort) * self.size_gain_above
+        } else {
+            comfort - (comfort - size) * self.size_loss_below
+        }
+    }
+
+    /// What a candidate's reductions cost, in points of body size. A fold
+    /// the reader pinned with `t` (`tabs_pinned`) is their choice, not a cost.
+    pub fn step_cost(&self, o: &Options, tabs_pinned: bool) -> f32 {
+        [
+            (o.tight_sections, self.cost_tight_sections),
+            (o.side_labels, self.cost_side_labels),
+            (o.hide_diagrams, self.cost_diagrams),
+            (o.fold_tabs && !tabs_pinned, self.cost_fold_tabs),
+            (o.hide_pills, self.cost_pills),
+            (o.hide_title, self.cost_title),
+            (o.collapse_repeats, self.cost_collapse_repeats),
+            (o.inline_chords, self.cost_inline_chords),
+        ]
+        .iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, cost)| cost)
+        .sum()
+    }
+
     /// The type scale at the configured readability floor.
     pub fn metrics(&self) -> Metrics {
         self.metrics_at(self.body_size)
@@ -722,7 +791,7 @@ impl App {
                 ..
             } => {
                 let c = &self.config;
-                let body = c.body_size;
+                let body = self.scroll_body().0;
                 let (offset, page) = match position {
                     Position::Offset(offset) => (offset.clamp(0.0, *max_offset), None),
                     Position::Page(page) => {
@@ -878,7 +947,7 @@ impl App {
             format!(
                 "{prefix}{page}{}{STATUS_SEPARATOR}stand {} pt",
                 self.key_status(STATUS_SEPARATOR, true),
-                self.config.body_size
+                self.scroll_body().0
             )
         }
     }
@@ -891,7 +960,7 @@ impl App {
         first_visible_group: Option<usize>,
         sections: &[ScrollSection],
     ) -> String {
-        let body = self.config.body_size;
+        let body = self.scroll_body().0;
         let more = if offset < max_offset {
             "  ·  MORE ↓"
         } else {
@@ -936,7 +1005,7 @@ impl App {
                 ..
             } => {
                 let c = &self.config;
-                let body = c.body_size;
+                let body = self.scroll_body().0;
                 let offset = offset.clamp(0.0, *max_offset);
                 let content_end = height - c.margin_bottom - c.status_height * body;
                 let visible = |group: usize| {
@@ -1003,7 +1072,8 @@ impl App {
             return PreparedPage::Fit(fit);
         }
         let c = &self.config;
-        let body = c.body_size;
+        // A page that cannot fit at the floor scrolls at the comfortable size.
+        let (body, measured) = self.scroll_body();
         let metrics = self.page_metrics(body);
         // One unbounded column; the scroll viewport windows over it.
         let tall = Viewport {
@@ -1024,7 +1094,7 @@ impl App {
             ..Options::default()
         };
         let too_tall = |o: &Options| {
-            o.header(&self.measured.header, &metrics, tall.width).height > view_height / 2.0
+            o.header(&measured.header, &metrics, tall.width).height > view_height / 2.0
         };
         if too_tall(&base) {
             base.hide_diagrams = true;
@@ -1035,13 +1105,13 @@ impl App {
         if too_tall(&base) {
             base.hide_title = true;
         }
-        let mut long = cpl_layout::layout(&self.measured, &metrics, tall, base, 0);
+        let mut long = cpl_layout::layout(measured, &metrics, tall, base, 0);
         if !long.fit.meets_floor {
             let inline = Options {
                 inline_chords: true,
                 ..base
             };
-            long = cpl_layout::layout(&self.measured, &metrics, tall, inline, 9);
+            long = cpl_layout::layout(measured, &metrics, tall, inline, 9);
         }
         // A single title word wider than the window still clips at its edge
         // rather than withholding the song.
@@ -1057,7 +1127,7 @@ impl App {
             return PreparedPage::NeedsWidth(fit);
         }
         let long_options = long.options;
-        let mut long = self.compose(width, height, body, &self.measured, &long);
+        let mut long = self.compose(width, height, body, measured, &long);
         // The long page's status strip belongs below its viewport.
         long.text.retain(|item| item.group != usize::MAX);
         let content_end = height - c.margin_bottom - c.status_height * body;
@@ -1133,34 +1203,81 @@ impl App {
         self.compose(width, height, body, measured, &solution)
     }
 
-    /// The fitted page's body size, measurement and layout: the ladder's
-    /// choice at the floor, drawn at the largest size that keeps it.
+    /// The fitted page's body size, measurement and layout. Each ladder
+    /// candidate that fits at the floor is drawn at the largest size that
+    /// keeps it, then weighed: its size's worth (`Config::size_value`) less
+    /// the price of every step it took (`Config::step_cost`). The best wins,
+    /// the less reduced on a tie, so text shrinks some way toward the floor
+    /// before the page gives anything up. When nothing fits at the floor,
+    /// the most reduced candidate is returned unfit and the page scrolls.
     fn fit_solution(&self, width: f32, height: f32) -> (f32, &MeasuredSong, Solution) {
-        let floor = self.config.body_size;
-        let solution = cpl_layout::solve_with(
-            &self.measured,
-            &self.page_metrics(floor),
-            self.viewport(width, height, floor),
-            self.tabs,
-        );
-        if solution.fits {
-            for (body, measured) in self.larger.iter().rev() {
-                let larger = cpl_layout::layout(
-                    measured,
-                    &self.page_metrics(*body),
-                    self.viewport(width, height, *body),
-                    solution.options,
-                    solution.step,
-                );
-                // Bigger type is only better while it wraps no more lines
-                // than the floor does: a line broken in three at 28 pt reads
-                // worse than the same line whole at 20 pt.
-                if larger.fits && larger.wrapped_rows <= solution.wrapped_rows {
-                    return (*body, measured, larger);
-                }
+        let c = &self.config;
+        let floor = c.body_size;
+        let metrics = self.page_metrics(floor);
+        let view = self.viewport(width, height, floor);
+        let candidates = cpl_layout::candidates(&self.measured, &metrics, view, self.tabs);
+        let mut best: Option<(f32, f32, &MeasuredSong, Solution)> = None;
+        let mut last = None;
+        for &(step, options) in &candidates {
+            let at_floor = cpl_layout::layout(&self.measured, &metrics, view, options, step);
+            if !at_floor.fits {
+                last = Some(at_floor);
+                continue;
+            }
+            let (body, measured, solution) = self.largest_keeping(width, height, at_floor);
+            let score = c.size_value(body) - c.step_cost(&options, self.tabs != Tabs::Auto);
+            if best.as_ref().is_none_or(|b| score > b.0 + 1e-4) {
+                best = Some((score, body, measured, solution));
+            }
+            // Later steps cost more and cannot grow past the largest size.
+            if body >= c.max_body_size {
+                break;
             }
         }
-        (floor, &self.measured, solution)
+        match best {
+            Some((_, body, measured, solution)) => (body, measured, solution),
+            None => (
+                floor,
+                &self.measured,
+                last.expect("the full page is a candidate"),
+            ),
+        }
+    }
+
+    /// `at_floor` drawn at the largest measured size that still fits with
+    /// the same reductions. Bigger type is only better while it wraps no more
+    /// lines than the floor does: a line broken in three at 28 pt reads
+    /// worse than the same line whole at 20 pt.
+    fn largest_keeping(
+        &self,
+        width: f32,
+        height: f32,
+        at_floor: Solution,
+    ) -> (f32, &MeasuredSong, Solution) {
+        for (body, measured) in self.larger.iter().rev() {
+            let larger = cpl_layout::layout(
+                measured,
+                &self.page_metrics(*body),
+                self.viewport(width, height, *body),
+                at_floor.options,
+                at_floor.step,
+            );
+            if larger.fits && larger.wrapped_rows <= at_floor.wrapped_rows {
+                return (*body, measured, larger);
+            }
+        }
+        (self.config.body_size, &self.measured, at_floor)
+    }
+
+    /// The size and measurement a scrolling page is set at.
+    fn scroll_body(&self) -> (f32, &MeasuredSong) {
+        let size = self.config.scroll_size();
+        self.larger
+            .iter()
+            .find(|(body, _)| (body - size).abs() < 1e-3)
+            .map_or((self.config.body_size, &self.measured), |(body, m)| {
+                (*body, m)
+            })
     }
 
     /// One fingering diagram with its cell's top-left corner at `at`, in
@@ -1930,7 +2047,13 @@ mod tests {
             source.push_str(&format!("[C]Line {index} of a long and winding verse\n"));
         }
         source.push_str("{end_of_verse}");
-        let mut app = app(&source);
+        // At the 17 pt floor, where shrinking cannot make the room.
+        let mut app = App::new(
+            cpl_song::parse(&source).song,
+            Config::default().with_floor(17.0).unwrap(),
+            Polarity::Light,
+            &Fixed,
+        );
         let width = 600.0;
         let auto = at_step(&app, width, 5);
         let height = auto.height;
@@ -2344,7 +2467,7 @@ mod tests {
         source.push_str("{eov}");
         let wide_title = App::new(
             cpl_song::parse(&source).song,
-            Config::default(),
+            Config::default().with_floor(17.0).unwrap(),
             Polarity::Light,
             &Fixed,
         );
@@ -2512,6 +2635,64 @@ mod tests {
     }
 
     #[test]
+    fn text_shrinks_before_the_title_drops() {
+        let mut source = String::from("{title: Test}\n{artist: Ada}\n");
+        for verse in 0..3 {
+            source.push_str(&format!("{{start_of_verse: V{verse}}}\n"));
+            for line in 0..3 {
+                source.push_str(&format!("[C]verse {verse} line {line}\n"));
+            }
+            source.push_str("{end_of_verse}\n");
+        }
+        let with = |config: Config| {
+            App::new(
+                cpl_song::parse(&source).song,
+                config,
+                Polarity::Light,
+                &Fixed,
+            )
+        };
+        let balanced = with(Config::default());
+        let strict = with(Config::default().with_floor(17.0).unwrap());
+        let title = |frame: &Frame| frame.text.iter().any(|t| t.content == "Test");
+        // Somewhere the old ladder (floor 17, first fit wins) dropped the
+        // title, the balanced page keeps it and sets the text smaller.
+        let kept = (100..900).step_by(5).any(|height| {
+            let height = height as f32;
+            let old = strict.frame(300.0, height);
+            let new = balanced.frame(300.0, height);
+            old.fits && !title(&old) && new.fits && title(&new)
+        });
+        assert!(kept, "no height keeps the title by shrinking");
+        // The title never drops while the text is still at the comfortable size.
+        for height in (100..900).step_by(5) {
+            let frame = balanced.frame(300.0, height as f32);
+            if frame.fits && !title(&frame) {
+                let lyric = frame
+                    .text
+                    .iter()
+                    .find(|t| t.content.starts_with("verse"))
+                    .unwrap();
+                assert!(lyric.size < Config::default().comfort_size, "{height}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_page_that_cannot_fit_scrolls_at_the_comfortable_size() {
+        let mut source = String::from("{title: Test}\n{sov: A}\n");
+        for line in 0..60 {
+            source.push_str(&format!("[C]Line {line}\n"));
+        }
+        source.push_str("{eov}");
+        let app = app(&source);
+        let (frame, max_offset) = app.frame_scrolled(500.0, 400.0, 0.0);
+        assert!(max_offset > 0.0);
+        let line = find(&frame, "Line 0");
+        assert_eq!(line.size, Config::default().comfort_size);
+    }
+
+    #[test]
     fn a_lower_floor_fits_a_song_that_scrolled_at_the_default() {
         let mut source = String::from("{title: Test}\n");
         for verse in 0..6 {
@@ -2524,7 +2705,7 @@ mod tests {
         let song = || cpl_song::parse(&source).song;
         let at =
             |config: Config| App::new(song(), config, Polarity::Light, &Fixed).frame(500.0, 400.0);
-        assert!(!at(Config::default()).fits);
+        assert!(!at(Config::default().with_floor(17.0).unwrap()).fits);
         assert!(at(Config::default().with_floor(8.0).unwrap()).fits);
     }
 }

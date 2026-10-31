@@ -476,7 +476,7 @@ impl Search {
 
         // The results box, its header row and as many rows as fit.
         let box_top = centre + pill_h * 1.4;
-        let box_bottom = height - c.margin_bottom - c.status_height * c.body_size;
+        let box_bottom = height - c.margin_bottom - c.status_height * c.scroll_size();
         let stroke = c.search_box_stroke;
         frame.shapes.push(Shape {
             group: 0,
@@ -588,7 +588,7 @@ impl Search {
         }
 
         // The footer: counts and folders on the left, the keys on the right.
-        let small = c.body_size * 0.7;
+        let small = c.scroll_size() * 0.7;
         let footer = height - c.margin_bottom * 0.5;
         let folders: Vec<String> = library.folders.iter().map(|f| tilde(f)).collect();
         let summary = self.notice.clone().unwrap_or_else(|| {

@@ -155,9 +155,16 @@ optical size change with point size (about 5% narrower at 34 pt than twice
 from accepting a page that overflows. The initial implementation does this
 synchronously on song load; worker preparation remains future work.
 
-**The fit search is then arithmetic.** The ladder is chosen at the readability
-floor. Within that ladder step, the largest measured candidate that fits is
-drawn. For each column count 1..=N,
+**The fit search is then arithmetic.** **Settled (2026-11-01): the ladder
+is weighed against size.** Every ladder candidate that fits at the
+readability floor is drawn at the largest measured size that keeps it, and
+scored: that size's worth less the price of each step taken, in points of
+body size (`cost_*` in the config; dropping the title costs the most after
+inline chords). A point below the comfortable size (`comfort_size`, 17 pt)
+is worth `size_loss_below`, a point above it `size_gain_above`, so text
+shrinks some way toward the floor before the page gives anything up, and
+grows only while that is cheap. The best score wins, the less reduced on a
+tie. Within a candidate, the largest measured size that fits is drawn. For each column count 1..=N,
 `pack_into` balances the blocks (chordpro-tui's greedy fill with a rising
 target, floats instead of rows), and the scale that fills the viewport is
 `min(avail_w / layout_w, avail_h / (header_h + gap + max_col_h))`. The count
@@ -182,7 +189,8 @@ reader sets it.** `body_size` in a user `config.toml` (Application
 Support, `$CPL_CONFIG` or `--config`) or `--floor PT` sets the floor in
 points, 6 to 72; a reader at a laptop may take it to 9 or 10 pt. There is
 no DPI arithmetic: the reader picks the size that reads at their
-distance, and the default stays 17 pt. When the best fit lands below the
+distance. The default floor is 12 pt under a 17 pt comfortable size, and
+a page that cannot fit at the floor scrolls at the comfortable size. When the best fit lands below the
 floor the layout engine does **not** draw it. It descends the ladder.
 
 **The reduction ladder** is chordpro-tui's, extended for the page. Each step

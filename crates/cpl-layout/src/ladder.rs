@@ -606,6 +606,31 @@ pub enum Tabs {
     Fold,
 }
 
+/// Every candidate the ladder may draw, in order: the full page, then the
+/// page after each applicable step, cumulatively, with the tablature choice
+/// applied first. A caller weighing size against what each step costs picks
+/// among these; `solve_with` takes the first that fits.
+pub fn candidates(
+    song: &MeasuredSong,
+    m: &PageMetrics,
+    view: Viewport,
+    tabs: Tabs,
+) -> Vec<(u8, Options)> {
+    let mut options = Options {
+        fold_tabs: tabs == Tabs::Fold,
+        ..Options::default()
+    };
+    let mut all = vec![(0, options)];
+    for step in LADDER
+        .iter()
+        .filter(|s| (s.applies)(song, m, view) && (s.number != 5 || tabs == Tabs::Auto))
+    {
+        (step.apply)(&mut options);
+        all.push((step.number, options));
+    }
+    all
+}
+
 /// `solve` with the tablature choice applied before the ladder runs.
 pub fn solve_with(song: &MeasuredSong, m: &PageMetrics, view: Viewport, tabs: Tabs) -> Solution {
     let mut options = Options {

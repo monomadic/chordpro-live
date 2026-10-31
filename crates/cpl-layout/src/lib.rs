@@ -7,8 +7,8 @@ mod tab;
 pub use tab::{Staff, System, staves};
 
 pub use ladder::{
-    HeaderLayout, LADDER, Options, PageMetrics, Solution, Step, Tabs, Viewport, layout, solve,
-    solve_with,
+    HeaderLayout, LADDER, Options, PageMetrics, Solution, Step, Tabs, Viewport, candidates, layout,
+    solve, solve_with,
 };
 
 pub use measure::{

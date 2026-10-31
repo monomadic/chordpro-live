@@ -4,8 +4,26 @@ margin_top = 28
 margin_bottom = 16
 title_size = 2.176
 subtitle_size = 0.941
-body_size = 17
+# Body text: never below `body_size` (the readability floor), at most
+# `max_body_size`, and best at `comfort_size`, which a scrolling page uses.
+body_size = 12
+comfort_size = 17
 max_body_size = 28
+# The ladder weighs each step against the text size it buys, in points of
+# body size: a page takes the step whose size, less the price of every step
+# taken, is best. A point below the comfortable size is worth
+# `size_loss_below`, a point above it `size_gain_above`, so text shrinks
+# some way before anything is given up, and grows only while it is cheap.
+size_loss_below = 1.5
+size_gain_above = 0.5
+cost_tight_sections = 1
+cost_side_labels = 1.5
+cost_diagrams = 3
+cost_fold_tabs = 3
+cost_pills = 2
+cost_title = 6
+cost_collapse_repeats = 4
+cost_inline_chords = 8
 header_gap = 0.941
 # The body at 17 pt: `Page/Chord` SF Pro Semibold 15/16 pt and `Page/Lyric`
 # 17/25 pt four points under it, a 45 pt pair repeated every 53 pt;

@@ -429,7 +429,7 @@ impl Worker {
         };
         let status = (!scroll.status.is_empty()).then(|| {
             let c = &self.config;
-            let strip = c.margin_bottom + c.status_height * c.body_size;
+            let strip = c.margin_bottom + c.status_height * c.scroll_size();
             let strip_px = (strip * scale).ceil() as u32;
             view.status_top = request.content_px() as i32 - strip_px as i32;
             let mut text = scroll.status;
@@ -1115,14 +1115,14 @@ impl ApplicationHandler<PageReady> for Viewer {
                 }
                 Key::Named(NamedKey::ArrowDown) => {
                     self.scroll_offset = (self.scroll_offset
-                        + self.config.line_height * self.config.body_size)
-                        .min(self.scroll_max);
+                        + self.config.line_height * self.config.scroll_size())
+                    .min(self.scroll_max);
                     self.request_page();
                 }
                 Key::Named(NamedKey::ArrowUp) => {
                     self.scroll_offset = (self.scroll_offset
-                        - self.config.line_height * self.config.body_size)
-                        .max(0.0);
+                        - self.config.line_height * self.config.scroll_size())
+                    .max(0.0);
                     self.request_page();
                 }
                 Key::Named(NamedKey::PageDown) => {
