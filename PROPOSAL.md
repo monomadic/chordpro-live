@@ -112,8 +112,9 @@ over), a generic metadata multimap, a `{define}` map, `TransposeBy`. What
 | **Encoding and hygiene** — UTF-8 with BOM, CRLF, smart quotes and dashes left as authored, blank-line rules, comments (`#` lines) | Handled |
 
 **Conformance is measured, not asserted.** The reference implementation is a
-Perl program that installs with one `cpan`/`brew` command, and it has a
-`--generate=JSON` (or equivalent structured) output. The test suite runs it
+Perl program that installs with one `cpan` command. It has no JSON output,
+but it loads output backends by name, so `scripts/conform/` carries a small
+one (`--generate=CplJSON`) that writes its parse as JSON. The test suite runs it
 over the corpus and over the spec's own examples, and compares the parsed
 metadata, section structure, chord list and lyric text against `cpl-song`'s.
 A divergence is a bug in this parser until shown otherwise. This is the

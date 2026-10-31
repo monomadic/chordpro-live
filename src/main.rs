@@ -1,3 +1,6 @@
+mod conform;
+mod json;
+
 use cpl_app::{
     App, Config, Frame, Library, Polarity, Search, SearchAction, SearchInput, Setlist, Store, Tabs,
 };
@@ -1231,6 +1234,10 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
            [--scale 1|2] [--dark] [--scroll P | --page N] [--tabs show|fold]
            [--transpose N] [--floor PT] [--config my.toml]
                                           write what the window would show
+       cpl conform [<song.cho|folder>...] [--table note.md [--check]]
+                                          compare cpl-song's parse with the
+                                          reference chordpro's, construct by
+                                          construct and file by file
 In the viewer: i polarity, v scroll or paged, t fold or show tablature,
 [ ] transpose down or up a semitone, 0 back to the chords as written,
 n / p or ← → next and previous song, ↑ ↓ / Space / Page Up / Page Down / Home / End scroll or turn
@@ -1506,6 +1513,9 @@ fn main() -> ExitCode {
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
+    }
+    if args.first().is_some_and(|arg| arg == "conform") {
+        return conform::main(args.split_off(1));
     }
     if args.first().is_some_and(|arg| arg == "render") {
         return render_main(args.split_off(1));

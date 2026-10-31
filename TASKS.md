@@ -184,8 +184,25 @@ automated checks. When every task in an epic is checked, the epic moves to
   re-blessed. Not matched: `Page/Comment` is italic in the mock and upright
   here (the shim has no italic face), and the mock's status keys name
   transpose and a chord toggle that do not exist yet.
-- [ ] Run ChordPro 6 conformance against the reference implementation and
-  generate the directive status table from the results.
+- [x] Run ChordPro 6 conformance against the reference implementation and
+  generate the directive status table from the results. `cpl conform`
+  runs the reference (ChordPro 6.101.0 from CPAN, in `~/perl5`) through
+  `scripts/conform/ChordPro/Output/CplJSON.pm`, an output backend that
+  writes its parse as JSON (the reference has no JSON output of its own),
+  and compares songs, metadata, structure, chords and text with
+  `cpl-song`'s. The table in the song note comes from 53 probe songs and
+  six files (testdata and the reference's two examples); `--check` and
+  `tests/conform.rs` fail when it is stale. 44 of 53 constructs and 5 of 6
+  files parse alike. It found one parser defect, fixed here: an unlabelled
+  tab was given the label "Tab"; the label is now kept as written and the
+  page still says TAB. Not a window change; goldens unchanged.
+- [ ] Close the parse differences `cpl conform` reports, each against the
+  spec and then the table: `{start_of_grid}`, the delegated `abc`, `ly`,
+  `svg` and `textblock` environments (Molly Malone opens with `abc`),
+  `{new_song}`, `[*annotation]` (kept as a chord named `*…`), `%{…}`
+  substitution, and selectors such as `{comment-guitar}`. Markup and
+  `{chord}`, `{image}` and the layout hints agree on parse but are not yet
+  honoured on the page.
 - [ ] Add the iOS host after the app and renderer boundaries are stable.
 - [x] Build the CoreText shim's fonts with `CTFont` rather than AppKit's
   `NSFont`, so measurement is thread-safe without the process-wide lock in

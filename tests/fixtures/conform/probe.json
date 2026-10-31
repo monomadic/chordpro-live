@@ -1,0 +1,238 @@
+{
+   "songs" : [
+      {
+         "body" : [
+            {
+               "context" : "",
+               "key" : "key",
+               "type" : "meta"
+            },
+            {
+               "context" : "",
+               "text" : "{meta: mood calm}",
+               "type" : "ignore"
+            },
+            {
+               "context" : "",
+               "type" : "empty"
+            },
+            {
+               "chords" : [
+                  "C",
+                  "Riff x2"
+               ],
+               "context" : "",
+               "phrases" : [
+                  "Intro line ",
+                  ""
+               ],
+               "type" : "songline"
+            },
+            {
+               "context" : "",
+               "type" : "empty"
+            },
+            {
+               "context" : "chorus",
+               "name" : "label",
+               "type" : "set",
+               "value" : "Chorus"
+            },
+            {
+               "chords" : [
+                  "G",
+                  "D/F#"
+               ],
+               "context" : "chorus",
+               "phrases" : [
+                  "Sing it ",
+                  "out"
+               ],
+               "type" : "songline"
+            },
+            {
+               "context" : "chorus",
+               "name" : "context",
+               "type" : "set",
+               "value" : ""
+            },
+            {
+               "context" : "",
+               "orig" : "Repeat",
+               "text" : "Repeat",
+               "type" : "comment"
+            },
+            {
+               "context" : "",
+               "orig" : "Softly",
+               "text" : "Softly",
+               "type" : "comment_italic"
+            },
+            {
+               "chords" : [
+                  "Am"
+               ],
+               "context" : "verse",
+               "phrases" : [
+                  "Verse   with  spaces"
+               ],
+               "type" : "songline"
+            },
+            {
+               "context" : "verse",
+               "name" : "context",
+               "type" : "set",
+               "value" : ""
+            },
+            {
+               "chorus" : [
+                  {
+                     "context" : "chorus",
+                     "name" : "label",
+                     "type" : "set",
+                     "value" : "Chorus"
+                  },
+                  {
+                     "chords" : [
+                        "G",
+                        "D/F#"
+                     ],
+                     "context" : "chorus",
+                     "phrases" : [
+                        "Sing it ",
+                        "out"
+                     ],
+                     "type" : "songline"
+                  },
+                  {
+                     "context" : "chorus",
+                     "name" : "context",
+                     "type" : "set",
+                     "value" : ""
+                  }
+               ],
+               "context" : "",
+               "type" : "rechorus"
+            },
+            {
+               "chorus" : [
+                  {
+                     "context" : "chorus",
+                     "name" : "label",
+                     "type" : "set",
+                     "value" : "Last"
+                  },
+                  {
+                     "chords" : [
+                        "G",
+                        "D/F#"
+                     ],
+                     "context" : "chorus",
+                     "phrases" : [
+                        "Sing it ",
+                        "out"
+                     ],
+                     "type" : "songline"
+                  },
+                  {
+                     "context" : "chorus",
+                     "name" : "context",
+                     "type" : "set",
+                     "value" : ""
+                  }
+               ],
+               "context" : "",
+               "type" : "rechorus"
+            },
+            {
+               "chords" : [
+                  "A",
+                  "C"
+               ],
+               "context" : "",
+               "phrases" : [
+                  "Shifted ",
+                  "up"
+               ],
+               "type" : "songline"
+            },
+            {
+               "context" : "tab",
+               "name" : "label",
+               "type" : "set",
+               "value" : "Intro"
+            },
+            {
+               "context" : "tab",
+               "text" : "e|--[3]--|",
+               "type" : "tabline"
+            },
+            {
+               "context" : "tab",
+               "name" : "context",
+               "type" : "set",
+               "value" : ""
+            },
+            {
+               "chords" : [
+                  "N.C."
+               ],
+               "context" : "bridge",
+               "phrases" : [
+                  "Bridge"
+               ],
+               "type" : "songline"
+            },
+            {
+               "context" : "bridge",
+               "name" : "context",
+               "type" : "set",
+               "value" : ""
+            }
+         ],
+         "meta" : {
+            "_configversion" : [
+               "6.081"
+            ],
+            "_key" : [
+               "G"
+            ],
+            "artist" : [
+               "Ada"
+            ],
+            "capo" : [
+               "2"
+            ],
+            "chords" : [
+               "C",
+               "G",
+               "D/F#",
+               "Am",
+               "A"
+            ],
+            "key" : [
+               "G"
+            ],
+            "key_print" : [
+               "G"
+            ],
+            "key_sound" : [
+               "A"
+            ],
+            "numchords" : [
+               "5"
+            ],
+            "subtitle" : [
+               "Sub"
+            ],
+            "tag" : [
+               "folk"
+            ],
+            "title" : [
+               "Probe"
+            ]
+         }
+      }
+   ]
+}
+

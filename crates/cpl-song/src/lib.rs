@@ -338,11 +338,7 @@ impl Parser {
         self.close();
         self.active = Some(Section {
             kind,
-            label: if kind == SectionKind::Tab && label.is_empty() {
-                "Tab".into()
-            } else {
-                label.into()
-            },
+            label: label.into(),
             lines: Vec::new(),
             recall_of: None,
         });
@@ -439,7 +435,7 @@ fn canonical(name: &str) -> &str {
 
 /// The `*font`, `*size` and `*colour` families and the other directives that
 /// describe appearance, which this viewer owns.
-fn is_formatting(name: &str) -> bool {
+pub fn is_formatting(name: &str) -> bool {
     const FAMILIES: [&str; 9] = [
         "chord", "chorus", "text", "tab", "grid", "label", "title", "toc", "footer",
     ];

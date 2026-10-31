@@ -532,8 +532,14 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
         .iter()
         .enumerate()
         .map(|(index, section)| {
-            let label = section.label.to_uppercase();
             let tab = section.kind == SectionKind::Tab;
+            // A tab the file leaves unlabelled is still named on the page;
+            // the song model keeps the label as written.
+            let label = if tab && section.label.is_empty() {
+                "TAB".to_owned()
+            } else {
+                section.label.to_uppercase()
+            };
             let staves = if tab {
                 let lines: Vec<String> = section.lines.iter().map(Line::lyrics).collect();
                 crate::tab::staves(&lines)
