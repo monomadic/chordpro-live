@@ -1,4 +1,5 @@
-//! The sidecar store: tags and ratings, kept in one `library.toml` beside the
+//! The sidecar store: tags, ratings, when a song was last shown and the
+//! transpose it was last played at, kept in one `library.toml` beside the
 //! config rather than in any song, because this app never rewrites a chart.
 //! Each song is a `[song.<fingerprint>]` table:
 //!
@@ -8,6 +9,7 @@
 //! rating = 4
 //! tags = ["gig-set", "folk"]
 //! opened = 2026-10-29T21:04:00Z
+//! transpose = -2
 //! ```
 //!
 //! The title is a courtesy for a person reading the file; the fingerprint is
@@ -28,13 +30,20 @@ pub struct Record {
     /// When the song was last shown, in seconds since the Unix epoch; 0 is
     /// never. Written as a TOML UTC date-time.
     pub opened: u64,
+    /// The live transpose last set, in semitones; restored when the song
+    /// opens. 0 is as written.
+    pub transpose: i32,
     /// Lines for keys this build does not use, verbatim.
     other: Vec<String>,
 }
 
 impl Record {
     fn is_empty(&self) -> bool {
-        self.rating == 0 && self.tags.is_empty() && self.opened == 0 && self.other.is_empty()
+        self.rating == 0
+            && self.tags.is_empty()
+            && self.opened == 0
+            && self.transpose == 0
+            && self.other.is_empty()
     }
 }
 
@@ -63,6 +72,17 @@ impl Store {
     /// When the song was last shown, in Unix seconds; 0 is never.
     pub fn opened(&self, fingerprint: &str) -> u64 {
         self.record(fingerprint).map_or(0, |r| r.opened)
+    }
+
+    /// The transpose the song was last played at, in semitones.
+    pub fn transpose(&self, fingerprint: &str) -> i32 {
+        self.record(fingerprint).map_or(0, |r| r.transpose)
+    }
+
+    /// Remembers the song's live transpose; 0 forgets it.
+    pub fn set_transpose(&mut self, fingerprint: &str, title: &str, semitones: i32) {
+        self.entry(fingerprint, title).transpose = semitones.clamp(-11, 11);
+        self.prune(fingerprint);
     }
 
     /// Notes that the song was shown at `when` (Unix seconds).
@@ -153,6 +173,13 @@ impl Store {
                     record.opened =
                         parse_datetime(value).ok_or_else(|| at("opened must be a UTC date-time"))?
                 }
+                "transpose" => {
+                    record.transpose = value
+                        .parse::<i32>()
+                        .ok()
+                        .filter(|n| (-11..=11).contains(n))
+                        .ok_or_else(|| at("transpose must be -11 to 11 semitones"))?
+                }
                 "tags" => {
                     record.tags = parse_strings(value)
                         .ok_or_else(|| at("tags must be an array of strings"))?
@@ -182,6 +209,9 @@ impl Store {
             }
             if record.opened > 0 {
                 out.push_str(&format!("opened = {}\n", format_datetime(record.opened)));
+            }
+            if record.transpose != 0 {
+                out.push_str(&format!("transpose = {}\n", record.transpose));
             }
             for line in &record.other {
                 out.push_str(line);
@@ -379,6 +409,22 @@ mod tests {
         assert_eq!(store.opened(B), 0);
         store.set_opened(A, "A", 0);
         assert!(store.record(A).is_none());
+    }
+
+    #[test]
+    fn transpose_round_trips_and_zero_forgets_it() {
+        let mut store = Store::default();
+        store.set_transpose(A, "A", -2);
+        store.set_transpose(B, "B", 30);
+        let text = store.to_toml();
+        assert!(text.contains("[song.aaaa]\ntitle = \"A\"\ntranspose = -2\n"));
+        let parsed = Store::parse(&text).unwrap();
+        assert_eq!(parsed.transpose(A), -2);
+        assert_eq!(parsed.transpose(B), 11, "kept within an octave");
+        assert_eq!(parsed.transpose("cccc"), 0);
+        store.set_transpose(A, "A", 0);
+        assert!(store.record(A).is_none());
+        assert!(Store::parse("[song.aaaa]\ntranspose = 12\n").is_err());
     }
 
     #[test]

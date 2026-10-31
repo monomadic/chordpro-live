@@ -129,6 +129,18 @@ enum ToWorker {
     /// Open search over the library, with this query typed.
     OpenSearch(String),
     Search(SearchInput),
+    /// Shift a song's chords: `[` `]` and `0` in the viewer.
+    Transpose {
+        setlist: u64,
+        song: usize,
+        shift: Shift,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Shift {
+    By(i32),
+    Reset,
 }
 
 impl PageRequest {
@@ -213,12 +225,31 @@ struct Retained {
     slab: Arc<Slab>,
 }
 
+/// A setlist song's file and its sidecar key, read once when the setlist is
+/// made so the sidecar never needs the file again.
+struct SongFile {
+    path: PathBuf,
+    fingerprint: String,
+    title: String,
+}
+
+impl SongFile {
+    fn new(path: &Path, text: &str) -> Self {
+        let entry = cpl_app::Entry::from_source(path, text);
+        Self {
+            path: entry.path,
+            fingerprint: entry.fingerprint,
+            title: entry.title,
+        }
+    }
+}
+
 struct Worker {
     setlist: Setlist,
     /// Bumped whenever search replaces the setlist.
     setlist_id: u64,
     /// The file behind each setlist song, when it came from one.
-    setlist_paths: Vec<Option<PathBuf>>,
+    setlist_files: Vec<Option<SongFile>>,
     /// Folders search lists; scanned when search opens.
     folders: Vec<PathBuf>,
     library: Option<Library>,
@@ -230,9 +261,9 @@ struct Worker {
     /// Why the sidecar is read-only, shown each time search opens.
     store_error: Option<String>,
     search: Option<Search>,
-    /// Note in the sidecar when each song is shown (the viewer does; `cpl
-    /// render` and tests do not).
-    record_opens: bool,
+    /// Write to the sidecar when a song is shown or transposed (the viewer
+    /// does; `cpl render` and tests do not).
+    writes_store: bool,
     /// The setlist and song last noted as shown.
     shown: Option<(u64, usize)>,
     compositor: PageCompositor,
@@ -438,6 +469,27 @@ impl Worker {
         )
     }
 
+    /// Transposes a song of the setlist the host is showing. Its page is
+    /// measured and composed again on the next request; the old page stays
+    /// on screen until then.
+    fn transpose(&mut self, setlist: u64, song: usize, shift: Shift) {
+        if self.search.is_some() || setlist != self.setlist_id || song >= self.setlist.len() {
+            return;
+        }
+        let semitones = match shift {
+            Shift::By(delta) => self.setlist.transpose(song) + delta,
+            Shift::Reset => 0,
+        };
+        if self.setlist.set_transpose(song, semitones) {
+            self.retained.take_if(|r| r.song == song);
+            self.preloaded.take_if(|p| p.song == song);
+            let semitones = self.setlist.transpose(song);
+            self.write_store(song, |store, file| {
+                store.set_transpose(&file.fingerprint, &file.title, semitones)
+            });
+        }
+    }
+
     /// Opens search: rescans the library (reusing unchanged entries), loads
     /// the sidecar the first time, selects the current song, and types
     /// `query`.
@@ -446,8 +498,8 @@ impl Worker {
         self.load_store();
         let notice = self.store_error.clone();
         let mut search = Search::new(&library, &self.store);
-        if let Some(Some(current)) = self.setlist_paths.get(self.setlist.position())
-            && let Some(entry) = library.entries.iter().position(|e| &e.path == current)
+        if let Some(Some(current)) = self.setlist_files.get(self.setlist.position())
+            && let Some(entry) = library.entries.iter().position(|e| e.path == current.path)
         {
             search.select(entry);
         }
@@ -500,30 +552,49 @@ impl Worker {
     /// and write never delay it; a sample with no file is not noted.
     fn note_shown(&mut self) {
         let now = (self.setlist_id, self.setlist.position());
-        if !self.record_opens || self.search.is_some() || self.shown == Some(now) {
+        if !self.writes_store || self.search.is_some() || self.shown == Some(now) {
             return;
         }
         self.shown = Some(now);
-        let Some(Some(path)) = self.setlist_paths.get(now.1) else {
-            return;
-        };
-        let Ok(text) = fs::read_to_string(path) else {
-            return;
-        };
-        let entry = cpl_app::Entry::from_source(path, &text);
-        self.load_store();
-        let Some(store_path) = self.store_path.clone() else {
-            return;
-        };
         let when = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        self.store
-            .set_opened(&entry.fingerprint, &entry.title, when);
-        if let Err(error) = self.store.save(&store_path)
+        self.write_store(now.1, |store, file| {
+            store.set_opened(&file.fingerprint, &file.title, when)
+        });
+    }
+
+    /// Changes the sidecar record of setlist song `song` and saves it. A
+    /// sample with no file, a read-only sidecar, or `cpl render` writes
+    /// nothing.
+    fn write_store(&mut self, song: usize, change: impl FnOnce(&mut Store, &SongFile)) {
+        if !self.writes_store || !matches!(self.setlist_files.get(song), Some(Some(_))) {
+            return;
+        }
+        self.load_store();
+        let Some(Some(file)) = self.setlist_files.get(song) else {
+            return;
+        };
+        let Some(store_path) = &self.store_path else {
+            return;
+        };
+        change(&mut self.store, file);
+        if let Err(error) = self.store.save(store_path)
             && self.timing
         {
             eprintln!("library store not saved: {error}");
+        }
+    }
+
+    /// Opens each song of a new setlist at the transpose it was last played
+    /// at. Reads the sidecar the first time; nothing is measured here.
+    fn restore_transposes(&mut self) {
+        self.load_store();
+        for (song, file) in self.setlist_files.iter().enumerate() {
+            if let Some(file) = file {
+                self.setlist
+                    .set_transpose(song, self.store.transpose(&file.fingerprint));
+            }
         }
     }
 
@@ -566,7 +637,7 @@ impl Worker {
             }
             SearchAction::Open { entries, position } => {
                 let mut songs = Vec::new();
-                let mut paths = Vec::new();
+                let mut files = Vec::new();
                 let mut at = 0;
                 for (row, entry) in entries.iter().enumerate() {
                     let path = &library.entries[*entry].path;
@@ -578,7 +649,7 @@ impl Worker {
                         at = songs.len();
                     }
                     songs.push(cpl_song::parse(&text).song);
-                    paths.push(Some(path.clone()));
+                    files.push(Some(SongFile::new(path, &text)));
                 }
                 if songs.is_empty() {
                     search.notice = Some("that song can no longer be read".into());
@@ -586,7 +657,8 @@ impl Worker {
                 }
                 self.setlist = Setlist::new(songs, self.config.clone(), Polarity::Light);
                 self.setlist.go_to(at);
-                self.setlist_paths = paths;
+                self.setlist_files = files;
+                self.restore_transposes();
                 self.setlist_id += 1;
                 self.search = None;
                 self.retained = None;
@@ -756,6 +828,15 @@ impl Viewer {
             setlist: self.setlist,
             max_texture_side: self.max_texture_side,
         }));
+    }
+
+    fn transpose(&mut self, shift: Shift) {
+        let _ = self.requests.send(ToWorker::Transpose {
+            setlist: self.setlist,
+            song: self.song,
+            shift,
+        });
+        self.request_page();
     }
 
     fn accept_ready_page(&mut self) {
@@ -969,6 +1050,9 @@ impl ApplicationHandler<PageReady> for Viewer {
                         self.request_page();
                     }
                 }
+                Key::Character(key) if key == "]" => self.transpose(Shift::By(1)),
+                Key::Character(key) if key == "[" => self.transpose(Shift::By(-1)),
+                Key::Character(key) if key == "0" => self.transpose(Shift::Reset),
                 Key::Character(key) if key.eq_ignore_ascii_case("n") => self.change_song(1),
                 Key::Character(key) if key.eq_ignore_ascii_case("p") => self.change_song(-1),
                 Key::Named(NamedKey::ArrowRight) => self.change_song(1),
@@ -1096,6 +1180,8 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
        cpl --view <song.cho> --paged      open in paged mode (`v` toggles)
        cpl --view <song.cho> --page 2     open paged on the second page
        cpl --view <song.cho> --tabs fold  open with tablature folded (or show)
+       cpl --view <song.cho> --transpose 2
+                                          open transposed up two semitones
        cpl --view <folder> --search ris   open in search with a query typed
        cpl --view <folder> --search ris --open 2 [--next 1]
                                           open the second result as Enter would,
@@ -1105,8 +1191,10 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
        cpl <song.cho>                     print the parsed lyrics
        cpl render <song.cho|sample> --out page.png [--size 980x720]
            [--scale 1|2] [--dark] [--scroll P | --page N] [--tabs show|fold]
+           [--transpose N]
                                           write what the window would show
 In the viewer: i polarity, v scroll or paged, t fold or show tablature,
+[ ] transpose down or up a semitone, 0 back to the chords as written,
 n / p or ← → next and previous song, ↑ ↓ / Space / Page Up / Page Down / Home / End scroll or turn
 pages, q or Escape closes.";
 
@@ -1145,6 +1233,12 @@ fn parse_tabs(value: &str) -> Option<Tabs> {
         "auto" => Some(Tabs::Auto),
         _ => None,
     }
+}
+
+/// Semitones for `--transpose`: `2`, `+2` or `-3`, within an octave.
+fn parse_transpose(value: &str) -> Option<i32> {
+    let value = value.strip_prefix('+').unwrap_or(value);
+    value.parse().ok().filter(|n: &i32| (-11..=11).contains(n))
 }
 
 fn parse_size(value: &str) -> Option<(f64, f64)> {
@@ -1204,6 +1298,7 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
     let mut offset = 0.0_f32;
     let mut page = None;
     let mut tabs = Tabs::Auto;
+    let mut transpose = 0;
     let mut search = None;
     let mut store = None;
     let mut source = None;
@@ -1240,6 +1335,10 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
             "--tabs" => value()
                 .and_then(|v| parse_tabs(&v))
                 .map(|v| tabs = v)
+                .is_some(),
+            "--transpose" => value()
+                .and_then(|v| parse_transpose(&v))
+                .map(|v| transpose = v)
                 .is_some(),
             "--search" => value().map(|v| search = Some(v)).is_some(),
             "--store" => value().map(|v| store = Some(PathBuf::from(v))).is_some(),
@@ -1297,7 +1396,7 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
     let mut worker = Worker {
         setlist: Setlist::new(vec![cpl_song::parse(&text).song], config.clone(), polarity),
         setlist_id: 0,
-        setlist_paths: vec![(!sample).then(|| PathBuf::from(&song_path))],
+        setlist_files: vec![(!sample).then(|| SongFile::new(Path::new(&song_path), &text))],
         folders: if sample {
             Vec::new()
         } else {
@@ -1309,7 +1408,7 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
         store_loaded: false,
         store_error: None,
         search: None,
-        record_opens: false,
+        writes_store: false,
         shown: None,
         compositor: PageCompositor::default(),
         config,
@@ -1335,6 +1434,8 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
         setlist: 0,
         max_texture_side: 8192,
     };
+    worker.restore_transposes();
+    worker.transpose(0, 0, Shift::By(transpose));
     if let Some(query) = &search {
         worker.open_search(query);
     }
@@ -1369,6 +1470,7 @@ fn main() -> ExitCode {
     let mut start_offset = 0.0f32;
     let mut start_page = 0;
     let mut tabs = None;
+    let mut start_transpose = 0;
     let mut start_search = None;
     let mut open_row = None;
     let mut next_step = 0isize;
@@ -1381,6 +1483,7 @@ fn main() -> ExitCode {
                 | "--scroll"
                 | "--page"
                 | "--tabs"
+                | "--transpose"
                 | "--search"
                 | "--store"
                 | "--open"
@@ -1411,6 +1514,14 @@ fn main() -> ExitCode {
             }
         } else if flag == "--store" {
             store_path = Some(PathBuf::from(value));
+        } else if flag == "--transpose" {
+            match parse_transpose(&value) {
+                Some(n) => start_transpose = n,
+                None => {
+                    eprintln!("invalid --transpose {value:?}; expected semitones, -11 to 11");
+                    return ExitCode::FAILURE;
+                }
+            }
         } else if flag == "--tabs" {
             match parse_tabs(&value) {
                 Some(choice) => tabs = Some(choice),
@@ -1480,10 +1591,13 @@ fn main() -> ExitCode {
         || start_offset > 0.0
         || paged
         || tabs.is_some()
+        || start_transpose != 0
         || start_search.is_some())
         && !view
     {
-        eprintln!("--size, --song, --scroll, --page, --paged, --tabs and --search require --view");
+        eprintln!(
+            "--size, --song, --scroll, --page, --paged, --tabs, --transpose and --search require --view"
+        );
         return ExitCode::FAILURE;
     }
     if (open_row.is_some() && start_search.is_none()) || (next_step != 0 && open_row.is_none()) {
@@ -1504,6 +1618,7 @@ fn main() -> ExitCode {
     // Every song is parsed before the window opens; a bad file fails the
     // launch rather than surprising the performer mid-set.
     let mut songs = Vec::new();
+    let mut setlist_files = Vec::new();
     let mut clean = true;
     if paths.is_empty() {
         let source = if scroll {
@@ -1514,6 +1629,7 @@ fn main() -> ExitCode {
             SAMPLE
         };
         songs.push(cpl_song::parse(source).song);
+        setlist_files.push(None);
     }
     for path in &paths {
         let source = match fs::read_to_string(path) {
@@ -1533,6 +1649,7 @@ fn main() -> ExitCode {
         }
         clean &= result.diagnostics.is_empty();
         songs.push(result.song);
+        setlist_files.push(Some(SongFile::new(Path::new(path), &source)));
     }
     if !view {
         let song = &songs[0];
@@ -1563,12 +1680,15 @@ fn main() -> ExitCode {
     };
     let worker_config = config.clone();
     let song_count = songs.len();
-    let setlist_paths: Vec<Option<PathBuf>> = if paths.is_empty() {
-        vec![None]
-    } else {
-        paths.iter().map(|path| Some(PathBuf::from(path))).collect()
-    };
     let searching = start_search.is_some();
+    if start_transpose != 0 {
+        // As `]` or `[` pressed that many times on the opening song.
+        let _ = requests.send(ToWorker::Transpose {
+            setlist: 0,
+            song: start_song,
+            shift: Shift::By(start_transpose),
+        });
+    }
     if let Some(query) = start_search {
         let _ = requests.send(ToWorker::OpenSearch(query));
         // The same keys a performer would press: to the top row, down to
@@ -1595,7 +1715,7 @@ fn main() -> ExitCode {
         let mut worker = Worker {
             setlist: Setlist::new(songs, worker_config.clone(), polarity),
             setlist_id: 0,
-            setlist_paths,
+            setlist_files,
             folders,
             library: None,
             store: Store::default(),
@@ -1603,7 +1723,7 @@ fn main() -> ExitCode {
             store_loaded: false,
             store_error: None,
             search: None,
-            record_opens: true,
+            writes_store: true,
             shown: None,
             compositor: PageCompositor::default(),
             config: worker_config,
@@ -1613,6 +1733,7 @@ fn main() -> ExitCode {
             next_slab_id: 0,
             timing,
         };
+        worker.restore_transposes();
         loop {
             let first = match request_rx.try_recv() {
                 Ok(message) => message,
@@ -1662,6 +1783,11 @@ fn main() -> ExitCode {
                     ToWorker::Page(request) => latest = Some(request),
                     ToWorker::OpenSearch(query) => worker.open_search(&query),
                     ToWorker::Search(input) => worker.search_input(input),
+                    ToWorker::Transpose {
+                        setlist,
+                        song,
+                        shift,
+                    } => worker.transpose(setlist, song, shift),
                 }
             }
             let Some(request) = latest else {
@@ -1725,8 +1851,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        CoreText, PageCompositor, PathBuf, Polarity, SearchInput, Setlist, Store, Worker,
-        expand_paths, library_folders, parse_size,
+        CoreText, PageCompositor, PathBuf, Polarity, SearchInput, Setlist, Shift, SongFile, Store,
+        Worker, expand_paths, library_folders, parse_size,
     };
     use cpl_app::Config;
 
@@ -1740,7 +1866,10 @@ mod tests {
                 Polarity::Light,
             ),
             setlist_id: 0,
-            setlist_paths: vec![Some(PathBuf::from("testdata/greensleeves.cho"))],
+            setlist_files: vec![Some(SongFile::new(
+                std::path::Path::new("testdata/greensleeves.cho"),
+                &text,
+            ))],
             folders: library_folders(&["testdata".to_owned()]),
             library: None,
             store: Store::default(),
@@ -1748,7 +1877,7 @@ mod tests {
             store_loaded: false,
             store_error: None,
             search: None,
-            record_opens: false,
+            writes_store: false,
             shown: None,
             compositor: PageCompositor::default(),
             config,
@@ -1795,7 +1924,7 @@ mod tests {
         let mut worker = worker(path.clone());
         worker.note_shown();
         assert!(!path.exists(), "the test worker records nothing");
-        worker.record_opens = true;
+        worker.writes_store = true;
         worker.note_shown();
         let text = std::fs::read_to_string("testdata/greensleeves.cho").unwrap();
         let greensleeves = cpl_app::library::fingerprint(&text);
@@ -1812,6 +1941,44 @@ mod tests {
         let store = Store::load(&path).unwrap();
         let rising = std::fs::read_to_string("testdata/house_of_the_rising_sun.cho").unwrap();
         assert!(store.opened(&cpl_app::library::fingerprint(&rising)) >= first);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_transpose_is_remembered_and_restored_when_the_song_opens_again() {
+        let dir = std::env::temp_dir().join(format!("cpl-transpose-{}", std::process::id()));
+        let path = dir.join("library.toml");
+        let text = std::fs::read_to_string("testdata/greensleeves.cho").unwrap();
+        let greensleeves = cpl_app::library::fingerprint(&text);
+        let mut worker = worker(path.clone());
+        worker.transpose(0, 0, Shift::By(1));
+        assert!(!path.exists(), "the test worker records nothing");
+        worker.writes_store = true;
+        worker.transpose(0, 0, Shift::By(1));
+        worker.transpose(1, 0, Shift::By(5));
+        assert_eq!(
+            worker.setlist.transpose(0),
+            2,
+            "a stale setlist's key is dropped"
+        );
+        assert_eq!(Store::load(&path).unwrap().transpose(&greensleeves), 2);
+        // A new session opens the song at +2, its chords already shifted.
+        let mut again = super::tests::worker(path.clone());
+        again.restore_transposes();
+        assert_eq!(again.setlist.transpose(0), 2);
+        assert_eq!(
+            again.setlist.current(&CoreText).song().first_meta("key"),
+            Some("Bm")
+        );
+        // Opening it from search restores it too.
+        let mut from_search = super::tests::worker(dir.join("other.toml"));
+        from_search.store_path = Some(path.clone());
+        from_search.open_search("greensleeves");
+        from_search.search_input(SearchInput::Enter);
+        assert_eq!(from_search.setlist.transpose(0), 2);
+        // Reset forgets it.
+        worker.transpose(0, 0, Shift::Reset);
+        assert!(Store::load(&path).unwrap().record(&greensleeves).is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

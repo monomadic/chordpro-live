@@ -78,6 +78,18 @@ const CASES: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "house-transposed-980x720@1x",
+        &[
+            "testdata/house_of_the_rising_sun.cho",
+            "--size",
+            "980x720",
+            "--scale",
+            "1",
+            "--transpose",
+            "-3",
+        ],
+    ),
+    (
         "house-980x720@2x",
         &[
             "testdata/house_of_the_rising_sun.cho",

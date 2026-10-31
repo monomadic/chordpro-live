@@ -17,6 +17,8 @@ pub struct Setlist {
     config: Config,
     polarity: Polarity,
     apps: BTreeMap<usize, App>,
+    /// Each song's live transpose in semitones, kept while the setlist is.
+    transposes: Vec<i32>,
 }
 
 impl Setlist {
@@ -24,6 +26,7 @@ impl Setlist {
     pub fn new(songs: Vec<Song>, config: Config, polarity: Polarity) -> Self {
         assert!(!songs.is_empty(), "a setlist needs at least one song");
         Self {
+            transposes: vec![0; songs.len()],
             songs,
             current: 0,
             config,
@@ -54,6 +57,25 @@ impl Setlist {
         let index = self.current;
         self.ensure(index, measure);
         self.apps.get_mut(&index).unwrap()
+    }
+
+    /// The live transpose of the song at `index`, in semitones.
+    pub fn transpose(&self, index: usize) -> i32 {
+        self.transposes[index]
+    }
+
+    /// Sets the live transpose of the song at `index`, kept within an
+    /// octave either way. A change forgets that song's measured app, so the
+    /// next `current` or `preload` measures the shifted chords. Returns
+    /// whether anything changed.
+    pub fn set_transpose(&mut self, index: usize, semitones: i32) -> bool {
+        let semitones = semitones.clamp(-11, 11);
+        if self.transposes[index] == semitones {
+            return false;
+        }
+        self.transposes[index] = semitones;
+        self.apps.remove(&index);
+        true
     }
 
     /// The app at `index` if it has been measured, without measuring it.
@@ -111,7 +133,7 @@ impl Setlist {
     fn ensure(&mut self, index: usize, measure: &impl Measure) {
         if !self.apps.contains_key(&index) {
             let app = App::new(
-                self.songs[index].clone(),
+                self.songs[index].transposed(self.transposes[index]),
                 self.config.clone(),
                 self.polarity,
                 measure,
@@ -152,6 +174,29 @@ mod tests {
 
     fn setlist(titles: &[&str]) -> Setlist {
         Setlist::new(songs(titles), Config::default(), Polarity::Light)
+    }
+
+    #[test]
+    fn transpose_is_kept_per_song_and_remeasures_only_that_song() {
+        let measure = Counting {
+            calls: Cell::new(0),
+        };
+        let mut list = setlist(&["One", "Two"]);
+        list.current(&measure);
+        while list.preload(&measure) {}
+        assert!(list.set_transpose(0, 2));
+        assert!(!list.set_transpose(0, 2), "no change, nothing forgotten");
+        assert!(list.ready(0).is_none());
+        assert!(list.ready(1).is_some(), "the next song keeps its page");
+        assert_eq!(list.current(&measure).song().chord_names(), ["D"]);
+        assert_eq!(list.current(&measure).song().transpose, 2);
+        list.step(1);
+        assert_eq!(list.transpose(1), 0);
+        assert_eq!(list.current(&measure).song().chord_names(), ["C"]);
+        list.step(-1);
+        assert_eq!(list.current(&measure).song().chord_names(), ["D"]);
+        list.set_transpose(0, 40);
+        assert_eq!(list.transpose(0), 11);
     }
 
     #[test]

@@ -397,7 +397,7 @@ enum Hints {
 }
 
 const HINTS: [&str; 3] = [
-    "n p songs     v view     i invert     / search",
+    "[ ] transpose     v view     i invert     / search",
     "↑ ↓ scroll     v view     i invert     / search",
     "Space turn     v view     i invert     / search",
 ];
@@ -771,6 +771,25 @@ impl App {
         status
     }
 
+    /// The key the player reads and the live transpose, as a status item
+    /// with its leading separator: `Am`, or `Bm +2` once transposed. A
+    /// narrow strip names it only when transposed.
+    fn key_status(&self, separator: &str, wide: bool) -> String {
+        let song = &self.song;
+        let key = song
+            .first_meta("key_actual")
+            .or_else(|| song.first_meta("key"))
+            .map(str::trim)
+            .filter(|key| !key.is_empty());
+        let offset = cpl_song::transpose::signed(song.transpose);
+        match (key, song.transpose) {
+            (Some(key), 0) if wide => format!("{separator}{key}"),
+            (_, 0) => String::new(),
+            (Some(key), _) => format!("{separator}{key} {offset}"),
+            (None, _) => format!("{separator}transpose {offset}"),
+        }
+    }
+
     /// The section in view and a separator, three spaces either side in a
     /// wide window as in the mock, two in a narrow one.
     fn section_prefix(
@@ -805,10 +824,11 @@ impl App {
         let prefix = Self::section_prefix(width, first_visible_group, sections);
         let page = format!("PAGE {} / {count}", page + 1);
         if width < 700.0 {
-            format!("{prefix}{page}")
+            format!("{prefix}{page}{}", self.key_status("  ·  ", false))
         } else {
             format!(
-                "{prefix}{page}{STATUS_SEPARATOR}stand {} pt",
+                "{prefix}{page}{}{STATUS_SEPARATOR}stand {} pt",
+                self.key_status(STATUS_SEPARATOR, true),
                 self.config.body_size
             )
         }
@@ -838,11 +858,14 @@ impl App {
             // A phone-narrow window keeps where you are and whether there is
             // more; the point size can wait.
             let more = if offset < max_offset { "  ·  ↓" } else { "" };
-            format!("{section_prefix}SCROLL{more}")
+            let key = self.key_status("  ·  ", false);
+            format!("{section_prefix}SCROLL{key}{more}")
         } else if width < 700.0 {
-            format!("{section_prefix}SCROLL  ·  {body} pt{more}")
+            let key = self.key_status("  ·  ", false);
+            format!("{section_prefix}SCROLL{key}  ·  {body} pt{more}")
         } else {
-            format!("{section_prefix}SCROLL{STATUS_SEPARATOR}stand {body} pt{wide_more}")
+            let key = self.key_status(STATUS_SEPARATOR, true);
+            format!("{section_prefix}SCROLL{key}{STATUS_SEPARATOR}stand {body} pt{wide_more}")
         }
     }
 
@@ -1535,10 +1558,15 @@ impl App {
             });
         }
         let status = if frame.fits && width < 500.0 {
-            format!("FIT  ·  {body} pt  ·  step {}", frame.ladder_step)
+            format!(
+                "FIT{}  ·  {body} pt  ·  step {}",
+                self.key_status("  ·  ", false),
+                frame.ladder_step
+            )
         } else if frame.fits {
             format!(
-                "FIT{STATUS_SEPARATOR}{} {}{STATUS_SEPARATOR}stand {} pt",
+                "FIT{}{STATUS_SEPARATOR}{} {}{STATUS_SEPARATOR}stand {} pt",
+                self.key_status(STATUS_SEPARATOR, true),
                 frame.columns,
                 if frame.columns == 1 {
                     "column"
@@ -2058,6 +2086,37 @@ mod tests {
         // wider in practice, so leave it a 20% margin.
         let drawn = status.content.chars().count() as f32 * status.size * 0.5 * 1.2;
         assert!(status.x + drawn <= width - app.config().margin_x, "{drawn}");
+    }
+
+    #[test]
+    fn the_status_names_the_key_and_any_live_transpose() {
+        let status = |app: &App, width: f32| {
+            app.frame(width, 600.0)
+                .text
+                .into_iter()
+                .find(|t| t.group == usize::MAX)
+                .unwrap()
+                .content
+        };
+        let source = "{title: T}\n{key: Am}\n{sov: A}\n[Am]Hello\n{eov}";
+        let plain = app(source);
+        assert!(
+            status(&plain, 1000.0).starts_with("FIT   ·   Am   ·   1 column"),
+            "{}",
+            status(&plain, 1000.0)
+        );
+        assert!(
+            status(&plain, 400.0).starts_with("FIT  ·  28 pt"),
+            "narrow: key only when shifted: {}",
+            status(&plain, 400.0)
+        );
+        let song = cpl_song::parse(source).song.transposed(2);
+        let up = App::new(song, Config::default(), Polarity::Light, &Fixed);
+        assert!(status(&up, 1000.0).starts_with("FIT   ·   Bm +2   ·   "));
+        assert!(status(&up, 400.0).starts_with("FIT  ·  Bm +2  ·  28 pt"));
+        let keyless = cpl_song::parse("{title: T}\n[C]Hi").song.transposed(-3);
+        let keyless = App::new(keyless, Config::default(), Polarity::Light, &Fixed);
+        assert!(status(&keyless, 1000.0).starts_with("FIT   ·   transpose −3   ·   "));
     }
 
     #[test]

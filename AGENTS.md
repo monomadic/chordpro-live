@@ -67,13 +67,15 @@ black), or several songs or a folder as a setlist (`--view testdata`); append
 size, `--song 2` to open on a given song, `--scroll 120` to open scrolled
 that many points, `--paged` or `--page 2` to open in paged mode, and
 `--tabs show` or `--tabs fold` to pin tablature (`testdata/greensleeves.cho`
-has long tabs), and `--search ris` to open in search with a query typed
+has long tabs), `--transpose 2` (or `-3`) to open the song transposed as
+`]` or `[` would, and `--search ris` to open in search with a query typed
 (add `--open 2` to open the second result as Enter would, and `--next 1`
 to then step through the results as `n` does);
 `--store tests/fixtures/library.toml` (or `$CPL_LIBRARY_STORE`) points the
 sidecar at a file other than the one in Application Support, which tests
 and captures must do.
-`cpl --help` lists the forms. Press `i` for polarity, `v` for scroll or
+`cpl --help` lists the forms. Press `i` for polarity, `[` `]` to transpose a semitone down or up and `0`
+to reset, `v` for scroll or
 paged, `t` to fold or show tablature, `/` or `o` to search (where
 digits rate, `#` tags, Tab sorts, Enter opens and Escape returns), `n`/`p` (or ← →) for the next and previous song, and `q` or Escape
 to close. Up/Down, Space, Page Up/Down, Home, and End scroll or turn pages. Capture
@@ -84,7 +86,7 @@ stamped in milliseconds from process start; `scripts/launch-check.sh`
 launches the viewer repeatedly and fails if a page was never presented.
 `cargo run -- render song.cho --out page.png --scale 1 --size 420x720`
 writes exactly what the window would show, headless; use it for 1x checks.
-`cargo test --test visual` compares sixteen such renders with
+`cargo test --test visual` compares seventeen such renders with
 `tests/goldens/`; after an intended visual change, inspect `target/visual/`
 and re-bless with `CPL_BLESS=1 cargo test --test visual`.
 `cargo run -- song.cho` prints the parsed lyrics.

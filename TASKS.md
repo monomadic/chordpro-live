@@ -151,11 +151,28 @@ automated checks. When every task in an epic is checked, the epic moves to
   - [ ] Saved setlists in the sidecar: an ordered list of fingerprints,
     named, opened from search. Needs a design first: how a setlist is
     built, named, and chosen (no Figma frame exists for it yet).
-  - [ ] Transpose-at-open: remember each song's transpose in the sidecar
-    and restore it when the song opens. Waits on live transpose below.
-- [ ] Live transpose (`[` `]`, `0` resets) with chordpro-tui's spelling
+  - [x] Transpose-at-open: remember each song's transpose in the sidecar
+    and restore it when the song opens. `transpose = n` in the song's
+    table, written whenever the live transpose changes and dropped at 0;
+    a setlist made at launch or from search opens each song at it. Tested
+    headless (worker writes, a fresh worker and a search open restore,
+    reset forgets) and in 2x windows: a `--transpose -2` run wrote the
+    sidecar and a second launch with no flag opened Greensleeves in Gm.
+- [x] Live transpose (`[` `]`, `0` resets) with chordpro-tui's spelling
   rules and `{transpose}` honoured, chord diagrams following it, and the
-  status strip showing the offset (PROPOSAL.md, "The app").
+  status strip showing the offset (PROPOSAL.md, "The app"). Ported
+  `transpose.go` and its tests into `cpl_song::transpose`; `{transpose: n}`
+  (with `f`/`s` and empty to cancel) shifts the chords after it and sets
+  `key_actual`, which the KEY pill shows. The worker's `Setlist` keeps a
+  transpose per song, within an octave, and re-measures only that song;
+  the old page stays up until the new one is composed. The status strip
+  names the key after the mode as the mock does (`FIT · Bm +2 · …`) and
+  the fit hints lead with `[ ] transpose`, replacing `n p songs`.
+  `--transpose N` opens transposed (`cpl render` too). Checked in a 2x
+  window (Greensleeves at +2: chords, folded tabs and status) and headless
+  at 1x; a new golden holds House of the Rising Sun at −3, and the status
+  change re-blessed seven others. Not yet: real `[` `]` `0` keypresses in a
+  window, and the mock's `c chords` hint, which waits on a chord viewer.
 - [x] Match the page body to the Figma mock as the header now is. Chords
   are `Page/Chord` SF Pro Semibold 15 pt and labels `Page/Label` Bold 14 pt
   tracked 8%, both ink-soft (a chorus label is ink); a chord/lyric pair

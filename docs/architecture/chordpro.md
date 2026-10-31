@@ -27,7 +27,24 @@ The parser is **not yet ChordPro 6 conformant**. What it handles:
   and `fingers`; a barre is inferred where one finger holds two or more
   strings at one fret. `Song::defines` keeps them by name, and
   `Song::shape` prefers them to the built-in table.
+- `{transpose: n}`, `+n`, `-n`, and `nf` or `ns` to force flats or
+  sharps; empty cancels. Chords after it are shifted as parsed, tablature
+  excepted, and `key_actual` becomes the key the player reads; `{key}`
+  stays as written. Without a suffix the shifted root takes the fixed
+  spelling (E♭ and B♭ flat; C♯, F♯ and G♯ sharp), not the spec's
+  sharps-up, flats-down, as PROPOSAL.md decides.
 - UTF-8 BOM and CRLF.
+
+## Transpose
+
+`transpose::chord` shifts a chord name, its slash bass too, ported from
+chordpro-tui's `transpose.go` with its tests; a name that does not start
+with a note is left alone, and a shift of zero keeps the author's spelling.
+`Song::transposed(n)` is the viewer's live transpose: a copy with every
+chord and `key`/`key_actual` shifted, tablature verbatim, and the offset
+added to `Song::transpose` for the status strip. `{define}` voicings keep
+their names, so a shifted chord takes the built-in shape unless the song
+defines that chord too.
 
 Diagnosed, which makes the `cpl` command fail: mismatched, orphaned or
 unclosed environments, recall before any chorus, empty comments, layout
@@ -35,7 +52,7 @@ hints (`new_page`, `column_break`, `columns`) until the fit engine honours
 them, and every other directive. Not yet parsed: selectors, grid and
 delegated environments, `[*annotation]`, markup, `%{}` substitution,
 keyboard `{define}`s and their `copy`/`display` modifiers, `{chord}`,
-`{transpose}` and `{new_song}`. Comments render in the soft ink
+the read-only `_key`, and `{new_song}`. Comments render in the soft ink
 at lyric size until the Figma mock defines a comment style.
 
 No conformance status table exists until it can be generated from the

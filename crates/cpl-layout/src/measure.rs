@@ -506,7 +506,15 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
         pills: PILLS
             .iter()
             .filter_map(|(name, label)| {
-                let value = song.first_meta(name)?.trim();
+                // A `{transpose}` in the file makes `key_actual` the key the
+                // player reads.
+                let value = match *name {
+                    "key" => song
+                        .first_meta("key_actual")
+                        .or_else(|| song.first_meta("key"))?,
+                    _ => song.first_meta(name)?,
+                }
+                .trim();
                 (!value.is_empty()).then(|| MeasuredPill {
                     label: label.to_string(),
                     label_width: m.em(label, Role::PillLabel),

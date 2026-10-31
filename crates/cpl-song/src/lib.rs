@@ -2,6 +2,7 @@
 //! conformance. `~/src/chordpro-library` holds the working spec it follows.
 
 pub mod chords;
+pub mod transpose;
 
 use std::collections::BTreeMap;
 
@@ -11,6 +12,9 @@ pub struct Song {
     pub sections: Vec<Section>,
     /// `{define}` voicings by chord name; they win over the built-in table.
     pub defines: BTreeMap<String, chords::Shape>,
+    /// The viewer's live transpose already applied to the chords, in
+    /// semitones; a `{transpose}` in the file is not counted here.
+    pub transpose: i32,
 }
 
 impl Song {
@@ -35,6 +39,38 @@ impl Song {
             }
         }
         seen
+    }
+
+    /// A copy with every chord and key shifted by `semitones` more, spelled
+    /// by the fixed rule. Tablature is verbatim and stays as written;
+    /// `{define}` voicings keep their names, so a shifted chord falls back to
+    /// the built-in table unless the song defines it too.
+    pub fn transposed(&self, semitones: i32) -> Song {
+        let mut song = self.clone();
+        if semitones == 0 {
+            return song;
+        }
+        song.transpose += semitones;
+        let shift = |name: &str| transpose::chord(name, semitones, transpose::Spelling::Fixed);
+        for section in song
+            .sections
+            .iter_mut()
+            .filter(|section| section.kind != SectionKind::Tab)
+        {
+            for segment in section.lines.iter_mut().flat_map(|line| &mut line.segments) {
+                if let Some(chord) = &mut segment.chord {
+                    *chord = shift(chord);
+                }
+            }
+        }
+        for name in ["key", "key_actual"] {
+            if let Some(keys) = song.metadata.get_mut(name) {
+                for key in keys {
+                    *key = shift(key);
+                }
+            }
+        }
+        song
     }
 
     /// The fingering to draw for `name`: the song's `{define}`, else the
@@ -158,6 +194,8 @@ struct Parser {
     song: Song,
     diagnostics: Vec<Diagnostic>,
     active: Option<Section>,
+    /// The `{transpose}` in force: chords after it are shifted as parsed.
+    transpose: (i32, transpose::Spelling),
 }
 
 impl Parser {
@@ -220,7 +258,7 @@ impl Parser {
             self.directive(number, canonical(&name), value);
             return;
         }
-        let line = parse_line(text, number, &mut self.diagnostics);
+        let line = parse_line(text, number, self.transpose, &mut self.diagnostics);
         self.push_line(line);
     }
 
@@ -250,6 +288,17 @@ impl Parser {
                     self.song.defines.insert(name, shape);
                 }
                 None => self.diagnose(number, "define needs a chord name and frets"),
+            },
+            "transpose" => match transpose::parse_directive(value) {
+                Some(shift) => {
+                    self.transpose = shift;
+                    // The key the player now reads; `key` stays as written.
+                    if let Some(key) = self.song.first_meta("key") {
+                        let actual = transpose::chord(key, shift.0, shift.1);
+                        self.song.metadata.insert("key_actual".into(), vec![actual]);
+                    }
+                }
+                None => self.diagnose(number, format!("transpose needs semitones, not {value:?}")),
             },
             "comment" | "comment_italic" | "comment_box" | "highlight" => {
                 if value.is_empty() {
@@ -463,7 +512,12 @@ fn expand_tabs(text: &str) -> String {
     out
 }
 
-fn parse_line(text: &str, number: usize, diagnostics: &mut Vec<Diagnostic>) -> Line {
+fn parse_line(
+    text: &str,
+    number: usize,
+    (semitones, spelling): (i32, transpose::Spelling),
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Line {
     let mut segments = Vec::new();
     let mut remaining = text;
     while let Some(open) = remaining.find('[') {
@@ -492,7 +546,7 @@ fn parse_line(text: &str, number: usize, diagnostics: &mut Vec<Diagnostic>) -> L
         remaining = &after[close + 1..];
         let next = remaining.find('[').unwrap_or(remaining.len());
         segments.push(Segment {
-            chord: Some(chord.into()),
+            chord: Some(transpose::chord(chord, semitones, spelling)),
             lyric: remaining[..next].into(),
         });
         remaining = &remaining[next..];
@@ -548,9 +602,9 @@ mod tests {
 
     #[test]
     fn unsupported_is_visible() {
-        let result = parse("{title: Test}\n{transpose: 2}\n");
+        let result = parse("{title: Test}\n{new_song}\n");
         assert_eq!(result.diagnostics[0].line, 2);
-        assert!(result.diagnostics[0].message.contains("transpose"));
+        assert!(result.diagnostics[0].message.contains("new_song"));
     }
 
     #[test]
@@ -745,6 +799,55 @@ mod tests {
             messages(&parse("{define: X}")),
             ["define needs a chord name and frets"]
         );
+    }
+
+    #[test]
+    fn transpose_directive_shifts_the_chords_after_it() {
+        let result = parse(
+            "{key: G}\n[G]one [D]two\n{transpose: 2}\n[G]three [D/F#]four\n{transpose: 1f}\n[C]five\n{transpose}\n[C]six",
+        );
+        assert!(result.diagnostics.is_empty(), "{:?}", messages(&result));
+        assert_eq!(
+            result.song.chord_names(),
+            ["G", "D", "A", "E/G#", "Db", "C"]
+        );
+        assert_eq!(
+            result.song.first_meta("key"),
+            Some("G"),
+            "key stays as written"
+        );
+        assert_eq!(
+            result.song.first_meta("key_actual"),
+            Some("G"),
+            "the last transpose cancelled"
+        );
+        let shifted = parse("{key: Am}\n{transpose: -2}\n[Am]x");
+        assert_eq!(shifted.song.first_meta("key_actual"), Some("Gm"));
+        assert_eq!(
+            messages(&parse("{transpose: up}")),
+            ["transpose needs semitones, not \"up\""]
+        );
+    }
+
+    #[test]
+    fn live_transpose_shifts_chords_and_keys_but_not_tablature() {
+        let song =
+            parse("{key: G}\n{capo: 2}\n[G]hi [D]there [*Riff]\n{sot}\ne|-[3]-|\n{eot}").song;
+        let up = song.transposed(2);
+        assert_eq!(up.transpose, 2);
+        assert_eq!(up.chord_names(), ["A", "E", "*Riff"]);
+        assert_eq!(up.first_meta("key"), Some("A"));
+        assert_eq!(up.first_meta("capo"), Some("2"));
+        assert_eq!(up.sections[1].lines, song.sections[1].lines);
+        assert_eq!(
+            song.chord_names(),
+            ["G", "D", "*Riff"],
+            "the original is untouched"
+        );
+        let back = up.transposed(-2);
+        assert_eq!(back.transpose, 0);
+        assert_eq!(back.chord_names(), song.chord_names());
+        assert_eq!(song.transposed(0), song);
     }
 
     #[test]

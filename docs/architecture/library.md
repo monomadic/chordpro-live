@@ -34,11 +34,19 @@ table:
 - `rating`, 1–5;
 - `tags`, a string array;
 - `opened`, when the viewer last showed the song, as a TOML UTC date-time
-  (`2026-10-29T21:04:00Z`).
+  (`2026-10-29T21:04:00Z`);
+- `transpose`, the live transpose last set, −11 to 11 semitones; absent
+  when the song is played as written.
 
 The viewer's worker notes `opened` once per song change, after that page has
 gone to the host, for songs that came from a file; `cpl render` and the
-built-in samples note nothing.
+built-in samples note nothing. It writes `transpose` whenever `[` `]` or `0`
+change a file's song, and when a setlist is made (at launch, or by opening
+a search row) each song takes its remembered transpose before anything is
+measured, so a song opens in the key it was last played in. The worker
+keeps each setlist song's path, fingerprint and title from when it read
+the file, so neither write reads a song again. `cpl render` restores a
+remembered transpose but never writes one.
 
 Keys this build does not know are kept verbatim and written back. A record
 with nothing left is dropped. Saving writes a temporary file and renames

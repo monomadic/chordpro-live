@@ -20,7 +20,10 @@ into its row; sections are 18 pt apart (`section_gap` plus the last line's
 lead).
 
 The status strip is `Page/Status` (SF Pro 12/21 pt, ink-soft) `status_drop`
-above the bottom margin: where the page stands on the left, and the keys
+above the bottom margin: where the page stands on the left (the mode,
+the key the player reads with any live transpose, as `Bm +2`, then the
+columns and size; a strip under 500 pt names the key only when
+transposed), and the keys
 for the page's mode at the right margin when both fit with two em between
 them. The hints' widths are measured once per candidate body size in
 `App::new`, so composing never measures. All page dimensions are in
