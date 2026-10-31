@@ -3,9 +3,11 @@
 //! frame path, and reuses the previous scan's entry for any file whose size
 //! and modification time have not changed, so a rescan reads only what moved.
 //!
-//! Each entry carries a content fingerprint, the SHA-256 of the file's
-//! normalised text, which keys the sidecar store: a rename or a move to
-//! another device keeps a song's tags and rating.
+//! A file that holds several songs (`{new_song}`) gives one entry per song.
+//! Each entry carries a content fingerprint, the SHA-256 of the song's
+//! normalised text (the whole file, for a file of one song), which keys the
+//! sidecar store: a rename or a move to another device keeps a song's tags
+//! and rating.
 
 use crate::sha256;
 use std::{
@@ -22,6 +24,8 @@ pub const SONG_EXTENSIONS: [&str; 6] = ["cho", "chopro", "chordpro", "crd", "pro
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     pub path: PathBuf,
+    /// Which song in its file, from 0; files of one song are all 0.
+    pub part: usize,
     pub fingerprint: String,
     /// The `{title}`, or the file name without its extension.
     pub title: String,
@@ -40,7 +44,31 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// An entry for `text` read from `path`; pure, so tests need no files.
+    /// Every song in `text` read from `path`, one entry each; pure, so tests
+    /// need no files. A later song without a title is named by its file and
+    /// its place in it.
+    pub fn from_file(path: &Path, text: &str) -> Vec<Self> {
+        cpl_song::split(text)
+            .iter()
+            .enumerate()
+            .map(|(part, song)| {
+                let mut entry = Self::from_source(path, song.text);
+                entry.part = part;
+                if part > 0
+                    && cpl_song::parse(song.text)
+                        .song
+                        .first_meta("title")
+                        .is_none()
+                {
+                    entry.title = format!("{} ({})", entry.title, part + 1);
+                }
+                entry
+            })
+            .collect()
+    }
+
+    /// An entry for one song's `text` read from `path`; pure, so tests need
+    /// no files.
     pub fn from_source(path: &Path, text: &str) -> Self {
         let song = cpl_song::parse(text).song;
         let meta = |name: &str| song.first_meta(name).unwrap_or("").trim().to_owned();
@@ -71,6 +99,7 @@ impl Entry {
             .join(" ");
         Self {
             path: path.to_owned(),
+            part: 0,
             fingerprint: fingerprint(text),
             title,
             artist: meta("artist"),
@@ -123,15 +152,10 @@ impl Library {
     /// Unreadable files and folders are skipped: a broken file must not hide
     /// the rest of the library.
     pub fn scan(folders: &[PathBuf], previous: Option<&Library>) -> Self {
-        let known: HashMap<&Path, &Entry> = previous
-            .map(|library| {
-                library
-                    .entries
-                    .iter()
-                    .map(|entry| (entry.path.as_path(), entry))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut known: HashMap<&Path, Vec<&Entry>> = HashMap::new();
+        for entry in previous.iter().flat_map(|library| &library.entries) {
+            known.entry(entry.path.as_path()).or_default().push(entry);
+        }
         let mut paths = Vec::new();
         for folder in folders {
             collect(folder, &mut paths, 0);
@@ -143,19 +167,23 @@ impl Library {
             .filter_map(|path| {
                 let metadata = fs::metadata(&path).ok()?;
                 let (size, modified) = (metadata.len(), metadata.modified().ok());
-                if let Some(entry) = known.get(path.as_path())
-                    && entry.size == size
-                    && entry.modified == modified
+                if let Some(entries) = known.get(path.as_path())
+                    && entries
+                        .iter()
+                        .all(|entry| entry.size == size && entry.modified == modified)
                     && modified.is_some()
                 {
-                    return Some((*entry).clone());
+                    return Some(entries.iter().map(|&entry| entry.clone()).collect());
                 }
                 let text = fs::read_to_string(&path).ok()?;
-                let mut entry = Entry::from_source(&path, &text);
-                entry.size = size;
-                entry.modified = modified;
-                Some(entry)
+                let mut entries = Entry::from_file(&path, &text);
+                for entry in &mut entries {
+                    entry.size = size;
+                    entry.modified = modified;
+                }
+                Some(entries)
             })
+            .flatten()
             .collect();
         Self {
             folders: folders.to_vec(),
@@ -226,6 +254,22 @@ mod tests {
         assert_eq!(entry.tempo, "76");
         assert_eq!(entry.file_tags, ["folk", "gig-set", "slow"]);
         assert_eq!(entry.lyrics, "there is a house");
+    }
+
+    #[test]
+    fn a_file_of_several_songs_gives_an_entry_for_each() {
+        let text = "{title: One}\n[C]First\n{new_song}\n[G]Second\n";
+        let entries = Entry::from_file(Path::new("x/Medley.cho"), text);
+        let titles: Vec<(&str, usize)> =
+            entries.iter().map(|e| (e.title.as_str(), e.part)).collect();
+        assert_eq!(titles, [("One", 0), ("Medley (2)", 1)]);
+        assert_eq!(entries[1].fingerprint, fingerprint("[G]Second\n"));
+        let single = "{title: Only}\n[C]x\n";
+        assert_eq!(
+            Entry::from_file(Path::new("only.cho"), single)[0].fingerprint,
+            fingerprint(single),
+            "a file of one song keeps the whole file's fingerprint"
+        );
     }
 
     #[test]

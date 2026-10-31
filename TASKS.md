@@ -196,13 +196,36 @@ automated checks. When every task in an epic is checked, the epic moves to
   files parse alike. It found one parser defect, fixed here: an unlabelled
   tab was given the label "Tab"; the label is now kept as written and the
   page still says TAB. Not a window change; goldens unchanged.
-- [ ] Close the parse differences `cpl conform` reports, each against the
+- [x] Close the parse differences `cpl conform` reports, each against the
   spec and then the table: `{start_of_grid}`, the delegated `abc`, `ly`,
   `svg` and `textblock` environments (Molly Malone opens with `abc`),
   `{new_song}`, `[*annotation]` (kept as a chord named `*…`), `%{…}`
-  substitution, and selectors such as `{comment-guitar}`. Markup and
-  `{chord}`, `{image}` and the layout hints agree on parse but are not yet
-  honoured on the page.
+  substitution, and selectors such as `{comment-guitar}`. Each was probed
+  in the reference first and matched to what it printed. Grids are cells
+  (margin, bars, chords, comment) drawn as aligned monospace rows with
+  their chords transposed; text blocks read as verses; both use the
+  compact inline rows. abc, ly and svg are kept verbatim, diagnosed and
+  left off the page. Annotations sit in the chord row and never
+  transpose. Selectors match the guitar or a set metadata item, and a
+  skipped environment drops to its end. `%{…}` follows the reference
+  case by case. A file of several songs is several setlist songs and
+  search rows, each with its own fingerprint; a file of one song keeps
+  the whole file's. Six new probes cover margins, conditionals and
+  selector forms, and `testdata/harbour_lights.cho` uses all of it: 59 of
+  60 constructs and 7 of 7 files parse alike. Window checks at 760x900:
+  both songs of that file, the second transposed +2, search listing both
+  and opening the second. New golden `harbour-transposed-760x900@1x`; the
+  two search goldens re-blessed for the larger library.
+- [ ] Parse chords inside a comment (`{comment: [C]Capo}`), as the
+  reference does; `cpl conform` reports it. Needs a design for drawing a
+  comment's chords.
+- [ ] Draw the delegated notation the parser keeps (`abc`, `ly`, `svg`):
+  SVG first, since it needs no external program; abc and Lilypond need a
+  renderer, which is a dependency question for the user.
+- [ ] Make `%{key_actual}` (and any substitution of a value the viewer
+  changes) follow the live transpose; substitution now happens at parse.
+- [ ] Honour markup, `{chord}`, `{image}` and the layout hints on the
+  page; they agree with the reference on parse only.
 - [ ] Add the iOS host after the app and renderer boundaries are stable.
 - [x] Build the CoreText shim's fonts with `CTFont` rather than AppKit's
   `NSFont`, so measurement is thread-safe without the process-wide lock in

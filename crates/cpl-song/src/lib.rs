@@ -2,6 +2,7 @@
 //! conformance. `~/src/chordpro-library` holds the working spec it follows.
 
 pub mod chords;
+pub mod substitute;
 pub mod transpose;
 
 use std::collections::BTreeMap;
@@ -32,10 +33,11 @@ impl Song {
             .flat_map(|section| &section.lines)
             .flat_map(|line| &line.segments)
         {
-            if let Some(chord) = segment.chord.as_deref()
-                && !seen.contains(&chord)
-            {
-                seen.push(chord);
+            // A grid cell may hold several chords, `C~G`.
+            for chord in segment.chord.iter().flat_map(|cell| cell.split('~')) {
+                if !seen.contains(&chord) {
+                    seen.push(chord);
+                }
             }
         }
         seen
@@ -51,7 +53,7 @@ impl Song {
             return song;
         }
         song.transpose += semitones;
-        let shift = |name: &str| transpose::chord(name, semitones, transpose::Spelling::Fixed);
+        let shift = |name: &str| shift_cell(name, semitones, transpose::Spelling::Fixed);
         for section in song
             .sections
             .iter_mut()
@@ -99,8 +101,40 @@ pub enum SectionKind {
     Chorus,
     Bridge,
     Tab,
+    /// A chord grid: each line is its cells in order, a chord cell as a
+    /// chord segment and a bar, `.` or other symbol as a lyric segment.
+    Grid,
+    /// Text set as a block; its lines are parsed like a verse's.
+    Textblock,
+    /// Notation handed to another program, kept verbatim and not drawn.
+    Embedded(Notation),
     /// A stanza no environment encloses; blank lines separate these.
     Unlabelled,
+}
+
+impl SectionKind {
+    /// Kept as written: tablature and embedded notation.
+    pub fn verbatim(self) -> bool {
+        matches!(self, SectionKind::Tab | SectionKind::Embedded(_))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notation {
+    Abc,
+    Lilypond,
+    Svg,
+}
+
+impl Notation {
+    /// The environment's name in `{start_of_…}`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Notation::Abc => "abc",
+            Notation::Lilypond => "ly",
+            Notation::Svg => "svg",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -131,15 +165,27 @@ impl Line {
             kind,
             segments: vec![Segment {
                 chord: None,
+                annotation: None,
                 lyric: text,
             }],
         }
+    }
+
+    /// A grid line's cells: each chord, bar and symbol, in order.
+    pub fn cells(&self) -> impl Iterator<Item = &str> {
+        self.segments
+            .iter()
+            .map(|segment| segment.chord.as_deref().unwrap_or(&segment.lyric))
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
     pub chord: Option<String>,
+    /// A `[*text]` annotation, drawn where a chord would be: not a chord, so
+    /// never transposed and never given a diagram. A segment carries a chord
+    /// or an annotation, not both.
+    pub annotation: Option<String>,
     pub lyric: String,
 }
 
@@ -175,9 +221,88 @@ const METADATA: &[&str] = &[
     "tag",
 ];
 
-/// Parses metadata, environments, comments, chorus recall and bracketed
-/// chord markers. Formatting directives are accepted and ignored by design;
-/// anything else unsupported is diagnosed rather than silently discarded.
+/// The instrument this viewer draws diagrams for, which a directive's
+/// `-selector` is matched against first.
+pub const INSTRUMENT: &str = "guitar";
+
+/// One song's text within a file, and how many lines of the file precede it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Part<'a> {
+    pub offset: usize,
+    pub text: &'a str,
+}
+
+/// The songs a file holds, split at each `{new_song}` (or `{ns}`) outside
+/// tablature and embedded notation. A file without one is a single part
+/// whose text is the whole file, so its fingerprint is the file's.
+pub fn split(source: &str) -> Vec<Part<'_>> {
+    let mut parts = Vec::new();
+    let (mut start, mut start_line, mut at) = (0, 0, 0);
+    let mut verbatim: Option<String> = None;
+    for (index, raw) in source.split_inclusive('\n').enumerate() {
+        let next = at + raw.len();
+        let owned = directive(raw.trim_start_matches('\u{feff}').trim()).map(|(name, _)| name);
+        let name = owned.as_deref().map(canonical);
+        if let Some(end) = &verbatim {
+            if name == Some(end.as_str()) {
+                verbatim = None;
+            }
+        } else if let Some(kind) = name
+            .and_then(|name| name.strip_prefix("start_of_"))
+            .and_then(environment)
+            .filter(|kind| kind.verbatim())
+        {
+            verbatim = Some(end_of(kind));
+        } else if name == Some("new_song") {
+            parts.push(Part {
+                offset: start_line,
+                text: &source[start..at],
+            });
+            (start, start_line) = (next, index + 1);
+        }
+        at = next;
+    }
+    parts.push(Part {
+        offset: start_line,
+        text: &source[start..],
+    });
+    // Before a leading `{new_song}`, or between two, there is no song.
+    let has_content = |text: &str| {
+        text.lines().any(|line| {
+            let line = line.trim_start_matches('\u{feff}').trim();
+            !line.is_empty() && !line.starts_with('#')
+        })
+    };
+    let mut songs: Vec<Part> = parts.into_iter().filter(|p| has_content(p.text)).collect();
+    if songs.is_empty() {
+        songs.push(Part {
+            offset: 0,
+            text: source,
+        });
+    }
+    songs
+}
+
+/// Every song in a file, each parsed on its own; diagnostics count lines
+/// from the top of the file.
+pub fn parse_all(source: &str) -> Vec<ParseResult> {
+    split(source)
+        .into_iter()
+        .map(|part| {
+            let mut result = parse(part.text);
+            for diagnostic in &mut result.diagnostics {
+                diagnostic.line += part.offset;
+            }
+            result
+        })
+        .collect()
+}
+
+/// Parses one song: metadata, environments, comments, chorus recall,
+/// bracketed chords and annotations, selectors and `%{…}` substitution.
+/// Formatting directives are accepted and ignored by design; anything else
+/// unsupported is diagnosed rather than silently discarded. A file of
+/// several songs is read with [`parse_all`].
 pub fn parse(source: &str) -> ParseResult {
     let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let mut parser = Parser::default();
@@ -196,6 +321,9 @@ struct Parser {
     active: Option<Section>,
     /// The `{transpose}` in force: chords after it are shifted as parsed.
     transpose: (i32, transpose::Spelling),
+    /// The end directive awaited after an environment whose selector did
+    /// not match; everything until it is skipped.
+    skipping: Option<String>,
 }
 
 impl Parser {
@@ -236,10 +364,17 @@ impl Parser {
 
     fn line(&mut self, number: usize, text: &str) {
         let trimmed = text.trim();
-        if self.active_kind() == Some(SectionKind::Tab) {
-            // Tablature is verbatim: blank lines, `#` and brackets included.
+        if let Some(end) = &self.skipping {
+            if directive(trimmed).is_some_and(|(name, _)| canonical(&name) == end) {
+                self.skipping = None;
+            }
+            return;
+        }
+        if let Some(kind) = self.active_kind().filter(|kind| kind.verbatim()) {
+            // Tablature and notation are verbatim: blank lines, `#` and
+            // brackets included.
             match directive(trimmed) {
-                Some((name, _)) if canonical(&name) == "end_of_tab" => self.close(),
+                Some((name, _)) if canonical(&name) == end_of(kind) => self.close(),
                 _ => self.push_line(Line::text(LineKind::Lyrics, expand_tabs(text))),
             }
             return;
@@ -255,32 +390,87 @@ impl Parser {
             return;
         }
         if let Some((name, value)) = directive(trimmed) {
-            self.directive(number, canonical(&name), value);
+            let (name, selector) = match name.split_once('-') {
+                Some((name, selector)) => (name, Some(selector)),
+                None => (name.as_str(), None),
+            };
+            let name = canonical(name);
+            if let Some(selector) = selector
+                && !self.selected(selector)
+            {
+                if let Some(kind) = name.strip_prefix("start_of_").and_then(environment) {
+                    self.skipping = Some(end_of(kind));
+                }
+                return;
+            }
+            let value = substitute::substitute(value, &self.song.metadata);
+            self.directive(number, name, &value);
             return;
         }
-        let line = parse_line(text, number, self.transpose, &mut self.diagnostics);
+        let text = substitute::substitute(text, &self.song.metadata);
+        let line = if self.active_kind() == Some(SectionKind::Grid) {
+            grid_line(&text, self.transpose)
+        } else {
+            parse_line(&text, number, self.transpose, &mut self.diagnostics)
+        };
         self.push_line(line);
     }
 
+    /// Whether a directive's `-selector` (`!` negates) applies: the
+    /// instrument, else a metadata item that is set and not false.
+    fn selected(&self, selector: &str) -> bool {
+        let (selector, negated) = match selector.strip_suffix('!') {
+            Some(selector) => (selector, true),
+            None => (selector, false),
+        };
+        let truthy = |value: &String| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "" | "0" | "false" | "null"
+            )
+        };
+        let hit = selector == INSTRUMENT
+            || self
+                .song
+                .metadata
+                .get(selector)
+                .and_then(|values| values.first())
+                .is_some_and(truthy);
+        hit != negated
+    }
+
     fn directive(&mut self, number: usize, name: &str, value: &str) {
-        match name {
-            "start_of_verse" | "start_of_chorus" | "start_of_bridge" | "start_of_tab" => {
-                let kind = match name {
-                    "start_of_verse" => SectionKind::Verse,
-                    "start_of_chorus" => SectionKind::Chorus,
-                    "start_of_tab" => SectionKind::Tab,
-                    _ => SectionKind::Bridge,
-                };
-                self.start(number, kind, label(value));
+        if let Some(kind) = name.strip_prefix("start_of_").and_then(environment) {
+            // A grid's bare argument is its shape, and notation's is not a
+            // label either; only `label="…"` names them.
+            let label = match kind {
+                SectionKind::Grid | SectionKind::Embedded(_) => {
+                    attribute(value, "label").unwrap_or("")
+                }
+                _ => label(value),
+            };
+            self.start(number, kind, label);
+            if let SectionKind::Embedded(notation) = kind {
+                self.diagnose(
+                    number,
+                    format!("notation not drawn yet: {}", notation.name()),
+                );
             }
-            "end_of_verse" | "end_of_chorus" | "end_of_bridge" | "end_of_tab" => {
-                let kind = match name {
-                    "end_of_verse" => SectionKind::Verse,
-                    "end_of_chorus" => SectionKind::Chorus,
-                    "end_of_tab" => SectionKind::Tab,
-                    _ => SectionKind::Bridge,
-                };
-                self.end(number, kind, name);
+            return;
+        }
+        if let Some(kind) = name.strip_prefix("end_of_").and_then(environment) {
+            self.end(number, kind, name);
+            return;
+        }
+        match name {
+            "new_song" => {
+                // Implicit at the top of a song; a second song needs parse_all.
+                if self.song != Song::default() || self.active.is_some() {
+                    self.diagnose(
+                        number,
+                        "new_song inside one song: read the file with parse_all",
+                    );
+                }
             }
             "chorus" => self.recall(number, label(value)),
             "define" => match chords::parse_define(value) {
@@ -425,11 +615,94 @@ fn canonical(name: &str) -> &str {
         "eob" => "end_of_bridge",
         "sot" => "start_of_tab",
         "eot" => "end_of_tab",
+        "ns" => "new_song",
+        "sog" => "start_of_grid",
+        "eog" => "end_of_grid",
         "np" => "new_page",
         "npp" => "new_physical_page",
         "colb" => "column_break",
         "col" => "columns",
         other => other,
+    }
+}
+
+/// The section an environment name opens or closes: `verse` for
+/// `{start_of_verse}`, and so on.
+fn environment(name: &str) -> Option<SectionKind> {
+    Some(match name {
+        "verse" => SectionKind::Verse,
+        "chorus" => SectionKind::Chorus,
+        "bridge" => SectionKind::Bridge,
+        "tab" => SectionKind::Tab,
+        "grid" => SectionKind::Grid,
+        "textblock" => SectionKind::Textblock,
+        "abc" => SectionKind::Embedded(Notation::Abc),
+        "ly" => SectionKind::Embedded(Notation::Lilypond),
+        "svg" => SectionKind::Embedded(Notation::Svg),
+        _ => return None,
+    })
+}
+
+/// The directive that closes an environment.
+fn end_of(kind: SectionKind) -> String {
+    let name = match kind {
+        SectionKind::Verse | SectionKind::Unlabelled => "verse",
+        SectionKind::Chorus => "chorus",
+        SectionKind::Bridge => "bridge",
+        SectionKind::Tab => "tab",
+        SectionKind::Grid => "grid",
+        SectionKind::Textblock => "textblock",
+        SectionKind::Embedded(notation) => notation.name(),
+    };
+    format!("end_of_{name}")
+}
+
+/// A chord shifted by `semitones`; a grid cell's `C~G` shifts each chord.
+fn shift_cell(cell: &str, semitones: i32, spelling: transpose::Spelling) -> String {
+    cell.split('~')
+        .map(|chord| transpose::chord(chord, semitones, spelling))
+        .collect::<Vec<_>>()
+        .join("~")
+}
+
+/// A grid line's cells. Spacing is not significant. Between the first and
+/// last bar (`|`, `||`, `|:`, `:|2` …) a `.`, `/` or `%` is a symbol and any
+/// other cell a chord; text before the first bar is the row's margin (always a cell,
+/// perhaps empty) and text after the last its comment, each one cell kept
+/// as written.
+fn grid_line(text: &str, (semitones, spelling): (i32, transpose::Spelling)) -> Line {
+    let bar = |cell: &str| cell.starts_with(['|', ':']);
+    let cells: Vec<&str> = text.split_whitespace().collect();
+    let (first, last) = match (
+        cells.iter().position(|c| bar(c)),
+        cells.iter().rposition(|c| bar(c)),
+    ) {
+        (Some(first), Some(last)) => (first, last + 1),
+        _ => (0, cells.len()),
+    };
+    let text_cell = |words: &[&str]| Segment {
+        chord: None,
+        annotation: None,
+        lyric: words.join(" "),
+    };
+    let symbol = |cell: &str| bar(cell) || matches!(cell, "." | "/" | "%" | "%%" | "~");
+    let bars = cells[first..last].iter().map(|&cell| Segment {
+        chord: (!symbol(cell)).then(|| shift_cell(cell, semitones, spelling)),
+        annotation: None,
+        lyric: if symbol(cell) {
+            cell.into()
+        } else {
+            String::new()
+        },
+    });
+    Line {
+        kind: LineKind::Lyrics,
+        // The margin is kept even when empty, so a grid's rows align by
+        // column; an empty comment is dropped.
+        segments: std::iter::once(text_cell(&cells[..first]))
+            .chain(bars)
+            .chain((last < cells.len()).then(|| text_cell(&cells[last..])))
+            .collect(),
     }
 }
 
@@ -520,6 +793,7 @@ fn parse_line(
         if open > 0 {
             segments.push(Segment {
                 chord: None,
+                annotation: None,
                 lyric: remaining[..open].into(),
             });
         }
@@ -532,8 +806,8 @@ fn parse_line(
             remaining = &remaining[open..];
             break;
         };
-        let chord = &after[..close];
-        if chord.is_empty() {
+        let marker = &after[..close];
+        if marker.is_empty() {
             diagnostics.push(Diagnostic {
                 line: number,
                 message: "empty chord bracket".into(),
@@ -541,8 +815,13 @@ fn parse_line(
         }
         remaining = &after[close + 1..];
         let next = remaining.find('[').unwrap_or(remaining.len());
+        let (chord, annotation) = match marker.strip_prefix('*') {
+            Some(text) => (None, Some(text.to_owned())),
+            None => (Some(transpose::chord(marker, semitones, spelling)), None),
+        };
         segments.push(Segment {
-            chord: Some(transpose::chord(chord, semitones, spelling)),
+            chord,
+            annotation,
             lyric: remaining[..next].into(),
         });
         remaining = &remaining[next..];
@@ -550,6 +829,7 @@ fn parse_line(
     if !remaining.is_empty() {
         segments.push(Segment {
             chord: None,
+            annotation: None,
             lyric: remaining.into(),
         });
     }
@@ -598,9 +878,175 @@ mod tests {
 
     #[test]
     fn unsupported_is_visible() {
-        let result = parse("{title: Test}\n{new_song}\n");
+        let result = parse("{title: Test}\n{start_of_part}\n");
         assert_eq!(result.diagnostics[0].line, 2);
-        assert!(result.diagnostics[0].message.contains("new_song"));
+        assert_eq!(
+            result.diagnostics[0].message,
+            "unsupported directive: start_of_part"
+        );
+    }
+
+    #[test]
+    fn new_song_splits_a_file_into_songs() {
+        let source = "{title: One}\n[C]First\n{new_song}\n{title: Two}\n{sot}\n{ns}\n{eot}\n[G]Second\n{ns}\n# end\n";
+        let parts = split(source);
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        assert_eq!(parts[0].text, "{title: One}\n[C]First\n");
+        assert_eq!(parts[1].offset, 3);
+        let songs = parse_all(source);
+        assert_eq!(songs[0].song.first_meta("title"), Some("One"));
+        assert_eq!(songs[1].song.first_meta("title"), Some("Two"));
+        assert_eq!(
+            songs[1].song.sections[0].lines[0].lyrics(),
+            "{ns}",
+            "a {{ns}} inside tablature is tablature"
+        );
+        let unclosed = parse_all("{title: A}\n{ns}\n{title: B}\n{soc}\n[C]x");
+        assert_eq!(
+            unclosed[1].diagnostics[0].line, 5,
+            "lines count from the file's top"
+        );
+
+        let single = "\u{feff}{title: Only}\n[C]x\n";
+        assert_eq!(
+            split(single),
+            [Part {
+                offset: 0,
+                text: single
+            }],
+            "the whole file, BOM and all"
+        );
+        let leading = parse_all("{new_song}\n{title: Only}\n");
+        assert_eq!(leading.len(), 1);
+        assert!(leading[0].diagnostics.is_empty());
+        assert_eq!(
+            messages(&parse("{title: A}\n{new_song}\n{title: B}")),
+            ["new_song inside one song: read the file with parse_all"]
+        );
+    }
+
+    #[test]
+    fn annotations_sit_where_chords_do_but_are_not_chords() {
+        let result = parse("{key: C}\n[C]Sing [*Riff x2]along [*]");
+        assert!(result.diagnostics.is_empty(), "{:?}", messages(&result));
+        let line = &result.song.sections[0].lines[0];
+        assert_eq!(line.segments[1].chord, None);
+        assert_eq!(line.segments[1].annotation.as_deref(), Some("Riff x2"));
+        assert_eq!(line.segments[1].lyric, "along ");
+        assert_eq!(line.lyrics(), "Sing along ");
+        assert_eq!(result.song.chord_names(), ["C"]);
+        let up = result.song.transposed(2);
+        assert_eq!(
+            up.sections[0].lines[0].segments[1].annotation.as_deref(),
+            Some("Riff x2")
+        );
+    }
+
+    #[test]
+    fn selectors_keep_what_matches_the_guitar_or_a_set_item() {
+        let result = parse(
+            "{title: T}\n{year: 0}\n{comment-guitar: G}\n{comment-ukulele: U}\n{comment-guitar!: notG}\n{comment-ukulele!: notU}\n{comment-title: hasTitle}\n{comment-album: hasAlbum}\n{comment-year: year}\n{start_of_verse-ukulele}\n[C]uke\n{end_of_verse}\n{start_of_tab-ukulele}\n{end_of_verse}\n{end_of_tab}\n{start_of_chorus-guitar}\n[G]after\n{end_of_chorus}",
+        );
+        assert!(result.diagnostics.is_empty(), "{:?}", messages(&result));
+        let lines: Vec<String> = result
+            .song
+            .sections
+            .iter()
+            .flat_map(|s| &s.lines)
+            .map(Line::lyrics)
+            .collect();
+        assert_eq!(lines, ["G", "notU", "hasTitle", "after"]);
+    }
+
+    #[test]
+    fn metadata_substitutes_into_text_as_it_stands_at_that_line() {
+        let result = parse(
+            "{artist: Ada}\n{title: %{artist} song}\n{c: %{title} by %{artist}}\n{sov: %{artist}}\n[C]Sing %{title} [*%{artist}]\n{eov}\n{album: Later}\n{c: %{album}}",
+        );
+        assert!(result.diagnostics.is_empty(), "{:?}", messages(&result));
+        assert_eq!(result.song.first_meta("title"), Some("Ada song"));
+        let song = &result.song;
+        assert_eq!(song.sections[0].lines[0].lyrics(), "Ada song by Ada");
+        assert_eq!(song.sections[1].label, "Ada");
+        let line = &song.sections[1].lines[0];
+        assert_eq!(line.lyrics(), "Sing Ada song ");
+        assert_eq!(line.segments[1].annotation.as_deref(), Some("Ada"));
+        assert_eq!(song.sections[2].lines[0].lyrics(), "Later");
+    }
+
+    #[test]
+    fn grids_are_cells_and_their_chords_transpose() {
+        let result = parse(
+            "{start_of_grid: shape=\"4x2\" label=\"Intro\"}\n|| Am . . . | C~G . . . |\nIn A |:  D  /  /  /  :| x2 [F]\n{end_of_grid}\n{sog 4x4}\n| E |\n{eog}",
+        );
+        assert!(result.diagnostics.is_empty(), "{:?}", messages(&result));
+        let grid = &result.song.sections[0];
+        assert_eq!(
+            (grid.kind, grid.label.as_str()),
+            (SectionKind::Grid, "Intro")
+        );
+        let cells: Vec<&str> = grid.lines[1].cells().collect();
+        assert_eq!(cells, ["In A", "|:", "D", "/", "/", "/", ":|", "x2 [F]"]);
+        assert_eq!(
+            grid.lines[1].segments[0].chord, None,
+            "the margin is no chord"
+        );
+        assert_eq!(
+            grid.lines[0].cells().collect::<Vec<_>>(),
+            [
+                "", "||", "Am", ".", ".", ".", "|", "C~G", ".", ".", ".", "|"
+            ]
+        );
+        assert_eq!(
+            result.song.sections[1].label, "",
+            "a bare argument is the shape"
+        );
+        assert_eq!(result.song.chord_names(), ["Am", "C", "G", "D", "E"]);
+        let up = result.song.transposed(2);
+        assert_eq!(
+            up.sections[0].lines[0].cells().collect::<Vec<_>>(),
+            [
+                "", "||", "Bm", ".", ".", ".", "|", "D~A", ".", ".", ".", "|"
+            ]
+        );
+    }
+
+    #[test]
+    fn textblocks_read_like_verses_and_notation_is_kept_verbatim() {
+        let result = parse(
+            "{start_of_textblock: label=\"Note\"}\nSome [C]text\n{end_of_textblock}\n{start_of_abc}\nX:1\n[K:C]\n\n{end_of_abc}\n{start_of_ly}\nc d\n{end_of_ly}\n{start_of_svg}\n<svg/>\n{end_of_svg}",
+        );
+        let kinds: Vec<_> = result.song.sections.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                SectionKind::Textblock,
+                SectionKind::Embedded(Notation::Abc),
+                SectionKind::Embedded(Notation::Lilypond),
+                SectionKind::Embedded(Notation::Svg),
+            ]
+        );
+        assert_eq!(result.song.sections[0].label, "Note");
+        assert_eq!(
+            result.song.sections[0].lines[0].segments[1]
+                .chord
+                .as_deref(),
+            Some("C")
+        );
+        let abc: Vec<String> = result.song.sections[1]
+            .lines
+            .iter()
+            .map(Line::lyrics)
+            .collect();
+        assert_eq!(abc, ["X:1", "[K:C]", ""]);
+        assert_eq!(
+            messages(&result),
+            [
+                "notation not drawn yet: abc",
+                "notation not drawn yet: ly",
+                "notation not drawn yet: svg"
+            ]
+        );
     }
 
     #[test]
@@ -831,15 +1277,11 @@ mod tests {
             parse("{key: G}\n{capo: 2}\n[G]hi [D]there [*Riff]\n{sot}\ne|-[3]-|\n{eot}").song;
         let up = song.transposed(2);
         assert_eq!(up.transpose, 2);
-        assert_eq!(up.chord_names(), ["A", "E", "*Riff"]);
+        assert_eq!(up.chord_names(), ["A", "E"], "an annotation is no chord");
         assert_eq!(up.first_meta("key"), Some("A"));
         assert_eq!(up.first_meta("capo"), Some("2"));
         assert_eq!(up.sections[1].lines, song.sections[1].lines);
-        assert_eq!(
-            song.chord_names(),
-            ["G", "D", "*Riff"],
-            "the original is untouched"
-        );
+        assert_eq!(song.chord_names(), ["G", "D"], "the original is untouched");
         let back = up.transposed(-2);
         assert_eq!(back.transpose, 0);
         assert_eq!(back.chord_names(), song.chord_names());

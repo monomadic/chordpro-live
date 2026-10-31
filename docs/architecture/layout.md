@@ -85,7 +85,12 @@ unwrapped `above` and `inline` runs are the one-row flow of the same
 function, so the two cannot disagree. A word that a chord splits
 (`dis[E]courteously`) is one unit: the row breaks before it when the whole
 word would not fit, never inside it. Tab lines wrap as staves (below);
-comments wrap by words. `Options::block` wraps at the viewport width and
+comments wrap by words. An annotation (`[*rit.]`) is measured and drawn as
+a chord is. A grid row is one unwrapped token in the tab face, its cells
+padded to their column's widest so rows of one shape align; grids and text
+blocks always take the compact inline rows (`Options::inline`), having no
+chord row to keep. Embedded notation is not measured, so it takes no
+space. `Options::block` wraps at the viewport width and
 `layout` counts each candidate's continuation rows in `Solution::wrapped_rows`;
 the app accepts a larger body size only while it wraps no more rows than the
 floor. A row wider than the limit means an unbreakable token, and the fit

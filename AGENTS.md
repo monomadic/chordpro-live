@@ -8,7 +8,9 @@ It is not an editor and never writes a `.cho` file.
 
 ## Status
 
-An initial macOS viewer is built. `cpl-song` parses a growing ChordPro 6 subset
+An initial macOS viewer is built. `cpl-song` parses ChordPro 6 to the
+reference's parse in all but one probed construct, grids, annotations,
+selectors, substitution and multi-song files included
 ([what it covers](docs/architecture/chordpro.md));
 `cpl-layout` measures each song at the floor and larger point sizes into em-unit
 runs and fits whole sections into columns; `cpl-app` composes the page
@@ -95,7 +97,7 @@ stamped in milliseconds from process start; `scripts/launch-check.sh`
 launches the viewer repeatedly and fails if a page was never presented.
 `cargo run -- render song.cho --out page.png --scale 1 --size 420x720`
 writes exactly what the window would show, headless; use it for 1x checks.
-`cargo test --test visual` compares seventeen such renders with
+`cargo test --test visual` compares eighteen such renders with
 `tests/goldens/`; after an intended visual change, inspect `target/visual/`
 and re-bless with `CPL_BLESS=1 cargo test --test visual`.
 `cargo run -- song.cho` prints the parsed lyrics. `cargo run -- conform`

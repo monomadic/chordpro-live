@@ -8,7 +8,8 @@ macOS host's library folders are each folder named to `--view` and the
 folder of each song file named to it. `Library::scan` runs on the page
 worker when search opens, and again every `search_rescan_seconds` while
 search stays open; a rescan that changes nothing redraws nothing, and one
-that does keeps the selection on the same file (`Search::rescanned`). It
+that does keeps the selection on the same song, else the same file
+(`Search::rescanned`). It
 reuses the previous scan's entry for any file whose size and mtime are
 unchanged. An unreadable file is skipped rather
 than hiding the rest.
@@ -19,8 +20,12 @@ An `Entry` holds what search shows and matches:
 - file-authored tags from `{tag}` and `{meta: tags …}`, which are shown and
   filtered on but never written back;
 - the lower-cased lyrics, outside tablature;
+- which song in its file (`part`): a file of several songs
+  (`{new_song}`) gives one entry per song, and a later song without a
+  title is named by its file and place, `Medley (2)`;
 - the content **fingerprint**: the SHA-256 (`sha256.rs`, hand-written and
-  checked against the FIPS vectors) of the normalised text. Normalising
+  checked against the FIPS vectors) of the song's normalised text, which
+  for a file of one song is the whole file. Normalising
   drops a byte-order mark, makes line endings `\n`, and trims trailing
   whitespace on each line and at the end.
 

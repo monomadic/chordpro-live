@@ -516,7 +516,11 @@ impl Worker {
         let notice = self.store_error.clone();
         let mut search = Search::new(&library, &self.store);
         if let Some(Some(current)) = self.setlist_files.get(self.setlist.position())
-            && let Some(entry) = library.entries.iter().position(|e| e.path == current.path)
+            && let Some(entry) = library
+                .entries
+                .iter()
+                .position(|e| e.path == current.path && e.fingerprint == current.fingerprint)
+                .or_else(|| library.entries.iter().position(|e| e.path == current.path))
         {
             search.select(entry);
         }
@@ -688,16 +692,20 @@ impl Worker {
                 let mut files = Vec::new();
                 let mut at = 0;
                 for (row, entry) in entries.iter().enumerate() {
-                    let path = &library.entries[*entry].path;
-                    // A file that vanished since the scan is skipped.
-                    let Ok(text) = fs::read_to_string(path) else {
+                    let entry = &library.entries[*entry];
+                    // A file that vanished since the scan is skipped, as is
+                    // a song its file no longer holds.
+                    let Ok(text) = fs::read_to_string(&entry.path) else {
+                        continue;
+                    };
+                    let Some(part) = cpl_song::split(&text).get(entry.part).copied() else {
                         continue;
                     };
                     if row <= position {
                         at = songs.len();
                     }
-                    songs.push(cpl_song::parse(&text).song);
-                    files.push(Some(SongFile::new(path, &text)));
+                    songs.push(cpl_song::parse(part.text).song);
+                    files.push(Some(SongFile::new(&entry.path, part.text)));
                 }
                 if songs.is_empty() {
                     search.notice = Some("that song can no longer be read".into());
@@ -1624,6 +1632,8 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
         }
     };
     let sample = SAMPLES.contains(&source.as_str());
+    // A file of several songs renders its first.
+    let text = cpl_song::split(&text)[0].text.to_owned();
     let mut worker = Worker {
         setlist: Setlist::new(vec![cpl_song::parse(&text).song], config.clone(), polarity),
         setlist_id: 0,
@@ -1891,17 +1901,21 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        let result = cpl_song::parse(&source);
-        for diagnostic in &result.diagnostics {
-            if paths.len() > 1 {
-                eprintln!("{path}: line {}: {}", diagnostic.line, diagnostic.message);
-            } else {
-                eprintln!("line {}: {}", diagnostic.line, diagnostic.message);
+        // A file of several songs adds each to the setlist.
+        for part in cpl_song::split(&source) {
+            let result = cpl_song::parse(part.text);
+            for diagnostic in &result.diagnostics {
+                let line = diagnostic.line + part.offset;
+                if paths.len() > 1 {
+                    eprintln!("{path}: line {line}: {}", diagnostic.message);
+                } else {
+                    eprintln!("line {line}: {}", diagnostic.message);
+                }
             }
+            clean &= result.diagnostics.is_empty();
+            songs.push(result.song);
+            setlist_files.push(Some(SongFile::new(Path::new(path), part.text)));
         }
-        clean &= result.diagnostics.is_empty();
-        songs.push(result.song);
-        setlist_files.push(Some(SongFile::new(Path::new(path), &source)));
     }
     if !view {
         let song = &songs[0];
@@ -1909,7 +1923,11 @@ fn main() -> ExitCode {
         for section in &song.sections {
             println!("\n{}", section.label);
             for line in &section.lines {
-                println!("{}", line.lyrics());
+                if section.kind == cpl_song::SectionKind::Grid {
+                    println!("{}", line.cells().collect::<Vec<_>>().join(" ").trim());
+                } else {
+                    println!("{}", line.lyrics());
+                }
             }
         }
         return if clean {
@@ -2203,6 +2221,38 @@ mod tests {
         let rising = std::fs::read_to_string("testdata/house_of_the_rising_sun.cho").unwrap();
         assert!(store.opened(&cpl_app::library::fingerprint(&rising)) >= first);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn each_song_in_a_file_is_its_own_setlist_entry_and_search_row() {
+        let dir = std::env::temp_dir().join(format!("cpl-parts-{}", std::process::id()));
+        let mut worker = worker(dir.join("library.toml"));
+        let path = std::path::Path::new("testdata/harbour_lights.cho");
+        let text = std::fs::read_to_string(path).unwrap();
+        let parts = cpl_song::split(&text);
+        assert_eq!(parts.len(), 2);
+        worker.setlist = Setlist::new(
+            parts.iter().map(|p| cpl_song::parse(p.text).song).collect(),
+            Config::default(),
+            Polarity::Light,
+        );
+        worker.setlist_files = parts
+            .iter()
+            .map(|p| Some(SongFile::new(path, p.text)))
+            .collect();
+        worker.setlist.go_to(1);
+        // Search opens on the song showing, not on its file's first song.
+        worker.open_search("");
+        let library = worker.library.as_ref().unwrap();
+        let selected = &library.entries[worker.search.as_ref().unwrap().selected().unwrap()];
+        assert_eq!(
+            (selected.title.as_str(), selected.part),
+            ("Harbour Lights (reprise)", 1)
+        );
+        // Opening it reads that song from the file.
+        worker.search_input(SearchInput::Enter);
+        let song = worker.setlist.current(&CoreText).song();
+        assert_eq!(song.first_meta("title"), Some("Harbour Lights (reprise)"));
     }
 
     #[test]

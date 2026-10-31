@@ -74,6 +74,10 @@ const PROBES: &[(&str, &str)] = &[
         "{title: T}\n{meta: composer Bach}\n{meta: artist Ada}\n[C]Sing",
     ),
     ("{comment}", "{title: T}\n{comment: Slowly}\n[C]Sing"),
+    (
+        "{comment} with chords",
+        "{title: T}\n{comment: [C]Capo [G]up}\n[C]Sing",
+    ),
     ("{comment_italic}", "{title: T}\n{ci: Softly}\n[C]Sing"),
     ("{comment_box}", "{title: T}\n{cb: Boxed}\n[C]Sing"),
     ("{highlight}", "{title: T}\n{highlight: Loud}\n[C]Sing"),
@@ -96,6 +100,10 @@ const PROBES: &[(&str, &str)] = &[
     (
         "{start_of_grid}",
         "{title: T}\n{start_of_grid}\n| C . . . | G . . . |\n{end_of_grid}",
+    ),
+    (
+        "grid margins, comments and shared cells",
+        "{title: T}\n{start_of_grid shape=\"1+4x2+2\" label=\"Intro\"}\nIntro || C~G . | Am / % . | x2\n       |: D . . . :|2 E . . . |.\n{end_of_grid}",
     ),
     (
         "{chorus}",
@@ -130,6 +138,10 @@ const PROBES: &[(&str, &str)] = &[
         "{new_song}",
         "{title: One}\n[C]First\n{new_song}\n{title: Two}\n[G]Second",
     ),
+    (
+        "{ns}",
+        "{title: One}\n[C]First\n{ns}\n{title: Two}\n[G]Second\n{ns}\n{title: Three}\n[D]Third",
+    ),
     ("{new_page}", "{title: T}\n[C]One\n{new_page}\n[G]Two"),
     ("{new_physical_page}", "{title: T}\n[C]One\n{npp}\n[G]Two"),
     (
@@ -159,8 +171,24 @@ const PROBES: &[(&str, &str)] = &[
         "{title: Title}\n{comment: %{title}}\n[C]Sing",
     ),
     (
+        "%{…|…|…} conditionals",
+        "{title: T}\n{artist: Ada}\n{comment: %{artist|by %{}|anon}, %{album|on %{}|single}, %{artist=Ada|yes|no}}\n[C]Sing %{title}",
+    ),
+    (
         "{comment-guitar} selector",
         "{title: T}\n{comment-guitar: Capo up}\n[C]Sing",
+    ),
+    (
+        "negated selector",
+        "{title: T}\n{comment-ukulele!: Not uke}\n{comment-guitar!: Not guitar}\n[C]Sing",
+    ),
+    (
+        "metadata item as selector",
+        "{title: T}\n{capo: 2}\n{comment-capo: Capo up}\n{comment-album: On album}\n[C]Sing",
+    ),
+    (
+        "selector on an environment",
+        "{title: T}\n{start_of_verse-ukulele}\n[C]Uke\n{end_of_verse}\n{start_of_chorus-guitar}\n[G]Guitar\n{end_of_chorus}",
     ),
 ];
 
@@ -186,8 +214,13 @@ pub enum Item {
     Lyrics(Vec<(String, String)>),
     Comment(String),
     Tab(String),
+    /// A grid row's cells: margin, bars, symbols, chords, comment.
+    Grid(Vec<String>),
+    /// Notation handed to another program (abc, Lilypond, SVG), which the
+    /// reference renders as one image.
+    Embedded,
     /// Something the reference produced that this comparison does not model
-    /// (a grid line, an embedded delegate), by its type.
+    /// (an image), by its type.
     Other(String),
 }
 
@@ -197,13 +230,22 @@ impl Item {
             Item::Lyrics(pairs) => pairs.iter().map(|(_, lyric)| lyric.as_str()).collect(),
             Item::Comment(text) => format!("comment: {text}"),
             Item::Tab(text) => format!("tab: {text}"),
+            Item::Grid(cells) => format!("grid: {}", cells.join(" ")),
+            Item::Embedded => "[embedded notation]".into(),
             Item::Other(kind) => format!("[{kind}]"),
         }
     }
 }
 
-/// The comparison model of what `cpl-song` parsed. A source holds one song
-/// as this parser reads it.
+/// The comparison models of every song in a source, as `cpl-song` reads it.
+pub fn from_source(source: &str) -> Vec<Model> {
+    cpl_song::parse_all(source)
+        .iter()
+        .map(|result| from_song(&result.song))
+        .collect()
+}
+
+/// The comparison model of what `cpl-song` parsed.
 pub fn from_song(song: &Song) -> Model {
     let meta = METADATA
         .iter()
@@ -219,24 +261,42 @@ pub fn from_song(song: &Song) -> Model {
                 (None, SectionKind::Chorus) => "chorus",
                 (None, SectionKind::Bridge) => "bridge",
                 (None, SectionKind::Tab) => "tab",
+                (None, SectionKind::Grid) => "grid",
+                (None, SectionKind::Textblock) => "textblock",
+                (None, SectionKind::Embedded(notation)) => notation.name(),
                 (None, SectionKind::Unlabelled) => "",
             };
             // A recall carries its own label, the chorus's when it gives none.
             let label = section.label.clone();
-            let lines = section
-                .lines
-                .iter()
-                .map(|line| match (section.kind, line.kind) {
-                    (_, LineKind::Comment) => Item::Comment(line.lyrics()),
-                    (SectionKind::Tab, _) => Item::Tab(line.lyrics()),
-                    _ => Item::Lyrics(
-                        line.segments
-                            .iter()
-                            .map(|s| (s.chord.clone().unwrap_or_default(), s.lyric.clone()))
-                            .collect(),
-                    ),
-                })
-                .collect();
+            let lines = match section.kind {
+                SectionKind::Embedded(_) => vec![Item::Embedded],
+                _ => section
+                    .lines
+                    .iter()
+                    .map(|line| match (section.kind, line.kind) {
+                        (_, LineKind::Comment) => Item::Comment(line.lyrics()),
+                        (SectionKind::Tab, _) => Item::Tab(line.lyrics()),
+                        // The reference gives no cell for an empty margin.
+                        (SectionKind::Grid, _) => Item::Grid(
+                            line.cells()
+                                .enumerate()
+                                .filter(|&(index, cell)| index > 0 || !cell.is_empty())
+                                .map(|(_, cell)| cell.to_owned())
+                                .collect(),
+                        ),
+                        _ => Item::Lyrics(
+                            line.segments
+                                .iter()
+                                .map(|s| {
+                                    // The reference gives an annotation in the chord's place.
+                                    let above = s.chord.as_ref().or(s.annotation.as_ref());
+                                    (above.cloned().unwrap_or_default(), s.lyric.clone())
+                                })
+                                .collect(),
+                        ),
+                    })
+                    .collect(),
+            };
             Block {
                 kind: kind.into(),
                 label,
@@ -258,6 +318,9 @@ pub fn from_reference(song: &Json) -> Model {
         .collect();
     let mut blocks: Vec<Block> = Vec::new();
     let mut open = false;
+    // Notation whose image the reference lifted out of its environment to
+    // the top of the page (`spread=`), still to be skipped where it lands.
+    let mut lifted = 0;
     let place = |blocks: &mut Vec<Block>, open: &mut bool, context: &str| {
         if !*open || blocks.last().is_none_or(|b| b.kind != context) {
             blocks.push(Block {
@@ -271,7 +334,23 @@ pub fn from_reference(song: &Json) -> Model {
         let field = |name: &str| element.get(name).and_then(Json::as_str).unwrap_or("");
         let context = field("context");
         match field("type") {
-            "set" if field("name") == "context" => open = false,
+            "set" if field("name") == "context" => {
+                // An environment that closes empty had its image lifted; it
+                // is compared where the file wrote it.
+                let filled = open && blocks.last().is_some_and(|b| b.kind == context);
+                if matches!(context, "abc" | "ly" | "svg") && !filled {
+                    blocks.push(Block {
+                        kind: context.into(),
+                        label: String::new(),
+                        lines: vec![Item::Embedded],
+                    });
+                    lifted += 1;
+                }
+                open = false;
+            }
+            "image" if context.is_empty() && lifted > 0 && field("id").starts_with("_Image") => {
+                lifted -= 1;
+            }
             "set" if field("name") == "label" => {
                 place(&mut blocks, &mut open, context);
                 blocks.last_mut().unwrap().label = field("value").into();
@@ -302,7 +381,11 @@ pub fn from_reference(song: &Json) -> Model {
             kind @ ("comment" | "comment_italic" | "comment_box" | "highlight") => {
                 let _ = kind;
                 place(&mut blocks, &mut open, context);
-                let text = field("text").to_owned();
+                // A comment with chords comes as phrases; its text is theirs.
+                let text = match element.get("phrases") {
+                    Some(phrases) => phrases.strings().concat(),
+                    None => field("text").to_owned(),
+                };
                 blocks.last_mut().unwrap().lines.push(Item::Comment(text));
             }
             "tabline" => {
@@ -310,7 +393,16 @@ pub fn from_reference(song: &Json) -> Model {
                 let text = field("text").to_owned();
                 blocks.last_mut().unwrap().lines.push(Item::Tab(text));
             }
-            kind @ ("gridline" | "delegate" | "textblock" | "image") => {
+            "gridline" => {
+                place(&mut blocks, &mut open, context);
+                let cells = element.get("cells").map_or(Vec::new(), Json::strings);
+                blocks.last_mut().unwrap().lines.push(Item::Grid(cells));
+            }
+            "image" | "delegate" if matches!(context, "abc" | "ly" | "svg") => {
+                place(&mut blocks, &mut open, context);
+                blocks.last_mut().unwrap().lines.push(Item::Embedded);
+            }
+            kind @ ("delegate" | "image") => {
                 place(&mut blocks, &mut open, context);
                 blocks
                     .last_mut()
@@ -512,8 +604,8 @@ impl Reference {
 
 /// How `cpl-song` takes a probe, from its own diagnostics.
 fn handling(name: &str, source: &str) -> String {
-    let result = cpl_song::parse(source);
-    if let Some(first) = result.diagnostics.first() {
+    let results = cpl_song::parse_all(source);
+    if let Some(first) = results.iter().flat_map(|r| &r.diagnostics).next() {
         return format!("diagnosed: {}", first.message);
     }
     let formatting = name.starts_with('{')
@@ -589,7 +681,7 @@ pub fn main(mut args: Vec<String>) -> ExitCode {
         let theirs = fs::write(&path, source)
             .map_err(|e| e.to_string())
             .and_then(|()| reference.parse(&path, &scratch));
-        let ours = vec![from_song(&cpl_song::parse(source).song)];
+        let ours = from_source(source);
         let agrees = match &theirs {
             Ok(theirs) => verdict(&compare(&ours, theirs)),
             Err(error) => format!("reference failed: {error}"),
@@ -636,7 +728,7 @@ pub fn main(mut args: Vec<String>) -> ExitCode {
         let agrees = match fs::read_to_string(path) {
             Err(error) => format!("unreadable: {error}"),
             Ok(source) => {
-                let ours = vec![from_song(&cpl_song::parse(&source).song)];
+                let ours = from_source(&source);
                 match reference.parse(path, &scratch) {
                     Ok(theirs) => verdict(&compare(&ours, &theirs)),
                     Err(error) => format!("reference failed: {error}"),
@@ -758,20 +850,11 @@ mod tests {
     }
 
     #[test]
-    fn the_probe_song_differs_only_where_cpl_song_is_known_to() {
+    fn the_probe_song_parses_as_the_reference_does() {
         let source = include_str!("../tests/fixtures/conform/probe.cho");
-        let ours = vec![from_song(&cpl_song::parse(source).song)];
-        let differences = compare(&ours, &reference_fixture());
-        let areas: Vec<&str> = differences.iter().map(|d| d.area).collect();
-        // `[*Riff x2]` is an annotation the reference shows without its
-        // star; cpl-song keeps it as a chord name, and the tab is labelled
-        // the same in both.
-        assert_eq!(areas, ["chords"], "{differences:#?}");
-        assert!(
-            differences[0].detail.contains("\"*Riff x2\""),
-            "{}",
-            differences[0].detail
-        );
+        let differences = compare(&from_source(source), &reference_fixture());
+        // `[*Riff x2]` is an annotation in both, shown without its star.
+        assert!(differences.is_empty(), "{differences:#?}");
     }
 
     #[test]
@@ -792,6 +875,13 @@ mod tests {
             "accepted, ignored"
         );
         assert_eq!(handling("{x_mine}", "{x_mine: 1}"), "accepted, ignored");
-        assert!(handling("{new_song}", "{new_song}").starts_with("diagnosed: unsupported"));
+        assert_eq!(
+            handling("{new_song}", "{title: A}\n{new_song}\n{title: B}"),
+            "no diagnostic"
+        );
+        assert_eq!(
+            handling("{start_of_abc}", "{start_of_abc}\nX:1\n{end_of_abc}"),
+            "diagnosed: notation not drawn yet: abc"
+        );
     }
 }

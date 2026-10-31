@@ -12,7 +12,9 @@
 #
 # {"songs": [{"meta": {"title": ["…"], …},
 #             "body": [{"type": "songline", "context": "verse",
-#                       "chords": ["", "Am", …], "phrases": ["…", …]}, …]}]}
+#                       "chords": ["", "Am", …], "phrases": ["…", …]},
+#                      {"type": "gridline", "context": "grid",
+#                       "cells": ["|", "C", ".", "|"]}, …]}]}
 
 package ChordPro::Output::CplJSON;
 
@@ -33,9 +35,30 @@ sub element {
         type    => $item->{type},
         context => $item->{context} // "",
     );
-    if ( $item->{type} eq "songline" ) {
+    # A comment that carries chords is given as a songline is.
+    if ( $item->{type} eq "songline" || $item->{phrases} ) {
         $out{chords}  = [ map { chord_text($_) } @{ $item->{chords} // [] } ];
         $out{phrases} = [ map { "$_" } @{ $item->{phrases} // [] } ];
+    }
+    elsif ( $item->{type} eq "gridline" ) {
+        # The row's cells as written: its margin, then each bar, symbol and
+        # chord (several in a cell joined by "~"), then its comment.
+        my @cells;
+        push @cells, $item->{margin}{text} // "" if ref $item->{margin};
+        for my $token ( @{ $item->{tokens} // [] } ) {
+            if ( $token->{class} eq "chord" ) {
+                push @cells, chord_text( $token->{chord} );
+            }
+            elsif ( $token->{class} eq "chords" ) {
+                push @cells, join "~", map { chord_text($_) } @{ $token->{chords} };
+            }
+            else {
+                # A volta's number is kept apart from its bar.
+                push @cells, ( $token->{symbol} // $token->{class} ) . ( $token->{volta} // "" );
+            }
+        }
+        push @cells, $item->{comment}{orig} // "" if ref $item->{comment};
+        $out{cells} = \@cells;
     }
     elsif ( $item->{type} eq "rechorus" ) {
         $out{chorus} = [ map { element($_) } @{ $item->{chorus} // [] } ];

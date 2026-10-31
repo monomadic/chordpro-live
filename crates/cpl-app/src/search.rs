@@ -344,8 +344,14 @@ impl Search {
     /// indices move when files come and go, so the selection follows the
     /// selected song's path; if that song is gone the best match is selected.
     pub fn rescanned(&mut self, old: &Library, new: &Library, store: &Store) {
-        let path = self.selected().map(|entry| &old.entries[entry].path);
-        let entry = path.and_then(|path| new.entries.iter().position(|e| &e.path == path));
+        // The same song in the same file, else the file's first song.
+        let entry = self.selected().and_then(|entry| {
+            let old = &old.entries[entry];
+            new.entries
+                .iter()
+                .position(|e| e.path == old.path && e.part == old.part)
+                .or_else(|| new.entries.iter().position(|e| e.path == old.path))
+        });
         self.rematch(new, store);
         match entry {
             Some(entry) => self.select(entry),

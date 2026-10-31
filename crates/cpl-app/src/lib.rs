@@ -1172,9 +1172,12 @@ impl App {
                         SectionKind::Chorus => "CHORUS",
                         SectionKind::Bridge => "BRIDGE",
                         SectionKind::Tab => "TAB",
+                        SectionKind::Grid => "GRID",
+                        SectionKind::Textblock => "TEXT",
+                        SectionKind::Embedded(notation) => notation.name(),
                         SectionKind::Unlabelled => "SONG",
                     }
-                    .to_owned()
+                    .to_uppercase()
                 } else {
                     section.label.clone()
                 };
@@ -1680,6 +1683,8 @@ impl App {
                                     Role::InlineChord => (c.inline_chord_baseline, Ink::Soft),
                                     Role::Lyric if inline => (c.inline_lyric_baseline, Ink::Strong),
                                     Role::Comment if inline => (c.inline_lyric_baseline, Ink::Soft),
+                                    // A grid row, in the tab face.
+                                    Role::Tab if inline => (c.inline_lyric_baseline, Ink::Strong),
                                     Role::Comment => (c.lyric_baseline, Ink::Soft),
                                     _ => (c.lyric_baseline, Ink::Strong),
                                 };

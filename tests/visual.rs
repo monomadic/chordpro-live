@@ -22,7 +22,7 @@ const PIXEL_TOLERANCE: f64 = 0.0002;
 /// (golden name, `cpl render` arguments). Together they cover light and dark,
 /// fit, scroll and paged pages, inline chords, wrapped lines and titles,
 /// chords crowded over short syllables, tablature folded by the ladder and
-/// shown in wrapped systems, the search screen with its pills and
+/// shown in wrapped systems, a chord grid with annotations, the search screen with its pills and
 /// dropping columns, 1x and 2x, and body sizes from the
 /// 17 pt floor to the 28 pt maximum.
 const CASES: &[(&str, &[&str])] = &[
@@ -164,6 +164,18 @@ const CASES: &[(&str, &[&str])] = &[
             "--dark",
             "--page",
             "5",
+        ],
+    ),
+    (
+        "harbour-transposed-760x900@1x",
+        &[
+            "testdata/harbour_lights.cho",
+            "--size",
+            "760x900",
+            "--scale",
+            "1",
+            "--transpose",
+            "2",
         ],
     ),
     (

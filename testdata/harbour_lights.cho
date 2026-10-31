@@ -1,0 +1,44 @@
+{title: Harbour Lights}
+{artist: Traditional}
+{key: G}
+{tempo: 92}
+{subtitle: Sung in %{key}%{tempo| at %{} bpm}}
+# Exercises ChordPro 6: grid, annotations, selectors, %{} substitution,
+# delegated notation, a text block and a second song in one file.
+{comment-guitar: Capo off, let it ring}
+{comment-ukulele: Ukulele: play it up the neck}
+
+{start_of_grid label="Intro" shape="1+4x2+1"}
+Intro || G . . . | C~D . . . | Em . . . | D . . . |
+      |  G . . . | C . D .   | G . . . | G . . . || x2
+{end_of_grid}
+
+{start_of_verse}
+[G]Lamps along the [C]harbour wall, [*rit.][D]slowly
+[Em]Nets are drying, [C]gulls call [D]low
+{end_of_verse}
+
+{start_of_chorus}
+[G]Bring the boats home, [C]bring them [G]in
+[C]Light the lights for [D]all our [G]kin
+{end_of_chorus}
+
+{start_of_abc}
+X:1
+K:G
+GABc d2 d2|
+{end_of_abc}
+
+{start_of_textblock label="Note"}
+Hum the last line once more, then stop.
+{end_of_textblock}
+
+{new_song}
+{title: Harbour Lights (reprise)}
+{artist: Traditional}
+{key: G}
+
+{start_of_verse}
+[G]Lamps along the [C]harbour [D]wall [*hold]
+[Em]All the boats are [D]home at [G]last
+{end_of_verse}

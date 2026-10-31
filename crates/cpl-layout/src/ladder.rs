@@ -144,9 +144,15 @@ impl Options {
         }
     }
 
-    /// Tablature keeps its own monospaced rows in every candidate.
+    /// Tablature keeps its own monospaced rows in every candidate. A grid
+    /// or a text block has no chord row to keep, so it is always set in the
+    /// compact rows the inline step uses.
     pub fn inline(&self, section: &MeasuredSection) -> bool {
-        self.inline_chords && section.kind != SectionKind::Tab
+        match section.kind {
+            SectionKind::Tab => false,
+            SectionKind::Grid | SectionKind::Textblock => true,
+            _ => self.inline_chords,
+        }
     }
 
     /// Whether a tab section draws its staves: it is not folded and has

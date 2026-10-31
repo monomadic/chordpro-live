@@ -5,15 +5,46 @@ written against the working spec in `~/src/chordpro-library`. Chord markers
 split a lyric line into segments so each chord belongs to the lyric text
 immediately after it. Original spaces in each segment are kept.
 
+`parse` reads one song. A file is read with `split`, which cuts it at each
+`{new_song}` (`{ns}`) outside tablature and notation into `Part`s (each
+song's text and the lines before it), or with `parse_all`, which parses
+every part and counts diagnostic lines from the file's top. A file of one
+song is one part whose text is the whole file, so its fingerprint is the
+file's; a part with nothing but blank lines and remarks is no song.
+
 The parser is **not yet ChordPro 6 conformant**. What it handles:
 
 - Directives with a colon and/or whitespace before the argument, names
   case-insensitive, long and short forms (`t`, `st`, `c`, `ci`, `cb`, `sov`,
-  `eov`, `soc`, `eoc`, `sob`, `eob`, `sot`, `eot`).
+  `eov`, `soc`, `eoc`, `sob`, `eob`, `sot`, `eot`, `sog`, `eog`, `ns`).
+- Selectors: `{name-selector: …}` applies when the selector is the
+  instrument (`INSTRUMENT`, "guitar", the table's diagrams) or a metadata
+  item set to something other than empty, `0`, `false` or `null`; a
+  trailing `!` negates. A `start_of_…` that does not apply skips everything
+  to its `end_of_…`, which carries no selector. There is no user name.
+- `%{…}` substitution (`substitute.rs`) in metadata values, comments,
+  labels, lyrics and annotations, from the metadata as it stands at that
+  line: `%{name}`, `%{name.2}`, `%{name.-1}`, `%{name|yes|no}`,
+  `%{name=value|yes|no}`, and `%{}` for the controlling value inside a
+  branch. Several values join with `"; "`; an unknown item is empty; a
+  malformed one (`%{ name }`, no closing brace) and anything escaped
+  outside a branch stay as written. Each rule is tested against the
+  reference's output for the same text.
 - The standard metadata items and `{meta: name value}`.
-- Verse, chorus, bridge and tab environments, labelled by a bare argument or
-  a quoted `label="…"` attribute. Tablature is verbatim, with tab characters
-  expanded to eight-column stops.
+- Verse, chorus, bridge, tab and textblock environments, labelled by a bare
+  argument or a quoted `label="…"` attribute. Tablature is verbatim, with
+  tab characters expanded to eight-column stops. A text block's lines parse
+  as a verse's do.
+- Grid environments, labelled only by `label="…"` (a bare argument is the
+  shape). Each row is its cells, spacing aside: the margin before the
+  first bar (always a cell, perhaps empty), then each bar, `.`, `/`, `%`
+  and chord, then the comment after the last bar if any. Margin and comment
+  are kept as written; chords between the bars transpose, and `C~G` shares
+  a cell. `Line::cells` gives them in order.
+- The delegated `abc`, `ly` and `svg` environments are kept verbatim as
+  `SectionKind::Embedded` and diagnosed as not drawn yet.
+- `[*text]` is an annotation: `Segment::annotation`, shown where a chord
+  would be, never transposed or given a diagram.
 - `{chorus}` and `{chorus: Label}` recall the latest chorus: the section's
   `recall_of` names the chorus as written, and its lines are a copy.
 - Blank lines end a stanza that no environment encloses; lines before the
@@ -49,11 +80,13 @@ defines that chord too.
 Diagnosed, which makes the `cpl` command fail: mismatched, orphaned or
 unclosed environments, recall before any chorus, empty comments, layout
 hints (`new_page`, `column_break`, `columns`) until the fit engine honours
-them, and every other directive. Not yet parsed: selectors, grid and
-delegated environments, `[*annotation]`, markup, `%{}` substitution,
-keyboard `{define}`s and their `copy`/`display` modifiers, `{chord}`,
-the read-only `_key`, and `{new_song}`. Comments render in the soft ink
-at lyric size until the Figma mock defines a comment style.
+them, embedded notation until it is drawn, a `{new_song}` given to `parse`
+rather than `parse_all`, and every other directive. Not yet parsed:
+chords inside a comment (kept as text), markup, keyboard `{define}`s and
+their `copy`/`display` modifiers, `{chord}`, and the read-only `_key`.
+Substitution happens as the song is parsed, so a `%{key_actual}` in the
+text does not follow the viewer's live transpose. Comments render in the
+soft ink at lyric size until the Figma mock defines a comment style.
 
 ## Conformance
 
@@ -62,8 +95,10 @@ at lyric size until the Figma mock defines a comment style.
 `$CPL_CHORDPRO`, on the PATH, or in `~/perl5`) and with `cpl-song`, and
 compares what each understood: how many songs, the standard metadata, the
 section structure (kind, label and line count of each verse, chorus,
-recalled chorus, tab or bare stanza), the chords in order, and the lyric,
-comment and tab text. The reference speaks through
+recalled chorus, tab, grid, text block, notation or bare stanza), the chords
+in order, and the lyric, comment, tab and grid text. Notation counts as one
+item, as the reference renders it to one image; one the reference lifts to
+the top of the page (`spread=`) is compared where the file wrote it. The reference speaks through
 `scripts/conform/ChordPro/Output/CplJSON.pm`, an output backend loaded with
 `--generate=CplJSON` that writes its parse as JSON; it runs with
 `--no-default-configs`, so no user config changes the answer.
@@ -79,7 +114,7 @@ layout hints agree trivially. The file rows are `testdata/` and the
 reference's own examples.
 
 <!-- conform:begin (generated by `cpl conform --table`; do not edit) -->
-Compared with the reference implementation (This is ChordPro core 6.101.0): 44 of 53 constructs and 5 of 6 files parse alike.
+Compared with the reference implementation (This is ChordPro core 6.101.0): 59 of 60 constructs and 7 of 7 files parse alike.
 
 | Construct | cpl-song says | Same parse as the reference |
 |---|---|---|
@@ -102,6 +137,7 @@ Compared with the reference implementation (This is ChordPro core 6.101.0): 44 o
 | `{tag}` | no diagnostic | yes |
 | `{meta}` | no diagnostic | yes |
 | `{comment}` | no diagnostic | yes |
+| `{comment} with chords` | no diagnostic | no (lyrics): item 1: cpl-song has "comment: [C]Capo [G]up", the reference has "comment: Capo up" |
 | `{comment_italic}` | no diagnostic | yes |
 | `{comment_box}` | no diagnostic | yes |
 | `{highlight}` | no diagnostic | yes |
@@ -109,16 +145,18 @@ Compared with the reference implementation (This is ChordPro core 6.101.0): 44 o
 | `{start_of_chorus}` | no diagnostic | yes |
 | `{start_of_bridge}` | no diagnostic | yes |
 | `{start_of_tab}` | no diagnostic | yes |
-| `{start_of_grid}` | diagnosed: unsupported directive: start_of_grid | no (structure, lyrics): item 1: cpl-song has stanza "" of 1 line(s), the reference has grid "" of 1 line(s) |
+| `{start_of_grid}` | no diagnostic | yes |
+| `grid margins, comments and shared cells` | no diagnostic | yes |
 | `{chorus}` | no diagnostic | yes |
 | `{define}` | no diagnostic | yes |
 | `{chord}` | diagnosed: unsupported directive: chord | yes |
 | `{transpose}` | no diagnostic | yes |
-| `{start_of_abc}` | diagnosed: unsupported directive: start_of_abc | no (structure, lyrics): item 1: cpl-song has stanza "" of 4 line(s), the reference has abc "" of 1 line(s) |
-| `{start_of_ly}` | diagnosed: unsupported directive: start_of_ly | no (structure, lyrics): item 1: cpl-song has stanza "" of 2 line(s), the reference has ly "" of 1 line(s) |
-| `{start_of_svg}` | diagnosed: unsupported directive: start_of_svg | no (structure, lyrics): item 1: cpl-song has stanza "" of 2 line(s), the reference has svg "" of 1 line(s) |
-| `{start_of_textblock}` | diagnosed: unsupported directive: start_of_textblock | no (structure): item 1: cpl-song has stanza "" of 2 line(s), the reference has textblock "" of 1 line(s) |
-| `{new_song}` | diagnosed: unsupported directive: new_song | no (songs): cpl-song reads 1 song(s), the reference 2 |
+| `{start_of_abc}` | diagnosed: notation not drawn yet: abc | yes |
+| `{start_of_ly}` | diagnosed: notation not drawn yet: ly | yes |
+| `{start_of_svg}` | diagnosed: notation not drawn yet: svg | yes |
+| `{start_of_textblock}` | no diagnostic | yes |
+| `{new_song}` | no diagnostic | yes |
+| `{ns}` | no diagnostic | yes |
 | `{new_page}` | diagnosed: layout hint not honoured yet: new_page | yes |
 | `{new_physical_page}` | diagnosed: layout hint not honoured yet: new_physical_page | yes |
 | `{column_break}` | diagnosed: layout hint not honoured yet: column_break | yes |
@@ -130,20 +168,25 @@ Compared with the reference implementation (This is ChordPro core 6.101.0): 44 o
 | `{textfont} and the font, size, colour families` | accepted, ignored | yes |
 | `{image}` | diagnosed: unsupported directive: image | yes |
 | `{x_…} private directives` | accepted, ignored | yes |
-| `[*annotation]` | no diagnostic | no (chords): item 2: cpl-song has "*Riff x2", the reference has "Riff x2" |
+| `[*annotation]` | no diagnostic | yes |
 | `chord-only line` | no diagnostic | yes |
 | `mid-word chord` | no diagnostic | yes |
 | `<b> markup` | no diagnostic | yes |
-| `%{…} substitution` | no diagnostic | no (lyrics): item 1: cpl-song has "comment: %{title}", the reference has "comment: Title" |
-| `{comment-guitar} selector` | diagnosed: unsupported directive: comment-guitar | no (structure, lyrics): item 1: cpl-song has stanza "" of 1 line(s), the reference has stanza "" of 2 line(s) |
+| `%{…} substitution` | no diagnostic | yes |
+| `%{…\|…\|…} conditionals` | no diagnostic | yes |
+| `{comment-guitar} selector` | no diagnostic | yes |
+| `negated selector` | no diagnostic | yes |
+| `metadata item as selector` | no diagnostic | yes |
+| `selector on an environment` | no diagnostic | yes |
 
 | File | Same parse as the reference |
 |---|---|
 | crowded_chords.cho | yes |
 | greensleeves.cho | yes |
+| harbour_lights.cho | yes |
 | house_of_the_rising_sun.cho | yes |
 | scarborough_fair.cho | yes |
-| mollymalone.cho | no (structure, lyrics): item 1: cpl-song has stanza "" of 13 line(s), the reference has stanza "" of 1 line(s) |
+| mollymalone.cho | yes |
 | swinglow.cho | yes |
 <!-- conform:end -->
 
@@ -157,4 +200,5 @@ or `b`) and a suffix; the suffix is tried as written, then through a small
 alias table (`m` → `minor`, `+` → `aug`, …), and a slash chord whose bass
 the table lacks falls back to its base chord. Ported with its tests from
 chordpro-tui/internal/chords/db.go. `Song::chord_names` lists the chords a
-song uses, outside tablature, in first-use order.
+song uses, outside tablature and annotations, in first-use order; a grid
+cell's `C~G` gives both.

@@ -531,8 +531,25 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
         .sections
         .iter()
         .enumerate()
+        // Embedded notation (abc, Lilypond, SVG) is kept by the parser but
+        // has nothing this page can draw yet.
+        .filter(|(_, section)| !matches!(section.kind, SectionKind::Embedded(_)))
         .map(|(index, section)| {
             let tab = section.kind == SectionKind::Tab;
+            // A grid's columns padded to their widest cell, so rows of the
+            // same shape align their bars in the tab face.
+            let mut columns: Vec<usize> = Vec::new();
+            if section.kind == SectionKind::Grid {
+                for line in &section.lines {
+                    for (index, cell) in line.cells().enumerate() {
+                        let width = cell.chars().count();
+                        match columns.get_mut(index) {
+                            Some(column) => *column = (*column).max(width),
+                            None => columns.push(width),
+                        }
+                    }
+                }
+            }
             // A tab the file leaves unlabelled is still named on the page;
             // the song model keeps the label as written.
             let label = if tab && section.label.is_empty() {
@@ -577,9 +594,16 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
                     .iter()
                     .map(|line| {
                         if section.kind == SectionKind::Tab {
-                            m.whole_line(line, Role::Tab)
+                            m.whole_line(line.lyrics(), Role::Tab)
+                        } else if section.kind == SectionKind::Grid {
+                            let cells: Vec<String> = line
+                                .cells()
+                                .zip(&columns)
+                                .map(|(cell, &width)| format!("{cell:<width$}"))
+                                .collect();
+                            m.whole_line(cells.join(" ").trim_end().to_owned(), Role::Tab)
                         } else if line.kind == LineKind::Comment {
-                            m.whole_line(line, Role::Comment)
+                            m.whole_line(line.lyrics(), Role::Comment)
                         } else {
                             m.line(line)
                         }
@@ -617,10 +641,9 @@ impl<M: Measure> Measurer<'_, M> {
         width
     }
 
-    /// Tablature and comments: one token, the same in both chord layouts.
-    /// A tab row never wraps; a comment wraps by its words.
-    fn whole_line(&mut self, line: &Line, role: Role) -> MeasuredLine {
-        let text = line.lyrics();
+    /// Tablature, grid rows and comments: one token, the same in both chord
+    /// layouts. A tab or grid row never wraps; a comment wraps by its words.
+    fn whole_line(&mut self, text: String, role: Role) -> MeasuredLine {
         let tokens = if role == Role::Tab {
             vec![Token {
                 width: self.em(&text, role),
@@ -666,7 +689,10 @@ impl<M: Measure> Measurer<'_, M> {
     }
 
     fn line(&mut self, line: &Line) -> MeasuredLine {
-        let chord_only = line.segments.iter().any(|segment| segment.chord.is_some())
+        // An annotation is drawn where a chord would be.
+        let above =
+            |segment: &cpl_song::Segment| segment.chord.clone().or(segment.annotation.clone());
+        let chord_only = line.segments.iter().any(|segment| above(segment).is_some())
             && line
                 .segments
                 .iter()
@@ -675,10 +701,10 @@ impl<M: Measure> Measurer<'_, M> {
             .segments
             .iter()
             .map(|segment| MeasuredSegment {
-                chord: segment.chord.as_ref().map(|chord| MeasuredChord {
-                    above_width: self.em(chord, Role::Chord),
-                    inline_width: self.em(chord, Role::InlineChord),
-                    text: chord.clone(),
+                chord: above(segment).map(|chord| MeasuredChord {
+                    above_width: self.em(&chord, Role::Chord),
+                    inline_width: self.em(&chord, Role::InlineChord),
+                    text: chord,
                 }),
                 tokens: self.tokens(&segment.lyric, Role::Lyric),
             })
