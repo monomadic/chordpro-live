@@ -73,7 +73,11 @@ has long tabs), `--transpose 2` (or `-3`) to open the song transposed as
 to then step through the results as `n` does);
 `--store tests/fixtures/library.toml` (or `$CPL_LIBRARY_STORE`) points the
 sidecar at a file other than the one in Application Support, which tests
-and captures must do.
+and captures must do. `--floor 10` sets the readability floor in points,
+and `--config my.toml` (or `$CPL_CONFIG`, else `config.toml` in
+Application Support) lays a user's `[page]` keys over `config/default.toml`;
+tests and captures pass `--config tests/fixtures/config.toml` (or set
+`$CPL_CONFIG` to it) so they never pick up the user's file.
 `cpl --help` lists the forms. Press `i` for polarity, `[` `]` to transpose a semitone down or up and `0`
 to reset, `v` for scroll or
 paged, `t` to fold or show tablature, `/` or `o` to search (where

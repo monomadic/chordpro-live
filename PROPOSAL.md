@@ -177,7 +177,12 @@ with presets for viewing distance:
 | `far` | 22 pt | monitor across a room |
 
 The floor is a tunable, not a constant, and the numbers above are to be
-measured on a real stand and not believed. When the best fit lands below the
+measured on a real stand and not believed. **Settled (2026-11-01): the
+reader sets it.** `body_size` in a user `config.toml` (Application
+Support, `$CPL_CONFIG` or `--config`) or `--floor PT` sets the floor in
+points, 6 to 72; a reader at a laptop may take it to 9 or 10 pt. There is
+no DPI arithmetic: the reader picks the size that reads at their
+distance, and the default stays 17 pt. When the best fit lands below the
 floor the layout engine does **not** draw it. It descends the ladder.
 
 **The reduction ladder** is chordpro-tui's, extended for the page. Each step

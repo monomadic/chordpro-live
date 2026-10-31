@@ -783,6 +783,38 @@ fn default_store_path() -> Option<PathBuf> {
     Some(PathBuf::from(home).join("Library/Application Support/chordpro-live/library.toml"))
 }
 
+/// The page config: the bundled defaults, with the user's `config.toml` laid
+/// over them when there is one. The file is `--config PATH`, else
+/// `$CPL_CONFIG`, else `config.toml` beside the sidecar in Application
+/// Support, read only if it exists. A file named on purpose must exist.
+/// `--floor` then sets the readability floor over whatever the file says.
+fn load_config(path: Option<PathBuf>, floor: Option<f32>) -> Result<Config, String> {
+    let named = path.or_else(|| env::var_os("CPL_CONFIG").map(PathBuf::from));
+    let path = named.clone().or_else(|| {
+        let home = env::var_os("HOME")?;
+        Some(PathBuf::from(home).join("Library/Application Support/chordpro-live/config.toml"))
+    });
+    let config = match path {
+        Some(path) if named.is_some() || path.exists() => {
+            let text = fs::read_to_string(&path)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            Config::with_overrides(&text).map_err(|error| format!("{}: {error}", path.display()))?
+        }
+        _ => Config::default(),
+    };
+    match floor {
+        Some(points) => config.with_floor(points),
+        None => Ok(config),
+    }
+}
+
+fn parse_floor(value: &str) -> Option<f32> {
+    value
+        .parse::<f32>()
+        .ok()
+        .filter(|v| cpl_app::FLOOR_RANGE.contains(v))
+}
+
 /// The folders search lists: each folder named on the command line, and the
 /// folder of each song file named on it.
 fn library_folders(args: &[String]) -> Vec<PathBuf> {
@@ -1188,10 +1220,16 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
                                           then step through the results as n does
        cpl --view <folder> --store lib.toml
                                           keep ratings and tags in another sidecar
+       cpl --view <song.cho> --floor 10   let body text go down to 10 pt before
+                                          the page compacts or scrolls
+       cpl --view <song.cho> --config my.toml
+                                          lay my.toml's [page] keys over the
+                                          defaults (else $CPL_CONFIG, else
+                                          config.toml in Application Support)
        cpl <song.cho>                     print the parsed lyrics
        cpl render <song.cho|sample> --out page.png [--size 980x720]
            [--scale 1|2] [--dark] [--scroll P | --page N] [--tabs show|fold]
-           [--transpose N]
+           [--transpose N] [--floor PT] [--config my.toml]
                                           write what the window would show
 In the viewer: i polarity, v scroll or paged, t fold or show tablature,
 [ ] transpose down or up a semitone, 0 back to the chords as written,
@@ -1301,6 +1339,8 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
     let mut transpose = 0;
     let mut search = None;
     let mut store = None;
+    let mut config_path = None;
+    let mut floor = None;
     let mut source = None;
     while !args.is_empty() {
         let arg = args.remove(0);
@@ -1342,6 +1382,13 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
                 .is_some(),
             "--search" => value().map(|v| search = Some(v)).is_some(),
             "--store" => value().map(|v| store = Some(PathBuf::from(v))).is_some(),
+            "--config" => value()
+                .map(|v| config_path = Some(PathBuf::from(v)))
+                .is_some(),
+            "--floor" => value()
+                .and_then(|v| parse_floor(&v))
+                .map(|v| floor = Some(v))
+                .is_some(),
             "--dark" => {
                 dark = true;
                 true
@@ -1391,7 +1438,13 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
     } else {
         Polarity::Light
     };
-    let config = Config::default();
+    let config = match load_config(config_path, floor) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let sample = SAMPLES.contains(&source.as_str());
     let mut worker = Worker {
         setlist: Setlist::new(vec![cpl_song::parse(&text).song], config.clone(), polarity),
@@ -1475,6 +1528,8 @@ fn main() -> ExitCode {
     let mut open_row = None;
     let mut next_step = 0isize;
     let mut store_path = None;
+    let mut config_path = None;
+    let mut floor = None;
     while args.len() >= 2
         && matches!(
             args[args.len() - 2].as_str(),
@@ -1486,6 +1541,8 @@ fn main() -> ExitCode {
                 | "--transpose"
                 | "--search"
                 | "--store"
+                | "--config"
+                | "--floor"
                 | "--open"
                 | "--next"
         )
@@ -1514,6 +1571,16 @@ fn main() -> ExitCode {
             }
         } else if flag == "--store" {
             store_path = Some(PathBuf::from(value));
+        } else if flag == "--config" {
+            config_path = Some(PathBuf::from(value));
+        } else if flag == "--floor" {
+            match parse_floor(&value) {
+                Some(points) => floor = Some(points),
+                None => {
+                    eprintln!("invalid --floor {value:?}; expected points, 6 to 72");
+                    return ExitCode::FAILURE;
+                }
+            }
         } else if flag == "--transpose" {
             match parse_transpose(&value) {
                 Some(n) => start_transpose = n,
@@ -1672,7 +1739,13 @@ fn main() -> ExitCode {
     let (requests, request_rx) = mpsc::channel::<ToWorker>();
     let (result_tx, results) = mpsc::channel::<ReadyPage>();
     let proxy = event_loop.create_proxy();
-    let config = Config::default();
+    let config = match load_config(config_path, floor) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let polarity = if dark {
         Polarity::Dark
     } else {

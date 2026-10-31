@@ -28,7 +28,11 @@ for the page's mode at the right margin when both fit with two em between
 them. The hints' widths are measured once per candidate body size in
 `App::new`, so composing never measures. All page dimensions are in
 `config/default.toml`; font sizes are points and the other values are in
-body-size units except margins, which are points. A song crossing the bottom
+body-size units except margins, which are points. `Config::with_overrides`
+lays a user's `[page]` table over those defaults: the file names only the
+keys it changes, and a key the defaults lack is an error. `body_size` is
+the readability floor; `Config::with_floor` (the host's `--floor`) sets it
+from 6 to 72 pt and raises `max_body_size` to meet it. A song crossing the bottom
 margin scrolls at the same body size. A line wider than the content box
 wraps (see [layout](layout.md)); only an unbreakable run reaches the
 width-needed state, and a scrolling page clips a too-wide title rather than

@@ -22,6 +22,8 @@ log=$(mktemp)
 # launches out of the real one.
 CPL_LIBRARY_STORE=$(mktemp)
 export CPL_LIBRARY_STORE
+CPL_CONFIG="$(cd "$(dirname "$0")/.." && pwd)/tests/fixtures/config.toml"
+export CPL_CONFIG
 bad=0
 retried=0
 i=1

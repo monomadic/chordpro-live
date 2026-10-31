@@ -206,6 +206,8 @@ fn render(name: &str, args: &[&str]) -> PathBuf {
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
     let status = Command::new(env!("CARGO_BIN_EXE_cpl"))
         .current_dir(root())
+        // Never the user's own config.toml: goldens are the defaults.
+        .env("CPL_CONFIG", root().join("tests/fixtures/config.toml"))
         .arg("render")
         .args(args)
         .arg("--out")

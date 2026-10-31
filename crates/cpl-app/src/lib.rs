@@ -198,16 +198,61 @@ pub struct Config {
     pub search_rescan_seconds: f32,
 }
 
+const DEFAULT_CONFIG: &str = include_str!("../../../config/default.toml");
+
+/// The lowest and highest readability floor `with_floor` accepts, in points.
+pub const FLOOR_RANGE: std::ops::RangeInclusive<f32> = 6.0..=72.0;
+
 impl Default for Config {
     fn default() -> Self {
-        Self::parse(include_str!("../../../config/default.toml"))
-            .expect("bundled page config is valid")
+        Self::parse(DEFAULT_CONFIG).expect("bundled page config is valid")
     }
 }
 
 impl Config {
-    /// Reads the numeric `[page]` table used by this initial view.
+    /// Reads a complete numeric `[page]` table.
     pub fn parse(source: &str) -> Result<Self, String> {
+        Self::from_values(Self::values(source)?)
+    }
+
+    /// The bundled defaults with a user's `[page]` table laid over them. The
+    /// user's file names only the keys it changes; a key the defaults do not
+    /// have is an error, so a typo never passes silently. Raising
+    /// `body_size` (the readability floor) above the default largest size
+    /// raises that too, unless the file sets `max_body_size` itself.
+    pub fn with_overrides(user: &str) -> Result<Self, String> {
+        let mut values = Self::values(DEFAULT_CONFIG)?;
+        let overrides = Self::values(user)?;
+        for (key, value) in &overrides {
+            match values.get_mut(key) {
+                Some(slot) => *slot = *value,
+                None => return Err(format!("unknown page key: {key}")),
+            }
+        }
+        if !overrides.contains_key("max_body_size") {
+            let floor = values["body_size"];
+            let max = values.get_mut("max_body_size").expect("a default key");
+            *max = max.max(floor);
+        }
+        Self::from_values(values)
+    }
+
+    /// This config with the readability floor at `points`: body text is never
+    /// set smaller. The largest size rises to meet a floor above it.
+    pub fn with_floor(mut self, points: f32) -> Result<Self, String> {
+        if !FLOOR_RANGE.contains(&points) {
+            return Err(format!(
+                "the floor must be {} to {} pt",
+                FLOOR_RANGE.start(),
+                FLOOR_RANGE.end()
+            ));
+        }
+        self.body_size = points;
+        self.max_body_size = self.max_body_size.max(points);
+        Ok(self)
+    }
+
+    fn values(source: &str) -> Result<std::collections::BTreeMap<String, f32>, String> {
         let mut values = std::collections::BTreeMap::new();
         let mut in_page = false;
         for (index, raw) in source.lines().enumerate() {
@@ -236,10 +281,14 @@ impl Config {
             if !value.is_finite() || value <= 0.0 {
                 return Err(format!("line {}: value must be positive", index + 1));
             }
-            if values.insert(key, value).is_some() {
+            if values.insert(key.to_owned(), value).is_some() {
                 return Err(format!("line {}: duplicate {key}", index + 1));
             }
         }
+        Ok(values)
+    }
+
+    fn from_values(mut values: std::collections::BTreeMap<String, f32>) -> Result<Self, String> {
         macro_rules! take {
             ($name:literal) => {
                 values.remove($name).ok_or(concat!("missing ", $name))?
@@ -2423,5 +2472,59 @@ mod tests {
     fn default_config_is_complete() {
         assert!(Config::parse(include_str!("../../../config/default.toml")).is_ok());
         assert!(Config::parse("[page]\nmargin_x = 2\nunknown = 3").is_err());
+    }
+
+    #[test]
+    fn a_user_config_overrides_only_the_keys_it_names() {
+        let config =
+            Config::with_overrides("[page]\nbody_size = 10 # floor\nmargin_x = 20\n").unwrap();
+        let defaults = Config::default();
+        assert_eq!(config.body_size, 10.0);
+        assert_eq!(config.margin_x, 20.0);
+        assert_eq!(config.max_body_size, defaults.max_body_size);
+        assert_eq!(config.line_height, defaults.line_height);
+        assert_eq!(
+            Config::with_overrides("[page]\n").unwrap().body_size,
+            defaults.body_size
+        );
+        assert!(
+            Config::with_overrides("[page]\nbody_sise = 10\n")
+                .unwrap_err()
+                .contains("body_sise")
+        );
+    }
+
+    #[test]
+    fn a_floor_above_the_largest_size_raises_it() {
+        let config = Config::with_overrides("[page]\nbody_size = 32\n").unwrap();
+        assert_eq!(config.max_body_size, 32.0);
+        assert!(Config::with_overrides("[page]\nbody_size = 32\nmax_body_size = 28\n").is_err());
+        let floor = Config::default().with_floor(9.0).unwrap();
+        assert_eq!(
+            (floor.body_size, floor.max_body_size),
+            (9.0, Config::default().max_body_size)
+        );
+        assert_eq!(
+            Config::default().with_floor(40.0).unwrap().max_body_size,
+            40.0
+        );
+        assert!(Config::default().with_floor(3.0).is_err());
+    }
+
+    #[test]
+    fn a_lower_floor_fits_a_song_that_scrolled_at_the_default() {
+        let mut source = String::from("{title: Test}\n");
+        for verse in 0..6 {
+            source.push_str(&format!("{{start_of_verse: V{verse}}}\n"));
+            for line in 0..4 {
+                source.push_str(&format!("[C]verse {verse} line {line}\n"));
+            }
+            source.push_str("{end_of_verse}\n");
+        }
+        let song = || cpl_song::parse(&source).song;
+        let at =
+            |config: Config| App::new(song(), config, Polarity::Light, &Fixed).frame(500.0, 400.0);
+        assert!(!at(Config::default()).fits);
+        assert!(at(Config::default().with_floor(8.0).unwrap()).fits);
     }
 }
