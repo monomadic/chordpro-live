@@ -103,7 +103,7 @@ pub struct Options {
     pub hide_diagrams: bool,
     pub fold_tabs: bool,
     pub hide_title: bool,
-    /// Ladder step 6: the metadata pills drop.
+    /// Ladder step 8: the metadata pills drop.
     pub hide_pills: bool,
     pub collapse_repeats: bool,
     pub inline_chords: bool,
@@ -474,23 +474,24 @@ pub const LADDER: [Step; 8] = [
     },
     Step {
         number: 6,
-        applies: |song, _, _| !song.header.pills.is_empty(),
-        apply: |o| o.hide_pills = true,
-    },
-    Step {
-        number: 7,
-        applies: |_, _, _| true,
-        apply: |o| o.hide_title = true,
-    },
-    Step {
-        number: 8,
         applies: |song, _, _| song.sections.iter().any(|s| s.repeats_earlier),
         apply: |o| o.collapse_repeats = true,
     },
     Step {
-        number: 9,
+        number: 7,
         applies: |_, _, _| true,
         apply: |o| o.inline_chords = true,
+    },
+    // The header goes last: the pills, then the title (2026-11-01).
+    Step {
+        number: 8,
+        applies: |song, _, _| !song.header.pills.is_empty(),
+        apply: |o| o.hide_pills = true,
+    },
+    Step {
+        number: 9,
+        applies: |_, _, _| true,
+        apply: |o| o.hide_title = true,
     },
 ];
 
@@ -839,7 +840,7 @@ mod tests {
         let song = song(SONGS[3]);
         for view in views() {
             let s = solve(&song, &PAGE, view);
-            assert!(![1, 2, 5, 8].contains(&s.step), "{view:?} chose {}", s.step);
+            assert!(![1, 2, 5, 6].contains(&s.step), "{view:?} chose {}", s.step);
         }
     }
 
@@ -970,14 +971,14 @@ mod tests {
         );
         let joined: Vec<&str> = rows.iter().map(|(text, _)| text.as_str()).collect();
         assert_eq!(joined.join(" "), "A title wider than the page");
-        // Too short for the wrapped title: it drops at step 7, as before.
+        // Too short for the wrapped title: it drops at step 9, the last.
         let short = Viewport {
             width: 7.0,
             height: chosen.header.height + 1.0,
         };
         let chosen = solve(&song, &PAGE, short);
         assert!(chosen.fits);
-        assert_eq!(chosen.step, 7);
+        assert_eq!(chosen.step, 9);
         assert!(chosen.options.hide_title);
     }
 
@@ -1030,7 +1031,7 @@ mod tests {
     }
 
     #[test]
-    fn pills_drop_at_step_six_after_tabs_fold_and_before_the_title() {
+    fn pills_drop_at_step_eight_after_inline_chords_and_before_the_title() {
         let measured = song(
             "{title: Hi}\n{key: Am}\n{capo: 2}\n{tempo: 96}\n{time: 3/4}\n{sov: A}\n[C]Alpha\n[G]Beta\n{eov}",
         );
@@ -1048,11 +1049,12 @@ mod tests {
             })
             .map(|s| s.number)
             .collect();
-        let six = tried.iter().position(|&n| n == 6).expect("step 6 applies");
-        let seven = tried.iter().position(|&n| n == 7).unwrap();
-        assert!(six < seven);
+        let inline = tried.iter().position(|&n| n == 7).unwrap();
+        let pills = tried.iter().position(|&n| n == 8).expect("step 8 applies");
+        let title = tried.iter().position(|&n| n == 9).unwrap();
+        assert!(inline < pills && pills < title);
         let without = song("{title: Hi}\n[C]Alpha");
-        assert!(!LADDER.iter().any(|s| s.number == 6
+        assert!(!LADDER.iter().any(|s| s.number == 8
             && (s.applies)(
                 &without,
                 &PAGE,
@@ -1061,7 +1063,7 @@ mod tests {
                     height: 9.0
                 }
             )));
-        // Some viewport needs exactly step 6 to fit.
+        // Some viewport needs exactly step 8 to fit.
         let found = (8..40).find_map(|h| {
             let s = solve(
                 &measured,
@@ -1071,7 +1073,7 @@ mod tests {
                     height: h as f32,
                 },
             );
-            (s.fits && s.step == 6).then_some(s)
+            (s.fits && s.step == 8).then_some(s)
         });
         let chosen = found.expect("a height that needs the pills gone");
         assert!(chosen.options.hide_pills && !chosen.options.hide_title);

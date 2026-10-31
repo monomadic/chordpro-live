@@ -150,7 +150,7 @@ pub struct MeasuredLine {
     /// Chords on their own row above the lyric, overhang pushing lyrics right.
     pub above: Vec<Run>,
     pub above_width: f32,
-    /// Small chords set inline before their lyric segment (ladder step 9).
+    /// Small chords set inline before their lyric segment (ladder step 7).
     pub inline: Vec<Run>,
     pub inline_width: f32,
     /// A chord progression with no sung words, such as an intro or turnaround.
@@ -391,7 +391,7 @@ pub struct MeasuredSection {
     pub label: String,
     pub label_width: f32,
     /// A `{chorus}` recall, or a chorus retyped with the same lines as an
-    /// earlier one (ladder step 8).
+    /// earlier one (ladder step 6).
     pub repeats_earlier: bool,
     pub lines: Vec<MeasuredLine>,
     /// A tab section's staves, which wrap as units; empty otherwise.

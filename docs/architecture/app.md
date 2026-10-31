@@ -116,7 +116,7 @@ and toggles the mode with `v`.
 
 A scroll page lays its header out at the content width like any other. If
 the wrapped title would take more than half the content box, the scroll page
-drops it, as ladder step 7 would: the header is one scroll group, and a
+drops it, as ladder step 9 would: the header is one scroll group, and a
 group taller than the viewport could never be shown whole.
 
 Frames carry `Shape`s beside `Text`: rounded rectangles in page points,

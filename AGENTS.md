@@ -65,7 +65,8 @@ overflow with `cargo run -- --view page-scroll`; or open a song with
 black), or several songs or a folder as a setlist (`--view testdata`); append
 `--size 980x720` to a `--view` command for a repeatable logical-point window
 size, `--song 2` to open on a given song, `--scroll 120` to open scrolled
-that many points, `--paged` or `--page 2` to open in paged mode, and
+that many points, `--paged` or `--page 2` to open in paged mode, `--fullscreen` to open in
+fake fullscreen as `f` toggles it, and
 `--tabs show` or `--tabs fold` to pin tablature (`testdata/greensleeves.cho`
 has long tabs), `--transpose 2` (or `-3`) to open the song transposed as
 `]` or `[` would, and `--search ris` to open in search with a query typed
@@ -78,10 +79,14 @@ and `--config my.toml` (or `$CPL_CONFIG`, else `config.toml` in
 Application Support) lays a user's `[page]` keys over `config/default.toml`;
 tests and captures pass `--config tests/fixtures/config.toml` (or set
 `$CPL_CONFIG` to it) so they never pick up the user's file.
-`cpl --help` lists the forms. Press `i` for polarity, `[` `]` to transpose a semitone down or up and `0`
+`cpl --help` lists the forms. Press `f` for fake fullscreen (simple
+fullscreen over the desktop, as switchblade's `fast_fullscreen`), ⌘Q to
+quit, ⌘F to search, `i` for polarity, `[` `]` to transpose a semitone down or up and `0`
 to reset, `v` for scroll or
 paged, `t` to fold or show tablature, `/` or `o` to search (where
-digits rate, `#` tags, Tab sorts, Enter opens and Escape returns), `n`/`p` (or ← →) for the next and previous song, and `q` or Escape
+digits rate, `#` tags, Tab sorts, Enter opens and Escape returns; the
+query edits as a Mac text field: ← →, ⌥ and ⌘ arrows, ⌥⌫, ⌘⌫, Ctrl-A E
+B F W U K D N P, and ⌘V ⌘C ⌘X), `n`/`p` (or ← →) for the next and previous song, and `q` or Escape
 to close. Up/Down, Space, Page Up/Down, Home, and End scroll or turn pages. Capture
 the window with
 `screencapture -x -l "$(swift scripts/window-id.swift | head -1)" shot.png`;
@@ -142,7 +147,8 @@ the commit message.
   readability floor. After ladder steps 1–9 fail, the window scrolls
   the full song at that size. Lines too wide for the window wrap at word
   boundaries; only an unbreakable run reaches the width-needed state.
-  Step 4 drops the chord diagrams and step 6 the metadata pills.
+  Step 4 drops the chord diagrams, step 8 the metadata pills and step 9,
+  the last, the title.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. Page measurement and CoreText
   rasterisation run on a worker, which preloads the next song while idle;

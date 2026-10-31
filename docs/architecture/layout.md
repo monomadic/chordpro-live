@@ -12,7 +12,7 @@ Text is measured at the body size rather than an abstract 1 em, because
 system-font tracking changes with point size. Equal strings in one role are
 measured once per candidate.
 Measured lines distinguish chord-only progressions from sung lines. A
-progression keeps its full chord runs at step 9 and contributes the compact
+progression keeps its full chord runs at step 7 and contributes the compact
 inline row height to its section block.
 
 Section blocks are built from those widths in body-size units. `fit` packs
@@ -31,10 +31,14 @@ page (no tablature, no repeated chorus,
 labels too wide for the margin, a single section) is skipped rather than
 tried, and never leaves a failing option on for the steps after it:
 
-1. section gaps close; 2. labels move to the side margin; 5. tablature folds to its label; 7. the title drops;
-8. a repeated chorus keeps only its first line; 9. chords go inline.
+1. section gaps close; 2. labels move to the side margin; 4. the chord
+diagrams drop; 5. tablature folds to its label; 6. a repeated chorus keeps
+only its first line; 7. chords go inline; 8. the pills drop; 9. the title
+drops.
 
-Step 4 drops the chord diagrams and step 6 the metadata pills. There is
+Step 4 drops the chord diagrams; 6 collapses repeated choruses and 7 sets
+chords inline; then the header goes, last: 8 the metadata pills, 9 the
+title. There is
 no step 3: the header always keeps the byline on its own line (see
 PROPOSAL.md). A side
 label beside a section with every line hidden keeps one row. A song with no
@@ -93,7 +97,7 @@ A title wider than the content box wraps the same way, by its measured words
 (`Header::title_tokens`): `Options::header` takes the content width and
 returns `title_rows` with their baselines, `title_leading` title sizes apart,
 and the header's real `width`. Fit mode therefore keeps a long title and
-drops it at step 7 only when height requires. A single title word wider than
+drops it at step 9, the last, only when height requires. A single title word wider than
 the box shrinks the whole title (`HeaderLayout::title_scale`) until it fits,
 but never below the body size; past that it overflows and makes the
 candidate unfit.
@@ -118,7 +122,7 @@ text is letter-spaced). `Options::header` places them right-aligned,
 centred `pill_rise` above the header's last baseline (the mock's pills sit
 on the byline's text box), when the title block plus two pill gaps leaves
 room for the whole row; otherwise they flow in rows of `meta_row` height
-under the byline, wrapping at the content width. Ladder step 6 sets
+under the byline, wrapping at the content width. Ladder step 8 sets
 `hide_pills`. The pill follows the mock: `Page/Meta` labels in SF Pro Heavy
 and `MetaValue` values in Medium, both tracked 8%, in a full-round pill
 `pill_height` tall whose `pill_stroke` outline (ink-soft) sits inside its

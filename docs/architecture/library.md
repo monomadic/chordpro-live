@@ -67,7 +67,14 @@ order, the cursor and the matched rows. `input` takes a decoded
 - Tab cycles the sort order (title, artist, rating, recent: newest
   `opened` first, never-shown songs last by title) when there is no query;
 - Enter opens (`Open`: every row, in order, and the cursor's position);
-- Escape cancels tag entry or closes search (`Close`).
+- Escape cancels tag entry or closes search (`Close`);
+- the query edits as a Mac text field, at a caret: ← → (Ctrl-B F), ⌘← ⌘→
+  (Ctrl-A E), ⌥← ⌥→ by word, ⌥⌫ (Ctrl-W) a word back, ⌘⌫ (Ctrl-U) to the
+  start, Ctrl-K to the end, ⌦ (Ctrl-D) forward; Ctrl-N P and ⌘↑ ⌘↓ move
+  the selection. `insert_text` pastes as plain text, so a pasted digit
+  never rates a song. The host sends ⌘V ⌘C ⌘X to the worker, which runs
+  `pbpaste` or `pbcopy` there, never on the window thread; copy and cut
+  take the whole query.
 
 Matching is chordpro-tui's finder (`internal/tui/picker.go`), ported with
 its tests: a case-insensitive subsequence over title and artist, scored for
@@ -76,12 +83,17 @@ lyric hit, when asked for, ranks under both.
 
 `frame` composes the Figma mock's Search screen in points from the
 `search_*` config keys:
-- a query line, then a rule;
+- a query line: a soft magnifying glass (drawn as a ring and a handle of
+  discs) or `#` while a tag is typed, the query and its caret, the hint
+  under the query, then a rule;
 - `FILTERS` and its pills: filled for active filters (paper text), outlined
   for `+ tag` and the sort;
-- a results box with a header row and one row per match, with matched
+- a results box with a bold header row (the rating column is `RATING`) and
+  one row per match, with matched
   letters in bold and the selected row in the wash ink;
-- a footer with counts, folders or the last action's notice, and the keys.
+- a footer, on the page status strip's baseline, with counts, folders or
+  the last action's notice, and the keys as keycaps: a washed, outlined
+  chip per key in strong ink with its action beside it in soft ink.
 
 Metadata columns are as wide as their widest value or header plus
 `search_column_gap`. Title and artist share the rest, 58:42. While they

@@ -14,14 +14,16 @@ max_body_size = 28
 # taken, is best. A point below the comfortable size is worth
 # `size_loss_below`, a point above it `size_gain_above`, so text shrinks
 # some way before anything is given up, and grows only while it is cheap.
+# The header is the last resort: pills and title cost more than any other
+# step, and the ladder tries them last.
 size_loss_below = 1.5
 size_gain_above = 0.5
 cost_tight_sections = 1
 cost_side_labels = 1.5
 cost_diagrams = 3
 cost_fold_tabs = 3
-cost_pills = 2
-cost_title = 6
+cost_pills = 10
+cost_title = 14
 cost_collapse_repeats = 4
 cost_inline_chords = 8
 header_gap = 0.941

@@ -60,6 +60,19 @@ pub enum SearchInput {
     Enter,
     /// Escape. Ends tag entry; otherwise the host closes search.
     Cancel,
+    /// Query editing, as a macOS text field takes them: ← → (Ctrl-B, F);
+    /// ⌘← ⌘→ (Ctrl-A, E) to either end; ⌥← ⌥→ by word; ⌥⌫ (Ctrl-W) a word
+    /// back; ⌘⌫ (Ctrl-U) to the start; Ctrl-K to the end; ⌦ (Ctrl-D) forward.
+    Left,
+    Right,
+    LineStart,
+    LineEnd,
+    WordLeft,
+    WordRight,
+    DeleteWord,
+    DeleteToStart,
+    DeleteToEnd,
+    DeleteForward,
 }
 
 /// What the host must do after an input.
@@ -98,6 +111,9 @@ pub struct Search {
     pub tag_entry: Option<String>,
     /// A one-line note for the footer, such as what a key just did.
     pub notice: Option<String>,
+    /// Where typing goes in `query`, a byte offset; `None` is the end, so
+    /// setting `query` directly leaves the caret after it.
+    caret: Option<usize>,
     cursor: usize,
     top: usize,
     matches: Vec<Match>,
@@ -170,20 +186,60 @@ impl Search {
                 self.refilter(library, store);
             }
             SearchInput::Backspace => {
-                if self.query.pop().is_none() {
-                    // An empty query backs into the pills, newest first.
-                    if self.tags.pop().is_none() {
-                        self.min_rating = 0;
+                let at = self.caret();
+                if at == 0 {
+                    if self.query.is_empty() {
+                        // An empty query backs into the pills, newest first.
+                        if self.tags.pop().is_none() {
+                            self.min_rating = 0;
+                        }
                     }
+                } else {
+                    let from = prev_char(&self.query, at);
+                    self.query.replace_range(from..at, "");
+                    self.caret = Some(from);
                 }
+                self.requery(library, store);
+            }
+            SearchInput::Left => self.caret = Some(prev_char(&self.query, self.caret())),
+            SearchInput::Right => self.caret = Some(next_char(&self.query, self.caret())),
+            SearchInput::LineStart => self.caret = Some(0),
+            SearchInput::LineEnd => self.caret = None,
+            SearchInput::WordLeft => self.caret = Some(word_left(&self.query, self.caret())),
+            SearchInput::WordRight => self.caret = Some(word_right(&self.query, self.caret())),
+            SearchInput::DeleteWord => {
+                let at = self.caret();
+                let from = word_left(&self.query, at);
+                self.query.replace_range(from..at, "");
+                self.caret = Some(from);
+                self.requery(library, store);
+            }
+            SearchInput::DeleteToStart => {
+                let at = self.caret();
+                self.query.replace_range(..at, "");
+                self.caret = Some(0);
+                self.requery(library, store);
+            }
+            SearchInput::DeleteToEnd => {
+                let at = self.caret();
+                self.query.truncate(at);
+                self.requery(library, store);
+            }
+            SearchInput::DeleteForward => {
+                let at = self.caret();
+                let to = next_char(&self.query, at);
+                self.query.replace_range(at..to, "");
+                self.caret = Some(at);
                 self.requery(library, store);
             }
             SearchInput::Char('#') => self.tag_entry = Some(String::new()),
             SearchInput::Char(c) if c.is_ascii_digit() => {
                 let digit = c as u8 - b'0';
-                if self.query.ends_with('*') {
+                let at = self.caret();
+                if self.query[..at].ends_with('*') {
                     // `*3` keeps three stars and up.
-                    self.query.pop();
+                    self.query.replace_range(at - 1..at, "");
+                    self.caret = Some(at - 1);
                     self.min_rating = digit.min(5);
                     self.requery(library, store);
                 } else if digit <= 5
@@ -195,9 +251,12 @@ impl Search {
                     };
                 }
             }
-            SearchInput::Char(' ') if last_word(&self.query).starts_with('+') => {
-                let word = last_word(&self.query).to_owned();
-                self.query.truncate(self.query.len() - word.len());
+            SearchInput::Char(' ') if last_word(&self.query[..self.caret()]).starts_with('+') => {
+                let at = self.caret();
+                let word = last_word(&self.query[..at]).to_owned();
+                let from = at - word.len();
+                self.query.replace_range(from..at, "");
+                self.caret = Some(from);
                 let tag = crate::library::normalise_tag(&word[1..]);
                 if !tag.is_empty() && !self.tags.contains(&tag) {
                     self.tags.push(tag);
@@ -205,12 +264,47 @@ impl Search {
                 self.requery(library, store);
             }
             SearchInput::Char(c) if !(c.is_control() || c == ' ' && self.query.is_empty()) => {
-                self.query.push(c);
+                let at = self.caret();
+                self.query.insert(at, c);
+                self.caret = Some(at + c.len_utf8());
                 self.requery(library, store);
             }
             _ => {}
         }
         SearchAction::Redraw
+    }
+
+    /// The caret as a byte offset into the query.
+    pub fn caret(&self) -> usize {
+        self.caret
+            .filter(|&at| at <= self.query.len() && self.query.is_char_boundary(at))
+            .unwrap_or(self.query.len())
+    }
+
+    /// Pastes `text` at the caret as typed text: line breaks become spaces,
+    /// and digits stay in the query rather than rating a song.
+    pub fn insert_text(&mut self, text: &str, library: &Library, store: &Store) {
+        self.notice = None;
+        let text: String = text
+            .chars()
+            .map(|c| if c.is_whitespace() { ' ' } else { c })
+            .filter(|c| !c.is_control())
+            .collect();
+        if let Some(tag) = &mut self.tag_entry {
+            tag.extend(text.chars().filter(|c| *c != ' '));
+            return;
+        }
+        let at = self.caret();
+        self.query.insert_str(at, &text);
+        self.caret = Some(at + text.len());
+        self.requery(library, store);
+    }
+
+    /// Empties the query, as cut does after the host copies it.
+    pub fn clear_query(&mut self, library: &Library, store: &Store) {
+        self.query.clear();
+        self.caret = None;
+        self.requery(library, store);
     }
 
     fn move_by(&mut self, delta: isize) {
@@ -374,22 +468,40 @@ impl Search {
             measure.width(content, size, weight, Face::System)
         };
 
-        // The query line: a slash, the query (or the tag being entered), a
-        // caret, and a hint; a hairline under it.
+        // The query line: a magnifying glass (or `#` while a tag is typed),
+        // the query with its caret, the hint under it, and a hairline.
         let q = c.search_query_size;
         let baseline = c.margin_top + q;
-        let (prompt, typed) = match &self.tag_entry {
-            Some(tag) => ("#", tag.as_str()),
-            None => ("/", self.query.as_str()),
+        let typed = match &self.tag_entry {
+            Some(tag) => tag.as_str(),
+            None => self.query.as_str(),
+        };
+        let query_x = match &self.tag_entry {
+            Some(_) => {
+                frame
+                    .text
+                    .push(text("#", left, baseline, q, 300, Ink::Soft));
+                left + w("#", q, 300) + q * 0.5
+            }
+            None => {
+                magnifier(&mut frame, left, baseline - q * 0.36, q);
+                left + q * 1.25
+            }
         };
         frame
             .text
-            .push(text(prompt, left, baseline, q, 300, Ink::Faint));
-        let query_x = left + w(prompt, q, 300) + q * 0.5;
-        frame
-            .text
             .push(text(typed, query_x, baseline, q, 400, Ink::Strong));
-        let caret_x = query_x + w(typed, q, 400) + q * 0.15;
+        let caret_at = match &self.tag_entry {
+            Some(tag) => tag.len(),
+            None => self.caret(),
+        };
+        let caret_x = query_x
+            + w(&typed[..caret_at], q, 400)
+            + if caret_at == typed.len() {
+                q * 0.15
+            } else {
+                0.0
+            };
         frame.shapes.push(Shape {
             group: 0,
             x: caret_x,
@@ -408,17 +520,17 @@ impl Search {
             (Some(_), None) => "no song selected".to_owned(),
             (None, _) => "title · artist   (l: lyrics, +tag filters, *3 rating)".to_owned(),
         };
-        let hint_x = caret_x + q * 0.6;
         let hint_size = c.search_label_size;
+        let hint_baseline = baseline + hint_size * 1.9;
         frame.text.push(text(
-            &fit(&hint, right - hint_x, hint_size, 400, &w),
-            hint_x,
-            baseline,
+            &fit(&hint, right - query_x, hint_size, 400, &w),
+            query_x,
+            hint_baseline,
             hint_size,
             400,
-            Ink::Faint,
+            Ink::Soft,
         ));
-        let rule_y = baseline + q * 0.95;
+        let rule_y = hint_baseline + hint_size * 1.1;
         frame
             .shapes
             .push(rule(left, rule_y, right - left, Ink::Faint));
@@ -499,14 +611,14 @@ impl Search {
             store,
             &self.matches,
             |s, weight| w(s, size, weight),
-            |s| w(s, label, 600),
+            |s| w(s, label, 700),
         );
         let header_top = box_top + stroke;
         let header_baseline = header_top + c.search_header_row * 0.5 + label * 0.35;
         for (name, x, _) in columns.visible(inner_left) {
             frame
                 .text
-                .push(text(name, x, header_baseline, label, 600, Ink::Soft));
+                .push(text(name, x, header_baseline, label, 700, Ink::Soft));
         }
         let rows_top = header_top + c.search_header_row;
         let row_h = c.search_row;
@@ -589,7 +701,8 @@ impl Search {
 
         // The footer: counts and folders on the left, the keys on the right.
         let small = c.scroll_size() * 0.7;
-        let footer = height - c.margin_bottom * 0.5;
+        // On the page status strip's baseline.
+        let footer = height - c.margin_bottom - c.status_drop * c.scroll_size();
         let folders: Vec<String> = library.folders.iter().map(|f| tilde(f)).collect();
         let summary = self.notice.clone().unwrap_or_else(|| {
             format!(
@@ -599,8 +712,26 @@ impl Search {
                 folders.join(", ")
             )
         });
-        let keys = "↑ ↓ move   ⏎ open   # tag   0–5 rate   tab sort   esc";
-        let keys_w = w(keys, small, 400);
+        // Each key is a keycap: a washed, outlined chip with the key in
+        // strong ink, its action beside it in soft ink.
+        let keys = [
+            ("↑↓", "move"),
+            ("⏎", "open"),
+            ("#", "tag"),
+            ("0–5", "rate"),
+            ("tab", "sort"),
+            ("esc", "close"),
+        ];
+        let cap_pad = small * 0.45;
+        let cap_gap = small * 0.4;
+        let key_gap = small * 1.2;
+        let keys_w: f32 = keys
+            .iter()
+            .map(|(key, action)| {
+                w(key, small, 600) + 2.0 * cap_pad + cap_gap + w(action, small, 400)
+            })
+            .sum::<f32>()
+            + key_gap * (keys.len() - 1) as f32;
         let keys_fit = right - keys_w > left + w(&summary, small, 400) + small * 2.0;
         frame.text.push(text(
             &fit(
@@ -618,14 +749,100 @@ impl Search {
             footer,
             small,
             400,
-            Ink::Faint,
+            Ink::Soft,
         ));
         if keys_fit {
-            frame
-                .text
-                .push(text(keys, right - keys_w, footer, small, 400, Ink::Faint));
+            let mut x = right - keys_w;
+            let cap_h = small * 1.55;
+            let cap_y = footer - small * 0.35 - cap_h / 2.0;
+            for (key, action) in keys {
+                let cap_w = w(key, small, 600) + 2.0 * cap_pad;
+                for stroke in [None, Some(1.0)] {
+                    frame.shapes.push(Shape {
+                        group: 0,
+                        x,
+                        y: cap_y,
+                        width: cap_w,
+                        height: cap_h,
+                        radius: small * 0.3,
+                        stroke,
+                        ink: if stroke.is_some() {
+                            Ink::Faint
+                        } else {
+                            Ink::Wash
+                        },
+                    });
+                }
+                frame
+                    .text
+                    .push(text(key, x + cap_pad, footer, small, 600, Ink::Strong));
+                x += cap_w + cap_gap;
+                frame
+                    .text
+                    .push(text(action, x, footer, small, 400, Ink::Soft));
+                x += w(action, small, 400) + key_gap;
+            }
         }
         frame
+    }
+}
+
+fn prev_char(text: &str, at: usize) -> usize {
+    text[..at].char_indices().next_back().map_or(0, |(i, _)| i)
+}
+
+fn next_char(text: &str, at: usize) -> usize {
+    text[at..].chars().next().map_or(at, |c| at + c.len_utf8())
+}
+
+/// The start of the word before `at`, skipping spaces first, as ⌥← does.
+fn word_left(text: &str, at: usize) -> usize {
+    let before = text[..at].trim_end_matches(' ');
+    before.rfind(' ').map_or(0, |i| i + 1)
+}
+
+/// The end of the word after `at`, skipping spaces first, as ⌥→ does.
+fn word_right(text: &str, at: usize) -> usize {
+    let after = &text[at..];
+    let start = after.len() - after.trim_start_matches(' ').len();
+    after[start..]
+        .find(' ')
+        .map_or(text.len(), |i| at + start + i)
+}
+
+/// A magnifying glass `size` points tall, its lens centred at (`left` plus
+/// its radius, `centre_y`): a soft ring and a handle of overlapping discs
+/// running down and right at 45°, since shapes are axis-aligned.
+fn magnifier(frame: &mut Frame, left: f32, centre_y: f32, size: f32) {
+    let radius = size * 0.3;
+    let stroke = (size * 0.085).max(1.5);
+    let cx = left + radius;
+    frame.shapes.push(Shape {
+        group: 0,
+        x: cx - radius,
+        y: centre_y - radius,
+        width: radius * 2.0,
+        height: radius * 2.0,
+        radius,
+        stroke: Some(stroke),
+        ink: Ink::Soft,
+    });
+    let dot = stroke * 1.25;
+    let start = radius - stroke * 0.3;
+    let length = size * 0.3;
+    let steps = 8;
+    for step in 0..=steps {
+        let along = (start + length * step as f32 / steps as f32) * std::f32::consts::FRAC_1_SQRT_2;
+        frame.shapes.push(Shape {
+            group: 0,
+            x: cx + along - dot / 2.0,
+            y: centre_y + along - dot / 2.0,
+            width: dot,
+            height: dot,
+            radius: dot / 2.0,
+            stroke: None,
+            ink: Ink::Soft,
+        });
     }
 }
 
@@ -752,7 +969,7 @@ fn cell(name: &str, entry: &crate::library::Entry, store: &Store) -> (String, In
         "CAPO" => dash(&entry.capo),
         "TEMPO" => dash(&entry.tempo),
         "YEAR" => dash(&entry.year),
-        "★" => {
+        "RATING" => {
             let rating = store.rating(&entry.fingerprint) as usize;
             let stars = "★".repeat(rating) + &"☆".repeat(5 - rating);
             (stars, if rating == 0 { Ink::Faint } else { Ink::Soft })
@@ -781,9 +998,9 @@ struct Columns {
 }
 
 const ORDER: [&str; 8] = [
-    "TITLE", "ARTIST", "KEY", "CAPO", "TEMPO", "YEAR", "★", "TAGS",
+    "TITLE", "ARTIST", "KEY", "CAPO", "TEMPO", "YEAR", "RATING", "TAGS",
 ];
-const DROP: [&str; 6] = ["YEAR", "TEMPO", "CAPO", "TAGS", "KEY", "★"];
+const DROP: [&str; 6] = ["YEAR", "TEMPO", "CAPO", "TAGS", "KEY", "RATING"];
 
 impl Columns {
     #[allow(clippy::too_many_arguments)]
@@ -975,6 +1192,48 @@ mod tests {
         typed(&mut search, "ris", &library, &store);
         let found = titles(&search, &library);
         assert_eq!(found[..2], ["Rise Up, Shepherd", "House of the Rising Sun"]);
+    }
+
+    #[test]
+    fn the_query_edits_like_a_mac_text_field() {
+        let (library, store) = (songs(), Store::default());
+        let mut search = Search::new(&library, &store);
+        let key = |search: &mut Search, input| {
+            search.input(input, &library, &store);
+        };
+        typed(&mut search, "rising sun", &library, &store);
+        key(&mut search, SearchInput::WordLeft);
+        assert_eq!(search.caret(), 7);
+        key(&mut search, SearchInput::Left);
+        key(&mut search, SearchInput::Char('!'));
+        assert_eq!(search.query, "rising! sun");
+        key(&mut search, SearchInput::LineStart);
+        key(&mut search, SearchInput::DeleteForward);
+        assert_eq!(search.query, "ising! sun");
+        key(&mut search, SearchInput::WordRight);
+        assert_eq!(search.caret(), 6);
+        key(&mut search, SearchInput::DeleteWord);
+        assert_eq!(search.query, " sun");
+        key(&mut search, SearchInput::DeleteToEnd);
+        assert_eq!(search.query, "");
+        typed(&mut search, "house sun", &library, &store);
+        key(&mut search, SearchInput::WordLeft);
+        key(&mut search, SearchInput::DeleteToStart);
+        assert_eq!((search.query.as_str(), search.caret()), ("sun", 0));
+        key(&mut search, SearchInput::LineEnd);
+        key(&mut search, SearchInput::Backspace);
+        assert_eq!(search.query, "su");
+    }
+
+    #[test]
+    fn a_paste_types_digits_and_lines_as_text() {
+        let (library, store) = (songs(), Store::default());
+        let mut search = Search::new(&library, &store);
+        search.insert_text("rising\n1969", &library, &store);
+        assert_eq!(search.query, "rising 1969");
+        assert_eq!(search.caret(), search.query.len());
+        search.clear_query(&library, &store);
+        assert!(search.query.is_empty());
     }
 
     #[test]

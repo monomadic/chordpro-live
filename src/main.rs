@@ -18,7 +18,7 @@ use winit::{
     event::StartCause,
     event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{Key, NamedKey},
+    keyboard::{Key, ModifiersState, NamedKey},
     window::{Window, WindowId},
 };
 
@@ -65,6 +65,10 @@ const PRESENT_RETRY: std::time::Duration = std::time::Duration::from_millis(100)
 struct Viewer {
     /// `CPL_TIMING`: log presents and skips, stamped from process start.
     timing: bool,
+    /// The held modifier keys, for ⌘ and Ctrl shortcuts.
+    modifiers: ModifiersState,
+    /// `--fullscreen`: open in fake fullscreen, as `f` toggles it.
+    start_fullscreen: bool,
     /// The last present was skipped (the window was occluded or the surface
     /// timed out), so the page on the GPU has not been shown. A page that
     /// arrives while a new window is still occluded otherwise stays unseen
@@ -132,12 +136,22 @@ enum ToWorker {
     /// Open search over the library, with this query typed.
     OpenSearch(String),
     Search(SearchInput),
+    /// ⌘V, ⌘C and ⌘X in search: the worker reads or writes the clipboard,
+    /// so the window thread never waits on it.
+    Clipboard(Clipboard),
     /// Shift a song's chords: `[` `]` and `0` in the viewer.
     Transpose {
         setlist: u64,
         song: usize,
         shift: Shift,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Clipboard {
+    Paste,
+    Copy,
+    Cut,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -603,6 +617,37 @@ impl Worker {
 
     /// Applies one search key: ratings and tags go to the sidecar, an open
     /// replaces the setlist with the rows, in their order.
+    /// Pastes the clipboard into the query, or copies the query to it (and,
+    /// for cut, empties the query). The clipboard is `pbpaste`/`pbcopy`, run
+    /// here on the worker.
+    fn clipboard(&mut self, action: Clipboard) {
+        let (Some(search), Some(library)) = (self.search.as_mut(), self.library.as_ref()) else {
+            return;
+        };
+        if action == Clipboard::Paste {
+            if let Ok(out) = std::process::Command::new("pbpaste").output() {
+                search.insert_text(&String::from_utf8_lossy(&out.stdout), library, &self.store);
+            }
+            return;
+        }
+        let copied = std::process::Command::new("pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                child
+                    .stdin
+                    .take()
+                    .expect("piped stdin")
+                    .write_all(search.query.as_bytes())?;
+                child.wait()
+            })
+            .is_ok_and(|status| status.success());
+        if action == Clipboard::Cut && copied {
+            search.clear_query(library, &self.store);
+        }
+    }
+
     fn search_input(&mut self, input: SearchInput) {
         let (Some(search), Some(library)) = (self.search.as_mut(), self.library.as_ref()) else {
             return;
@@ -776,6 +821,45 @@ fn save(store: &Store, path: Option<&Path>, done: String) -> String {
     }
 }
 
+/// Fake fullscreen, after switchblade's `toggle_fullscreen` (sb-window):
+/// simple fullscreen resizes the window over the desktop instead of moving
+/// it to its own Space. Leaving checks both kinds, so one `f` always gets
+/// out, whichever put the window there.
+fn toggle_fullscreen(window: &Window) {
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::WindowExtMacOS;
+        if window.simple_fullscreen() {
+            window.set_simple_fullscreen(false);
+        } else if window.fullscreen().is_some() {
+            window.set_fullscreen(None);
+        } else {
+            window.set_simple_fullscreen(true);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let next = if window.fullscreen().is_some() {
+            None
+        } else {
+            Some(winit::window::Fullscreen::Borderless(None))
+        };
+        window.set_fullscreen(next);
+    }
+}
+
+fn is_fullscreen(window: &Window) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::WindowExtMacOS;
+        window.simple_fullscreen() || window.fullscreen().is_some()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.fullscreen().is_some()
+    }
+}
+
 /// Where the sidecar lives: `$CPL_LIBRARY_STORE`, else the app's folder in
 /// Application Support.
 fn default_store_path() -> Option<PathBuf> {
@@ -855,7 +939,12 @@ impl Viewer {
             width: size.width,
             height: size.height,
             scale: window.scale_factor() as f32,
-            inset: TITLE_STRIP_PT,
+            // Fullscreen has no title bar to keep the page clear of.
+            inset: if is_fullscreen(window) {
+                0.0
+            } else {
+                TITLE_STRIP_PT
+            },
             offset: self.scroll_offset,
             page: self.paged.then_some(self.page),
             polarity: self.polarity,
@@ -1019,6 +1108,7 @@ impl ApplicationHandler<PageReady> for Viewer {
                 self.window.as_ref().unwrap().request_redraw();
             }
             WindowEvent::ScaleFactorChanged { .. } => self.request_page(),
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -1028,7 +1118,57 @@ impl ApplicationHandler<PageReady> for Viewer {
                     },
                 ..
             } if self.searching => {
+                let cmd = self.modifiers.super_key();
+                let ctrl = self.modifiers.control_key();
+                let alt = self.modifiers.alt_key();
+                let letter = match &logical_key {
+                    Key::Character(text) if cmd || ctrl => text.to_lowercase().chars().next(),
+                    _ => None,
+                };
+                let clipboard = match letter {
+                    Some('v') if cmd => Some(Clipboard::Paste),
+                    Some('c') if cmd => Some(Clipboard::Copy),
+                    Some('x') if cmd => Some(Clipboard::Cut),
+                    _ => None,
+                };
+                if let Some(action) = clipboard {
+                    let _ = self.requests.send(ToWorker::Clipboard(action));
+                    self.request_page();
+                    return;
+                }
+                if cmd && letter == Some('q') {
+                    event_loop.exit();
+                    return;
+                }
                 let input = match logical_key {
+                    // Emacs keys, as every macOS text field takes them.
+                    Key::Character(_) if ctrl => match letter {
+                        Some('a') => Some(SearchInput::LineStart),
+                        Some('e') => Some(SearchInput::LineEnd),
+                        Some('b') => Some(SearchInput::Left),
+                        Some('f') => Some(SearchInput::Right),
+                        Some('w') => Some(SearchInput::DeleteWord),
+                        Some('u') => Some(SearchInput::DeleteToStart),
+                        Some('k') => Some(SearchInput::DeleteToEnd),
+                        Some('d') => Some(SearchInput::DeleteForward),
+                        Some('h') => Some(SearchInput::Backspace),
+                        Some('n') => Some(SearchInput::Down),
+                        Some('p') => Some(SearchInput::Up),
+                        _ => None,
+                    },
+                    // Other ⌘ letters are app shortcuts, never typed text.
+                    Key::Character(_) if cmd => None,
+                    Key::Named(NamedKey::Backspace) if cmd => Some(SearchInput::DeleteToStart),
+                    Key::Named(NamedKey::Backspace) if alt => Some(SearchInput::DeleteWord),
+                    Key::Named(NamedKey::ArrowLeft) if cmd => Some(SearchInput::LineStart),
+                    Key::Named(NamedKey::ArrowRight) if cmd => Some(SearchInput::LineEnd),
+                    Key::Named(NamedKey::ArrowLeft) if alt => Some(SearchInput::WordLeft),
+                    Key::Named(NamedKey::ArrowRight) if alt => Some(SearchInput::WordRight),
+                    Key::Named(NamedKey::ArrowUp) if cmd => Some(SearchInput::Home),
+                    Key::Named(NamedKey::ArrowDown) if cmd => Some(SearchInput::End),
+                    Key::Named(NamedKey::ArrowLeft) => Some(SearchInput::Left),
+                    Key::Named(NamedKey::ArrowRight) => Some(SearchInput::Right),
+                    Key::Named(NamedKey::Delete) => Some(SearchInput::DeleteForward),
                     Key::Named(NamedKey::Escape) => Some(SearchInput::Cancel),
                     Key::Named(NamedKey::Enter) => Some(SearchInput::Enter),
                     Key::Named(NamedKey::Backspace) => Some(SearchInput::Backspace),
@@ -1063,7 +1203,17 @@ impl ApplicationHandler<PageReady> for Viewer {
                 ..
             } => match logical_key {
                 Key::Named(NamedKey::Escape) => event_loop.exit(),
-                Key::Character(key) if key == "/" || key.eq_ignore_ascii_case("o") => {
+                // ⌘Q quits and ⌘F finds, as in any Mac app.
+                Key::Character(key)
+                    if self.modifiers.super_key() && key.eq_ignore_ascii_case("q") =>
+                {
+                    event_loop.exit()
+                }
+                Key::Character(key)
+                    if key == "/"
+                        || key.eq_ignore_ascii_case("o")
+                        || self.modifiers.super_key() && key.eq_ignore_ascii_case("f") =>
+                {
                     self.searching = true;
                     let _ = self.requests.send(ToWorker::OpenSearch(String::new()));
                     self.request_page();
@@ -1075,6 +1225,17 @@ impl ApplicationHandler<PageReady> for Viewer {
                     } else {
                         Polarity::Light
                     };
+                    self.request_page();
+                }
+                // `f`: fake fullscreen, as switchblade's `fast_fullscreen`
+                // (sb-window `toggle_fullscreen`): the window grows over the
+                // desktop with no Space animation. It leaves either mode.
+                Key::Character(key)
+                    if !self.modifiers.super_key() && key.eq_ignore_ascii_case("f") =>
+                {
+                    if let Some(window) = &self.window {
+                        toggle_fullscreen(window);
+                    }
                     self.request_page();
                 }
                 Key::Character(key) if key.eq_ignore_ascii_case("t") => {
@@ -1159,7 +1320,16 @@ impl ApplicationHandler<PageReady> for Viewer {
                     eprintln!("present {presented:?} @ {} ms", since_start());
                 }
                 match presented {
-                    Presented::Yes => self.needs_present = false,
+                    Presented::Yes => {
+                        self.needs_present = false;
+                        // `--fullscreen` waits for the window's first present:
+                        // entering simple fullscreen before the window is up
+                        // leaves its surface occluded and the page unseen.
+                        if std::mem::take(&mut self.start_fullscreen) {
+                            toggle_fullscreen(self.window.as_ref().unwrap());
+                            self.request_page();
+                        }
+                    }
                     Presented::Skipped(_) => self.needs_present = true,
                     Presented::Reconfigure => {
                         self.needs_present = true;
@@ -1213,6 +1383,7 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
        cpl --view <folder> --song 2       open on the second song of the setlist
        cpl --view <song.cho> --scroll 300 open scrolled 300 points down the song
        cpl --view <song.cho> --paged      open in paged mode (`v` toggles)
+       cpl --view <song.cho> --fullscreen open in fake fullscreen (`f` toggles)
        cpl --view <song.cho> --page 2     open paged on the second page
        cpl --view <song.cho> --tabs fold  open with tablature folded (or show)
        cpl --view <song.cho> --transpose 2
@@ -1238,7 +1409,7 @@ usage: cpl --view <song.cho>...           open songs in the viewer, in order
                                           compare cpl-song's parse with the
                                           reference chordpro's, construct by
                                           construct and file by file
-In the viewer: i polarity, v scroll or paged, t fold or show tablature,
+In the viewer: f fullscreen, ⌘F or / search, ⌘Q quits, i polarity, v scroll or paged, t fold or show tablature,
 [ ] transpose down or up a semitone, 0 back to the chords as written,
 n / p or ← → next and previous song, ↑ ↓ / Space / Page Up / Page Down / Home / End scroll or turn
 pages, q or Escape closes.";
@@ -1523,10 +1694,13 @@ fn main() -> ExitCode {
     // `--paged` anywhere opens in paged mode; trailing `--size WxH`,
     // `--song N`, `--scroll P` and `--page N` options come in any order.
     let mut paged = false;
+    let mut start_fullscreen = false;
     args.retain(|arg| {
         let flag = arg == "--paged";
         paged |= flag;
-        !flag
+        let fullscreen = arg == "--fullscreen";
+        start_fullscreen |= fullscreen;
+        !flag && !fullscreen
     });
     let mut requested_size = None;
     let mut start_song = 0;
@@ -1667,13 +1841,14 @@ fn main() -> ExitCode {
         || start_song > 0
         || start_offset > 0.0
         || paged
+        || start_fullscreen
         || tabs.is_some()
         || start_transpose != 0
         || start_search.is_some())
         && !view
     {
         eprintln!(
-            "--size, --song, --scroll, --page, --paged, --tabs, --transpose and --search require --view"
+            "--size, --song, --scroll, --page, --paged, --fullscreen, --tabs, --transpose and --search require --view"
         );
         return ExitCode::FAILURE;
     }
@@ -1866,6 +2041,7 @@ fn main() -> ExitCode {
                     ToWorker::Page(request) => latest = Some(request),
                     ToWorker::OpenSearch(query) => worker.open_search(&query),
                     ToWorker::Search(input) => worker.search_input(input),
+                    ToWorker::Clipboard(action) => worker.clipboard(action),
                     ToWorker::Transpose {
                         setlist,
                         song,
@@ -1895,6 +2071,8 @@ fn main() -> ExitCode {
     });
     let mut viewer = Viewer {
         timing,
+        modifiers: ModifiersState::empty(),
+        start_fullscreen,
         needs_present: false,
         config,
         polarity,
@@ -1905,7 +2083,7 @@ fn main() -> ExitCode {
         pending_step: next_step,
         initial_size: requested_size.unwrap_or(if inline {
             // 200 pt of page under the 28 pt title strip: tight enough
-            // that the sample needs ladder step 9, inline chords.
+            // that the sample needs ladder step 7, inline chords.
             (300.0, 228.0)
         } else if scroll {
             (560.0, 340.0)

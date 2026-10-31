@@ -102,7 +102,7 @@ over), a generic metadata multimap, a `{define}` map, `TransposeBy`. What
 | **Chord names** — a real chord grammar (root, quality, extensions, bass) in the Common, Dutch, German, Latin and Scandinavian note-name systems, Nashville and Roman numbers, note-only mode | Parsed and transposed; the fixed accidental spelling rule stays the *default*, `{transpose: 2f}`'s `s`/`f` suffixes override it |
 | **`{key}`, `{capo}`, `{transpose: n}`** and their interaction (transpose applies from that point on, creates `key_actual`) | Honoured; a mid-song `{transpose}` is a per-section offset in the model |
 | **`{define}`** for string instruments (`base-fret`, `frets`, `fingers`, keys), for keyboards (`keys`), `{chord}` to show a diagram inline, and the `copy`/`display`/`diagram` modifiers | Parsed; string and keyboard diagrams both render in the chord viewer |
-| **Environments** — verse, chorus, bridge, tab, grid, with labels; `{chorus}` and `{chorus: Label}` recall | Parsed; a recalled chorus is a reference in the model, which is what makes ladder step 8 (collapse repeated choruses) spec-native rather than a heuristic |
+| **Environments** — verse, chorus, bridge, tab, grid, with labels; `{chorus}` and `{chorus: Label}` recall | Parsed; a recalled chorus is a reference in the model, which is what makes ladder step 6 (collapse repeated choruses) spec-native rather than a heuristic |
 | **`tab`** — verbatim, whitespace significant, `[` not a chord | Rendered monospaced, verbatim within each system; a staff wider than the page breaks into systems at a shared bar line (or between frets), repeating the string names |
 | **`grid`** — cells, `.`, `/`, `~`, every bar symbol and volta, `shape=` and margins | Parsed and rendered as a chord grid (new; the TUI never had it) |
 | **Layout hints** — `{new_page}`, `{column_break}`, `{columns: n}` | Parsed and honoured as hints by the fit engine: a `{columns}` pins the column count when it fits the floor, a break is a hard block boundary |
@@ -217,15 +217,18 @@ Least destructive first:
    evenly as the fewest systems allow, and each continuation system repeats
    the string names. A system is one scroll and page group. The reader's
    `t` pins tabs shown or folded and takes this step out of the ladder.
-6. Metadata pills drop.
-7. The title drops.
-8. *(new)* Repeated choruses after the first collapse to their label and first
+6. *(new)* Repeated choruses after the first collapse to their label and first
    line. The singer knows the words; the chords were shown once. A `{chorus}`
    recall is already this in the model; a chorus the author retyped in full is
    detected by text equality.
-9. Chords go inline with the lyric, superscript. This halves line height at
-   the cost of chord-over-syllable alignment, and it is the last step that
-   keeps every lyric on screen.
+7. Chords go inline with the lyric, superscript. This halves line height at
+   the cost of chord-over-syllable alignment.
+8. Metadata pills drop.
+9. The title drops.
+   **Settled (2026-11-01): the header is the last resort.** Pills and title
+   were steps 6 and 7; they now come after inline chords, and their prices
+   (`cost_pills`, `cost_title`) are the highest, so a page gives up anything
+   in the body before it gives up its name.
 10. **Fit fails.** The app switches to a scrolling or paged mode and says so in
     the status strip. It never draws a page under the floor.
 

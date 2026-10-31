@@ -1084,10 +1084,10 @@ impl App {
         // run (a tab row, one enormous word) can still fail. A header is one
         // scroll group, and a group taller than the viewport could never be
         // shown whole, so a title that wraps past half the content box drops
-        // here exactly as ladder step 7 drops it from a fitted page.
+        // here exactly as ladder step 9 drops it from a fitted page.
         // The header is one scroll group, so it must stay well inside the
         // viewport: past half of it, drop what the ladder drops first —
-        // diagrams (step 4), then pills (step 6), then the title (step 7).
+        // diagrams (step 4), then pills (step 8), then the title (step 9).
         let view_height = self.viewport(width, height, body).height;
         let mut base = Options {
             fold_tabs: self.tabs == Tabs::Fold,
@@ -1111,7 +1111,7 @@ impl App {
                 inline_chords: true,
                 ..base
             };
-            long = cpl_layout::layout(measured, &metrics, tall, inline, 9);
+            long = cpl_layout::layout(measured, &metrics, tall, inline, 7);
         }
         // A single title word wider than the window still clips at its edge
         // rather than withholding the song.
@@ -1913,7 +1913,7 @@ mod tests {
             "{title: Test}\n{artist: Ada}\n{start_of_verse: Verse One}\n[C]Alpha\n{end_of_verse}",
         );
         assert!((40..1600).all(|h| app.frame(190.0, h as f32).ladder_step != 2));
-        let frame = at_step(&app, 190.0, 7);
+        let frame = at_step(&app, 190.0, 0);
         assert_eq!(find(&frame, "VERSE ONE").x, find(&frame, "Alpha").x);
     }
 
@@ -2094,9 +2094,9 @@ mod tests {
     #[test]
     fn title_drops_only_after_earlier_candidates_fail() {
         let app = app("{title: Test}\n{start_of_verse: Verse One}\n[C]Alpha\n{end_of_verse}");
-        let frame = at_step(&app, 190.0, 7);
+        let frame = at_step(&app, 190.0, 9);
         assert_eq!(count(&frame, "Test"), 0);
-        assert!(find(&frame, "Alpha").size >= 17.0);
+        assert!(find(&frame, "Alpha").size >= app.config().body_size);
     }
 
     #[test]
@@ -2104,7 +2104,7 @@ mod tests {
         let app = app(
             "{title: Test}\n{start_of_chorus: A}\n[C]Echo\n[G]Again\n{end_of_chorus}\n{start_of_chorus: A}\n[C]Echo\n[G]Again\n{end_of_chorus}",
         );
-        let frame = at_step(&app, 150.0, 8);
+        let frame = at_step(&app, 150.0, 6);
         assert_eq!(count(&frame, "Echo"), 2);
         assert_eq!(count(&frame, "Again"), 1);
     }
@@ -2114,12 +2114,12 @@ mod tests {
         let app = app(
             "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n[G]Bravo\n[Am]Charlie\n{end_of_verse}",
         );
-        let frame = at_step(&app, 300.0, 9);
+        let frame = at_step(&app, 300.0, 7);
         let chord = find(&frame, "C");
         let lyric = find(&frame, "Alpha");
         assert!(chord.baseline < lyric.baseline);
         assert!(chord.x < lyric.x);
-        assert!(lyric.size >= 17.0);
+        assert!(lyric.size >= app.config().body_size);
     }
 
     #[test]
@@ -2324,7 +2324,7 @@ mod tests {
     #[test]
     fn a_recalled_chorus_collapses_at_step_eight() {
         let app = app("{title: Test}\n{soc: A}\n[C]Echo\n[G]Again\n{eoc}\n{chorus}");
-        let frame = at_step(&app, 150.0, 8);
+        let frame = at_step(&app, 150.0, 6);
         assert_eq!(count(&frame, "Echo"), 2);
         assert_eq!(count(&frame, "Again"), 1);
     }
@@ -2472,7 +2472,7 @@ mod tests {
             &Fixed,
         );
         // In a short window the wrapped title would fill the viewport, so it
-        // drops like ladder step 7 and the song starts on the first screen.
+        // drops like ladder step 9 and the song starts on the first screen.
         let (frame, max_offset) = wide_title.frame_scrolled(220.0, 300.0, 0.0);
         assert!(max_offset > 0.0);
         assert_eq!(count(&frame, "Line 0"), 1);
