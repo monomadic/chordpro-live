@@ -1,7 +1,8 @@
 //! CoreText measurement must not depend on what other threads are drawing.
 //! Measuring a song while other threads rasterised once gave wrong advances
-//! (a side label placed at −21 pt in 6 of 60 layouts); `cpl-render`
-//! serialises the shim's calls to prevent it.
+//! (a side label placed at −21 pt in 6 of 60 layouts) while the shim built
+//! its fonts with AppKit's `NSFont`; it now uses CoreText alone, with no
+//! lock, and this holds it to that.
 
 use cpl_app::{App, Config, Face, Measure, Polarity};
 use cpl_render::CoreText;

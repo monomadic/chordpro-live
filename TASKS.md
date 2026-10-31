@@ -170,6 +170,16 @@ automated checks. When every task in an epic is checked, the epic moves to
 - [ ] Run ChordPro 6 conformance against the reference implementation and
   generate the directive status table from the results.
 - [ ] Add the iOS host after the app and renderer boundaries are stable.
-- [ ] Build the CoreText shim's fonts with `CTFont` rather than AppKit's
+- [x] Build the CoreText shim's fonts with `CTFont` rather than AppKit's
   `NSFont`, so measurement is thread-safe without the process-wide lock in
   `cpl-render/src/text.rs`. Needed before a second worker or the iOS host.
+  The shim now uses CoreText, CoreGraphics and CoreFoundation only (no
+  AppKit link in `cpl-render`), and the lock is gone. Faces are the system
+  UI font with a weight trait, plus the monospace trait after the weight;
+  every weight was checked against AppKit's face by name, and all
+  seventeen goldens are pixel-identical. The first attempt applied the
+  weight after the monospace trait, which CoreText ignores, and the
+  goldens caught the regular-weight diagram names; a unit test now pins
+  that. `tests/coretext_threads.rs` passed five runs in a row without the
+  lock. The shim's unused truncation, tabular-figure and caret-offset
+  options went with it. Window-checked at 2x.

@@ -1,5 +1,5 @@
 use cpl_app::{Face, Measure};
-use std::ffi::{CString, c_char, c_float, c_int, c_uchar};
+use std::ffi::{CString, c_char, c_int, c_uchar};
 
 unsafe extern "C" {
     fn sb_text_rasterize(
@@ -7,15 +7,11 @@ unsafe extern "C" {
         size: f64,
         scale: f64,
         weight: c_int,
-        max_width: f64,
-        tnum: c_int,
         mono: c_int,
         kern: f64,
         out_w: *mut c_int,
         out_h: *mut c_int,
         out_baseline: *mut c_int,
-        out_adv: *mut *mut c_float,
-        out_adv_n: *mut c_int,
     ) -> *mut c_uchar;
     fn sb_text_free(p: *mut c_uchar);
     fn sb_text_width(utf8: *const c_char, size: f64, weight: c_int, mono: c_int) -> f64;
@@ -24,20 +20,6 @@ unsafe extern "C" {
 /// Pixels of slack the shim puts on each side of a raster (`pad` in text_shim.m).
 pub(crate) const RASTER_PAD: i32 = 1;
 
-/// One CoreText call at a time, process-wide. The shim builds its fonts with
-/// AppKit's `NSFont`, and measuring on one thread while another rasterises
-/// was measured to return wrong advances (a label 1.8 em instead of 3.1 em,
-/// in 6 of 60 layouts with three rasterising threads). The app measures and
-/// draws on one worker, so this costs it nothing; tests and any future second
-/// worker are what it protects.
-static CORETEXT: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn coretext_lock() -> std::sync::MutexGuard<'static, ()> {
-    CORETEXT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 pub struct Raster {
     pub width: u32,
     pub height: u32,
@@ -45,6 +27,9 @@ pub struct Raster {
     pub coverage: Vec<u8>,
 }
 
+/// CoreText measurement and rasterisation. The shim builds its fonts and
+/// lines with CoreText alone, which is thread-safe, so any thread may
+/// measure or draw at any time (`tests/coretext_threads.rs`).
 pub struct CoreText;
 
 impl CoreText {
@@ -72,22 +57,17 @@ impl CoreText {
     ) -> Option<Raster> {
         let text = CString::new(text).ok()?;
         let (mut width, mut height, mut baseline) = (0, 0, 0);
-        let _coretext = coretext_lock();
         let pointer = unsafe {
             sb_text_rasterize(
                 text.as_ptr(),
                 size_pt as f64,
                 scale as f64,
                 weight as c_int,
-                0.0,
-                0,
                 i32::from(face == Face::Monospace),
                 kern_pt as f64,
                 &mut width,
                 &mut height,
                 &mut baseline,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
             )
         };
         if pointer.is_null() || width <= 0 || height <= 0 {
@@ -111,7 +91,6 @@ impl Measure for CoreText {
         let Ok(text) = CString::new(text) else {
             return 0.0;
         };
-        let _coretext = coretext_lock();
         unsafe {
             sb_text_width(
                 text.as_ptr(),
@@ -169,6 +148,28 @@ mod tests {
             (drawn - width).abs() < 1.0,
             "drawn {drawn} pt, measured {width} pt"
         );
+    }
+
+    #[test]
+    fn monospaced_text_keeps_its_weight() {
+        // SF Mono's advances are the same at every weight, so compare ink: a
+        // weight lost on the way to the monospaced face draws regular.
+        let ink = |weight| -> u64 {
+            CoreText
+                .rasterize("Am E7 F#m", 12.0, 2.0, weight, Face::Monospace)
+                .unwrap()
+                .coverage
+                .iter()
+                .map(|&c| u64::from(c))
+                .sum()
+        };
+        assert!(
+            ink(600) > ink(400) * 11 / 10,
+            "{} vs {}",
+            ink(600),
+            ink(400)
+        );
+        assert!(ink(700) > ink(600));
     }
 
     #[test]

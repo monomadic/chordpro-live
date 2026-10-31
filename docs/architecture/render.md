@@ -75,12 +75,16 @@ app for the page's view first, then keeps the slab if it covers that offset
 (or reaches the end of the page, for a short last page), so a page turn
 uploads only the status strip unless it leaves the slab.
 
-**One CoreText call at a time.** The shim creates fonts through AppKit's
-`NSFont`, and measuring on one thread while another rasterised returned wrong
-advances. `text.rs` serialises both shim calls behind a process-wide lock;
-the app measures and draws on one worker, so it costs nothing there, and
-`tests/coretext_threads.rs` guards it. Moving the shim to `CTFont` would
-make the lock unnecessary.
+**CoreText from any thread.** The shim (`text_shim.m`) uses CoreText,
+CoreGraphics and CoreFoundation only. A face is the system UI font with a
+weight trait (AppKit's `NSFontWeight` values), and the monospaced face adds
+the monospace symbolic trait after the weight, since a weight applied to
+the monospaced copy is ignored; both resolve to exactly the faces AppKit's
+`systemFontOfSize:weight:` and `monospacedSystemFontOfSize:weight:` give,
+so the goldens did not move. CTFont and CTLine are thread-safe, so
+`text.rs` takes no lock; `tests/coretext_threads.rs` measures layouts while
+three threads rasterise and holds them identical. (AppKit's `NSFont` once
+returned wrong advances under that load.)
 
 **Headless renders.** `cpl render <song|sample> --out page.png` answers one
 request through the worker's real path (`Worker::answer`) and runs the

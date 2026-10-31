@@ -5,7 +5,7 @@ fn main() {
     let object = out.join("text_shim.o");
     let archive = out.join("libcpltext.a");
     let status = Command::new("clang")
-        .args(["-fobjc-arc", "-c", "src/text_shim.m", "-o"])
+        .args(["-c", "src/text_shim.m", "-o"])
         .arg(&object)
         .status()
         .expect("Command Line Tools clang");
@@ -19,7 +19,8 @@ fn main() {
     assert!(status.success(), "CoreText shim archive failed");
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=cpltext");
-    println!("cargo:rustc-link-lib=framework=AppKit");
+    println!("cargo:rustc-link-lib=framework=CoreFoundation");
+    println!("cargo:rustc-link-lib=framework=CoreGraphics");
     println!("cargo:rustc-link-lib=framework=CoreText");
     println!("cargo:rerun-if-changed=src/text_shim.m");
 }
