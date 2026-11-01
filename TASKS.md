@@ -226,6 +226,14 @@ automated checks. When every task in an epic is checked, the epic moves to
   changes) follow the live transpose; substitution now happens at parse.
 - [ ] Honour markup, `{chord}`, `{image}` and the layout hints on the
   page; they agree with the reference on parse only.
+- [ ] Give the `.app` a library folder when Finder launches it: a bare
+  launch opens the library of the current folder, which for a Finder
+  launch is `/`. `packaging/build-app.sh` exists and ships the icon, but
+  the bundle has not been launched from Finder for that reason.
+- [ ] Finish the bundle as PROPOSAL.md's packaging section describes:
+  `CFBundleDocumentTypes` for the song extensions together with
+  `open_shim.m` (Finder delivers opened files as an Apple Event, not
+  argv), `check-icon.swift`, and the version baked into the binary.
 - [ ] Add the iOS host after the app and renderer boundaries are stable.
 - [x] Build the CoreText shim's fonts with `CTFont` rather than AppKit's
   `NSFont`, so measurement is thread-safe without the process-wide lock in

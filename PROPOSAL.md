@@ -447,8 +447,9 @@ project, no Xcode.app dependency.**
   `cc` crate, which needs only the Command Line Tools' `clang`, which cargo
   needs to link on macOS anyway.
 - `packaging/build-app.sh` assembles `ChordProLive.app`: the binary,
-  `Info.plist.in` rendered with the version, `AppIcon.icns` made from one
-  square unmasked 1024² PNG by `iconutil` (ships with macOS), ad-hoc
+  `Info.plist.in` rendered with the version, `AppIcon.icns` copied from a
+  committed, complete `.icns` in `assets/icons/` (now `icon-01.icns`; the
+  script names it, so swapping the icon is one line), ad-hoc
   `codesign` (ships with macOS), `lsregister -f` so an in-place reinstall is
   seen. `check-icon.swift` runs under `swift` from the Command Line Tools and
   renders what the OS will composite before a build; abner's notes on the

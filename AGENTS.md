@@ -103,6 +103,13 @@ writes exactly what the window would show, headless; use it for 1x checks.
 `cargo test --test visual` compares eighteen such renders with
 `tests/goldens/`; after an intended visual change, inspect `target/visual/`
 and re-bless with `CPL_BLESS=1 cargo test --test visual`.
+`packaging/build-app.sh` builds `target/release/bundle/ChordProLive.app`
+(release binary, `Info.plist` from `packaging/Info.plist.in` and
+`packaging/version.sh`, `assets/icons/icon-01.icns` as its icon, ad-hoc
+signed and registered with LaunchServices); `--install` copies it to
+/Applications and `--open` launches it. The repo folder carries a
+`com.apple.macl` privacy label, so macOS may draw the bundle in `target/`
+with a blank icon; a copy outside the repo shows the real one.
 `cargo run -- print song.cho` prints the parsed lyrics. `cargo run -- conform`
 compares `cpl-song`'s parse with the reference `chordpro` (installed with
 `cpan App::Music::ChordPro`, found in `~/perl5` or via `$CPL_CHORDPRO`),

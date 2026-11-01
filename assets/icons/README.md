@@ -13,6 +13,11 @@ The enamel source tile was roughly 1016 pixels wide. These exports preserve
 raster concept artwork; they are not vector redraws. Neither is installed as
 an application default.
 
+- `icon-01.icns` **is the app icon**: `packaging/build-app.sh` copies it to
+  `ChordProLive.app/Contents/Resources/AppIcon.icns`. To change the app
+  icon, point `ICON` in that script at another `.icns` here.
+- `icon-02.icns`: an alternative.
+
 Artwork was generated using the built-in image generation tool in the icon
 exploration chat. Original concept source: `exec-4fdf053a-2fc1-4c4e-867c-7111233f8275.png`;
 enamel source: `exec-2eed244b-735a-4409-bf59-98eaeb1d31db.png`.
