@@ -82,6 +82,9 @@ struct Viewer {
     page_tabs: Option<bool>,
     /// Keys go to search rather than the page.
     searching: bool,
+    /// Opened with no songs: the library is the home screen, and closing it
+    /// before a song is opened quits rather than showing a placeholder.
+    library_home: bool,
     /// The worker's setlist this viewer is in; search may replace it.
     setlist: u64,
     /// `--next N`: songs to step, as `n`/`p` would, once search has opened
@@ -279,7 +282,7 @@ struct Worker {
     store_error: Option<String>,
     search: Option<Search>,
     /// Write to the sidecar when a song is shown or transposed (the viewer
-    /// does; `cpl render` and tests do not).
+    /// does; `chordpro-live render` and tests do not).
     writes_store: bool,
     /// The setlist and song last noted as shown.
     shown: Option<(u64, usize)>,
@@ -586,7 +589,7 @@ impl Worker {
     }
 
     /// Changes the sidecar record of setlist song `song` and saves it. A
-    /// sample with no file, a read-only sidecar, or `cpl render` writes
+    /// sample with no file, a read-only sidecar, or `chordpro-live render` writes
     /// nothing.
     fn write_store(&mut self, song: usize, change: impl FnOnce(&mut Store, &SongFile)) {
         if !self.writes_store || !matches!(self.setlist_files.get(song), Some(Some(_))) {
@@ -1375,45 +1378,48 @@ impl ApplicationHandler<PageReady> for Viewer {
         }
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: PageReady) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: PageReady) {
         self.accept_ready_page();
+        if self.library_home && !self.searching && self.setlist == 0 {
+            event_loop.exit();
+        }
     }
 }
 
 const USAGE: &str = "\
-usage: cpl --view <song.cho>...           open songs in the viewer, in order
-       cpl --view <folder>                open every ChordPro file in a folder
-       cpl --view page-dark <song.cho>... open white on black (`i` toggles)
-       cpl --view [page|page-dark|page-inline|page-scroll]
+usage: chordpro-live                      open the library of the current folder
+       chordpro-live <song.cho>           open a song
+       chordpro-live <song.cho> <more.cho>...
+                                          open the first song, the rest queued
+                                          after it as a setlist (n / p)
+       chordpro-live <folder>             open every ChordPro file in a folder
+       chordpro-live [page|page-dark|page-inline|page-scroll]
                                           open a built-in sample page
-       cpl --view <song.cho> --size 980x720
-                                          set the window size in logical points
-       cpl --view <folder> --song 2       open on the second song of the setlist
-       cpl --view <song.cho> --scroll 300 open scrolled 300 points down the song
-       cpl --view <song.cho> --paged      open in paged mode (`v` toggles)
-       cpl --view <song.cho> --fullscreen open in fake fullscreen (`f` toggles)
-       cpl --view <song.cho> --page 2     open paged on the second page
-       cpl --view <song.cho> --tabs fold  open with tablature folded (or show)
-       cpl --view <song.cho> --transpose 2
-                                          open transposed up two semitones
-       cpl --view <folder> --search ris   open in search with a query typed
-       cpl --view <folder> --search ris --open 2 [--next 1]
+     Options come after the songs:
+       --dark                             open white on black (`i` toggles)
+       --size 980x720                     set the window size in logical points
+       --song 2                           open on the second song of the setlist
+       --scroll 300                       open scrolled 300 points down the song
+       --paged                            open in paged mode (`v` toggles)
+       --page 2                           open paged on the second page
+       --fullscreen                       open in fake fullscreen (`f` toggles)
+       --tabs fold                        open with tablature folded (or show)
+       --transpose 2                      open transposed up two semitones
+       --search ris [--open 2 [--next 1]] open in search with a query typed,
                                           open the second result as Enter would,
-                                          then step through the results as n does
-       cpl --view <folder> --store lib.toml
-                                          keep ratings and tags in another sidecar
-       cpl --view <song.cho> --floor 10   let body text go down to 10 pt before
+                                          then step through them as n does
+       --store lib.toml                   keep ratings and tags in another sidecar
+       --floor 10                         let body text go down to 10 pt before
                                           the page compacts or scrolls
-       cpl --view <song.cho> --config my.toml
-                                          lay my.toml's [page] keys over the
+       --config my.toml                   lay my.toml's [page] keys over the
                                           defaults (else $CPL_CONFIG, else
                                           config.toml in Application Support)
-       cpl <song.cho>                     print the parsed lyrics
-       cpl render <song.cho|sample> --out page.png [--size 980x720]
+       chordpro-live print <song.cho>     print the parsed lyrics
+       chordpro-live render <song.cho|sample> --out page.png [--size 980x720]
            [--scale 1|2] [--dark] [--scroll P | --page N] [--tabs show|fold]
            [--transpose N] [--floor PT] [--config my.toml]
                                           write what the window would show
-       cpl conform [<song.cho|folder>...] [--table note.md [--check]]
+       chordpro-live conform [<song.cho|folder>...] [--table note.md [--check]]
                                           compare cpl-song's parse with the
                                           reference chordpro's, construct by
                                           construct and file by file
@@ -1446,6 +1452,50 @@ fn expand_paths(args: &[String]) -> Result<Vec<String>, String> {
         paths.extend(found);
     }
     Ok(paths)
+}
+
+/// `print`: the parsed lyrics of each song in a file, for a quick look at
+/// what the parser understood. Fails when the parser reported anything.
+fn print_main(args: &[String]) -> ExitCode {
+    let [path] = args else {
+        eprintln!("chordpro-live print needs one song file\n{USAGE}");
+        return ExitCode::FAILURE;
+    };
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) => {
+            eprintln!("{path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut clean = true;
+    for (index, part) in cpl_song::split(&source).into_iter().enumerate() {
+        let result = cpl_song::parse(part.text);
+        for diagnostic in &result.diagnostics {
+            eprintln!("line {}: {}", diagnostic.line + part.offset, diagnostic.message);
+        }
+        clean &= result.diagnostics.is_empty();
+        let song = &result.song;
+        if index > 0 {
+            println!();
+        }
+        println!("{}", song.first_meta("title").unwrap_or("Untitled"));
+        for section in &song.sections {
+            println!("\n{}", section.label);
+            for line in &section.lines {
+                if section.kind == cpl_song::SectionKind::Grid {
+                    println!("{}", line.cells().collect::<Vec<_>>().join(" ").trim());
+                } else {
+                    println!("{}", line.lyrics());
+                }
+            }
+        }
+    }
+    if clean {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 const SAMPLES: [&str; 4] = ["page", "page-dark", "page-inline", "page-scroll"];
@@ -1511,7 +1561,7 @@ fn present(page: &ReadyPage, width: u32, height: u32) -> Vec<u8> {
     out
 }
 
-/// `cpl render`: one song through the worker's real page path, presented as
+/// `chordpro-live render`: one song through the worker's real page path, presented as
 /// the window would draw it, written to a PNG at any display scale. This is
 /// how a 1x page is checked on a 2x Mac, and what visual regression compares.
 fn render_main(mut args: Vec<String>) -> ExitCode {
@@ -1586,12 +1636,12 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
             _ => false,
         };
         if !ok {
-            eprintln!("cpl render: bad argument {arg:?}\n{USAGE}");
+            eprintln!("chordpro-live render: bad argument {arg:?}\n{USAGE}");
             return ExitCode::FAILURE;
         }
     }
     let (Some(source), Some(out)) = (source, out) else {
-        eprintln!("cpl render needs a song (or sample name) and --out\n{USAGE}");
+        eprintln!("chordpro-live render needs a song (or sample name) and --out\n{USAGE}");
         return ExitCode::FAILURE;
     };
     // A folder renders its first song, or its search screen.
@@ -1701,16 +1751,28 @@ fn main() -> ExitCode {
     if args.first().is_some_and(|arg| arg == "render") {
         return render_main(args.split_off(1));
     }
+    if args.first().is_some_and(|arg| arg == "print") {
+        return print_main(&args[1..]);
+    }
     // `--paged` anywhere opens in paged mode; trailing `--size WxH`,
     // `--song N`, `--scroll P` and `--page N` options come in any order.
     let mut paged = false;
     let mut start_fullscreen = false;
-    args.retain(|arg| {
-        let flag = arg == "--paged";
-        paged |= flag;
-        let fullscreen = arg == "--fullscreen";
-        start_fullscreen |= fullscreen;
-        !flag && !fullscreen
+    let mut dark = false;
+    args.retain(|arg| match arg.as_str() {
+        "--paged" => {
+            paged = true;
+            false
+        }
+        "--fullscreen" => {
+            start_fullscreen = true;
+            false
+        }
+        "--dark" => {
+            dark = true;
+            false
+        }
+        _ => true,
     });
     let mut requested_size = None;
     let mut start_song = 0;
@@ -1830,43 +1892,31 @@ fn main() -> ExitCode {
             }
         }
     }
-    // (open a window, sample page name, song paths)
-    let (view, sample, paths): (bool, &str, Vec<String>) = match args.as_slice() {
-        [flag] if flag == "--view" => (true, "page", Vec::new()),
-        [flag, name, rest @ ..] if flag == "--view" && SAMPLES.contains(&name.as_str()) => {
-            if !rest.is_empty() && !matches!(name.as_str(), "page" | "page-dark") {
-                eprintln!("{USAGE}");
-                return ExitCode::FAILURE;
-            }
-            (true, name.as_str(), rest.to_vec())
+    // A sample name that is not a file opens that built-in page; anything
+    // else is a song file or a folder. No arguments opens the library.
+    let (sample, paths): (&str, Vec<String>) = match args.as_slice() {
+        [name] if SAMPLES.contains(&name.as_str()) && !Path::new(name).exists() => {
+            (name.as_str(), Vec::new())
         }
-        [flag, rest @ ..] if flag == "--view" => (true, "page", rest.to_vec()),
-        [path] if !path.starts_with('-') => (false, "page", vec![path.clone()]),
-        _ => {
+        rest if rest.iter().any(|arg| arg.starts_with('-')) => {
             eprintln!("{USAGE}");
             return ExitCode::FAILURE;
         }
+        rest => ("page", rest.to_vec()),
     };
-    if (requested_size.is_some()
-        || start_song > 0
-        || start_offset > 0.0
-        || paged
-        || start_fullscreen
-        || tabs.is_some()
-        || start_transpose != 0
-        || start_search.is_some())
-        && !view
-    {
-        eprintln!(
-            "--size, --song, --scroll, --page, --paged, --fullscreen, --tabs, --transpose and --search require --view"
-        );
-        return ExitCode::FAILURE;
+    let library_home = args.is_empty();
+    if library_home && start_search.is_none() {
+        start_search = Some(String::new());
     }
     if (open_row.is_some() && start_search.is_none()) || (next_step != 0 && open_row.is_none()) {
         eprintln!("--open needs --search, and --next needs --open");
         return ExitCode::FAILURE;
     }
-    let folders = library_folders(&paths);
+    let folders = if library_home {
+        vec![env::current_dir().unwrap_or_else(|_| PathBuf::from("."))]
+    } else {
+        library_folders(&paths)
+    };
     let paths = match expand_paths(&paths) {
         Ok(paths) => paths,
         Err(error) => {
@@ -1874,14 +1924,13 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let dark = sample == "page-dark";
+    let dark = dark || sample == "page-dark";
     let inline = paths.is_empty() && sample == "page-inline";
     let scroll = paths.is_empty() && sample == "page-scroll";
     // Every song is parsed before the window opens; a bad file fails the
     // launch rather than surprising the performer mid-set.
     let mut songs = Vec::new();
     let mut setlist_files = Vec::new();
-    let mut clean = true;
     if paths.is_empty() {
         let source = if scroll {
             SCROLL_SAMPLE
@@ -1912,29 +1961,9 @@ fn main() -> ExitCode {
                     eprintln!("line {line}: {}", diagnostic.message);
                 }
             }
-            clean &= result.diagnostics.is_empty();
             songs.push(result.song);
             setlist_files.push(Some(SongFile::new(Path::new(path), part.text)));
         }
-    }
-    if !view {
-        let song = &songs[0];
-        println!("{}", song.first_meta("title").unwrap_or("Untitled"));
-        for section in &song.sections {
-            println!("\n{}", section.label);
-            for line in &section.lines {
-                if section.kind == cpl_song::SectionKind::Grid {
-                    println!("{}", line.cells().collect::<Vec<_>>().join(" ").trim());
-                } else {
-                    println!("{}", line.lyrics());
-                }
-            }
-        }
-        return if clean {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        };
     }
     let event_loop = EventLoop::<PageReady>::with_user_event()
         .build()
@@ -2097,6 +2126,7 @@ fn main() -> ExitCode {
         tabs: tabs.unwrap_or_default(),
         page_tabs: None,
         searching,
+        library_home,
         setlist: 0,
         pending_step: next_step,
         initial_size: requested_size.unwrap_or(if inline {

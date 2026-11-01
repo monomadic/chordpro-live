@@ -23,7 +23,7 @@ automated checks. When every task in an epic is checked, the epic moves to
   A worker measures, lays out and rasterises complete pages; stale results
   are discarded and resize keeps the previous texture until replacement.
 - [x] Preload the next song and swap only complete pages during setlist
-  navigation. `cpl --view a.cho b.cho` or `--view <folder>` opens a setlist;
+  navigation. `chordpro-live a.cho b.cho` or `chordpro-live <folder>` opens a setlist;
   `Setlist` in `cpl-app` keeps the current song and its neighbours measured,
   the worker composes the next song's first page while idle, and `n`/`p`
   swap to it only when that complete page is accepted. Both songs of the
@@ -73,12 +73,12 @@ automated checks. When every task in an epic is checked, the epic moves to
   at a larger size where they no longer fit the margin (such a candidate is
   now unfit); and measuring while another thread rasterised returned wrong
   advances (the shim is now serialised; `tests/coretext_threads.rs`). 1x
-  pages were inspected through `cpl render --scale 1`, which runs the worker's
+  pages were inspected through `chordpro-live render --scale 1`, which runs the worker's
   real page path and the shader's placement rule. **Still to do: a real 1x
   window**, which needs a 1x display.
 - [x] Add a visual regression path for `--view` sample pages at known logical
   sizes. Verify light and dark polarity and the 17–28 pt type range on macOS.
-  `tests/visual.rs` renders eleven cases through the real `cpl render` and
+  `tests/visual.rs` renders eleven cases through the real `chordpro-live render` and
   compares them with `sips`-compressed goldens in `tests/goldens/` (about 540 KB):
   light and dark sample, inline at 2x, scroll and a scrolled view, a dark
   paged page, House of the Rising Sun at 1x and 2x (28 pt), Scarborough Fair
@@ -101,7 +101,7 @@ automated checks. When every task in an epic is checked, the epic moves to
   from the song's `{define}` or a built-in table ported from chordpro-tui,
   and step 4 drops them. A scroll page keeps its header under half the
   viewport by dropping diagrams, then pills, then the title. Captured in
-  light and dark 2x windows and checked at 1x through `cpl render`.
+  light and dark 2x windows and checked at 1x through `chordpro-live render`.
 - [x] Reintroduce tablature only after a compact, readable layout is designed
   and tested with long real tabs. Its visibility should be a deliberate viewer
   choice; parser retention stays independent of that choice. Tabs draw at
@@ -168,7 +168,7 @@ automated checks. When every task in an epic is checked, the epic moves to
   the old page stays up until the new one is composed. The status strip
   names the key after the mode as the mock does (`FIT · Bm +2 · …`) and
   the fit hints lead with `[ ] transpose`, replacing `n p songs`.
-  `--transpose N` opens transposed (`cpl render` too). Checked in a 2x
+  `--transpose N` opens transposed (`chordpro-live render` too). Checked in a 2x
   window (Greensleeves at +2: chords, folded tabs and status) and headless
   at 1x; a new golden holds House of the Rising Sun at −3, and the status
   change re-blessed seven others. Not yet: real `[` `]` `0` keypresses in a
@@ -179,13 +179,13 @@ automated checks. When every task in an epic is checked, the epic moves to
   repeats every 53 pt; sections are 18 pt apart; columns 32 pt; the status
   strip is SF Pro 12 pt ink-soft with the mode's keys flush right; the inks
   are the mock's Polarity variables (ink-faint 184/74, ink-wash 242/22).
-  Checked against the mock at 1x through `cpl render` (label, chord, lyric
+  Checked against the mock at 1x through `chordpro-live render` (label, chord, lyric
   and pitch offsets exact) and in light and dark 2x windows; goldens
   re-blessed. Not matched: `Page/Comment` is italic in the mock and upright
   here (the shim has no italic face), and the mock's status keys name
   transpose and a chord toggle that do not exist yet.
 - [x] Run ChordPro 6 conformance against the reference implementation and
-  generate the directive status table from the results. `cpl conform`
+  generate the directive status table from the results. `chordpro-live conform`
   runs the reference (ChordPro 6.101.0 from CPAN, in `~/perl5`) through
   `scripts/conform/ChordPro/Output/CplJSON.pm`, an output backend that
   writes its parse as JSON (the reference has no JSON output of its own),
@@ -196,7 +196,7 @@ automated checks. When every task in an epic is checked, the epic moves to
   files parse alike. It found one parser defect, fixed here: an unlabelled
   tab was given the label "Tab"; the label is now kept as written and the
   page still says TAB. Not a window change; goldens unchanged.
-- [x] Close the parse differences `cpl conform` reports, each against the
+- [x] Close the parse differences `chordpro-live conform` reports, each against the
   spec and then the table: `{start_of_grid}`, the delegated `abc`, `ly`,
   `svg` and `textblock` environments (Molly Malone opens with `abc`),
   `{new_song}`, `[*annotation]` (kept as a chord named `*…`), `%{…}`
@@ -217,7 +217,7 @@ automated checks. When every task in an epic is checked, the epic moves to
   and opening the second. New golden `harbour-transposed-760x900@1x`; the
   two search goldens re-blessed for the larger library.
 - [ ] Parse chords inside a comment (`{comment: [C]Capo}`), as the
-  reference does; `cpl conform` reports it. Needs a design for drawing a
+  reference does; `chordpro-live conform` reports it. Needs a design for drawing a
   comment's chords.
 - [ ] Draw the delegated notation the parser keeps (`abc`, `ly`, `svg`):
   SVG first, since it needs no external program; abc and Lilypond need a

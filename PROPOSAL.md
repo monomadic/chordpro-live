@@ -531,7 +531,7 @@ measurement that settles it.
 3. **Fit coverage of a real corpus.** How many of the user's songs fit on an
    iPad mini at `stand`, and at which ladder level? If most songs land at
    step 9 or 10 the premise weakens and the paged mode becomes primary.
-   *Measurement:* a headless `cpl fit-report <folder> --device ipad-mini`
+   *Measurement:* a headless `chordpro-live fit-report <folder> --device ipad-mini`
    subcommand built in Phase 1, before any window exists. chordpro-pdf's
    device presets (logical point sizes) are the device table.
 4. **Atlas capacity at retina body sizes.** A whole song at 17 pt on a 2x
@@ -598,21 +598,21 @@ These are not re-litigated without the user:
 - `cpl-song` and `cpl-layout` test on any machine: the parser suite,
   transpose spelling, ladder order, fit determinism, and property tests that
   no `Page` ever places a lyric run below the floor or outside the viewport.
-- **Conformance against the reference implementation.** A `cpl conform
+- **Conformance against the reference implementation.** A `chordpro-live conform
   <folder>` subcommand runs the official `chordpro` program and this parser
   over the same files and diffs structure, metadata, chords and lyric text.
   It runs in CI over the spec's examples and the testdata, and on demand over
   the corpus. The conformance note's status table is generated from its
   output, so the table cannot drift from the code.
-- **Golden renders.** A headless `cpl render song.cho --device ipad-mini
+- **Golden renders.** A headless `chordpro-live render song.cho --device ipad-mini
   --out page.png` draws through the real wgpu pipeline to an offscreen
   texture, chordpro-tui's `--print` for pixels. Goldens are diffed per
   commit; a change to layout constants shows up as an image diff a human can
   judge. This is also how the polarity spike is scored.
-- **Fit report.** `cpl fit-report` over the corpus prints a table of songs ×
+- **Fit report.** `chordpro-live fit-report` over the corpus prints a table of songs ×
   devices with ladder level and body size. It is the product metric and runs
   in CI.
-- A `--view` flag reaches every surface for window captures (abner's rule),
+- A launch flag reaches every surface for window captures (abner's rule),
   and `scripts/window-id.swift` plus `screencapture -l` takes them without
   injected keystrokes.
 - Frame-path rules get drift guards as switchblade gives them: a test that

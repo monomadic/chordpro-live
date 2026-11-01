@@ -1,13 +1,13 @@
 #!/usr/bin/perl
 
-# A ChordPro output backend for `cpl conform`: writes what the reference
+# A ChordPro output backend for `chordpro-live conform`: writes what the reference
 # implementation parsed, as JSON, so cpl-song's parse can be compared with
 # it. It is loaded from this folder by `chordpro --generate=CplJSON` with
 # this folder on PERL5LIB; nothing is installed into the reference.
 #
 # Each song is its metadata and its body: one element per line the
 # reference produced, in order, with the element's type and context and
-# the fields `cpl conform` compares. Chords are given as the reference
+# the fields `chordpro-live conform` compares. Chords are given as the reference
 # displays them, after any {transpose}.
 #
 # {"songs": [{"meta": {"title": ["…"], …},

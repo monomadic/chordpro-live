@@ -1,4 +1,4 @@
-//! Visual regression: each case is rendered by the real `cpl render` (the
+//! Visual regression: each case is rendered by the real `chordpro-live render` (the
 //! worker's page path plus the shader's placement rule) and compared with a
 //! committed golden in `tests/goldens/`, a `sips`-compressed PNG you can open.
 //!
@@ -19,7 +19,7 @@ use std::{path::PathBuf, process::Command};
 const CHANNEL_TOLERANCE: u8 = 24;
 const PIXEL_TOLERANCE: f64 = 0.0002;
 
-/// (golden name, `cpl render` arguments). Together they cover light and dark,
+/// (golden name, `chordpro-live render` arguments). Together they cover light and dark,
 /// fit, scroll and paged pages, inline chords, wrapped lines and titles,
 /// chords crowded over short syllables, tablature folded by the ladder and
 /// shown in wrapped systems, a chord grid with annotations, the search screen with its pills and
@@ -216,7 +216,7 @@ fn root() -> PathBuf {
 fn render(name: &str, args: &[&str]) -> PathBuf {
     let out = root().join("target/visual").join(format!("{name}.png"));
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
-    let status = Command::new(env!("CARGO_BIN_EXE_cpl"))
+    let status = Command::new(env!("CARGO_BIN_EXE_chordpro-live"))
         .current_dir(root())
         // Never the user's own config.toml: goldens are the defaults.
         .env("CPL_CONFIG", root().join("tests/fixtures/config.toml"))
@@ -225,10 +225,10 @@ fn render(name: &str, args: &[&str]) -> PathBuf {
         .arg("--out")
         .arg(&out)
         .output()
-        .expect("run cpl render");
+        .expect("run chordpro-live render");
     assert!(
         status.status.success(),
-        "{name}: cpl render failed: {}",
+        "{name}: chordpro-live render failed: {}",
         String::from_utf8_lossy(&status.stderr)
     );
     out

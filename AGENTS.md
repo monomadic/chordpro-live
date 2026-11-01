@@ -60,12 +60,14 @@ and keep these notes as specifications rather than history.
 
 Build with `cargo build --workspace`. Check with `cargo test --workspace`
 and `cargo clippy --workspace --all-targets -- -D warnings`. Run the
-sample macOS page with `cargo run -- --view page` (or `page-dark`),
-inspect inline chords with `cargo run -- --view page-inline`, and inspect
-overflow with `cargo run -- --view page-scroll`; or open a song with
-`cargo run -- --view song.cho` (`--view page-dark song.cho` for white on
-black), or several songs or a folder as a setlist (`--view testdata`); append
-`--size 980x720` to a `--view` command for a repeatable logical-point window
+viewer with `cargo run` (the binary is `chordpro-live`): with no arguments
+it opens the library of the current folder; `cargo run -- song.cho` opens a
+song, several songs open the first with the rest queued after it as a
+setlist, and a folder opens its songs as one (`cargo run -- testdata`).
+`cargo run -- page` (or `page-dark`) opens the sample page,
+`page-inline` inline chords and `page-scroll` overflow. Options follow
+the songs: `--dark` for white on black,
+`--size 980x720` for a repeatable logical-point window
 size, `--song 2` to open on a given song, `--scroll 120` to open scrolled
 that many points, `--paged` or `--page 2` to open in paged mode, `--fullscreen` to open in
 fake fullscreen as `f` toggles it, and
@@ -81,7 +83,7 @@ and `--config my.toml` (or `$CPL_CONFIG`, else `config.toml` in
 Application Support) lays a user's `[page]` keys over `config/default.toml`;
 tests and captures pass `--config tests/fixtures/config.toml` (or set
 `$CPL_CONFIG` to it) so they never pick up the user's file.
-`cpl --help` lists the forms. Press `f` for fake fullscreen (simple
+`chordpro-live --help` lists the forms. Press `f` for fake fullscreen (simple
 fullscreen over the desktop, as switchblade's `fast_fullscreen`), ⌘Q to
 quit, ⌘F to search, `i` for polarity, `[` `]` to transpose a semitone down or up and `0`
 to reset, `v` for scroll or
@@ -100,7 +102,7 @@ writes exactly what the window would show, headless; use it for 1x checks.
 `cargo test --test visual` compares eighteen such renders with
 `tests/goldens/`; after an intended visual change, inspect `target/visual/`
 and re-bless with `CPL_BLESS=1 cargo test --test visual`.
-`cargo run -- song.cho` prints the parsed lyrics. `cargo run -- conform`
+`cargo run -- print song.cho` prints the parsed lyrics. `cargo run -- conform`
 compares `cpl-song`'s parse with the reference `chordpro` (installed with
 `cpan App::Music::ChordPro`, found in `~/perl5` or via `$CPL_CHORDPRO`),
 construct by construct and file by file; after a parser change, regenerate
@@ -171,7 +173,7 @@ the commit message.
 - Rust edition 2024, rustfmt defaults, `cargo clippy --workspace --all-targets
   -- -D warnings` clean.
 - Feel and layout constants live in the config file, never hardcoded.
-- Verify visual changes with a window capture reached through a `--view`
-  flag, never by injecting global keystrokes.
+- Verify visual changes with a window capture reached through launch
+  flags, never by injecting global keystrokes.
 - Commit messages say what changed for the user, then why; cite the sibling
   file when something was ported.

@@ -1,5 +1,5 @@
 //! A small JSON reader for the reference ChordPro's structured output, so
-//! `cpl conform` needs no dependency. It reads all of RFC 8259; numbers stay
+//! `chordpro-live conform` needs no dependency. It reads all of RFC 8259; numbers stay
 //! text, since conformance compares them as the files wrote them.
 
 use std::collections::BTreeMap;

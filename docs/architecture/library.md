@@ -4,8 +4,10 @@
 
 The library is every ChordPro file (`SONG_EXTENSIONS`, any case) under the
 library folders, recursively, skipping hidden entries, ordered by path. The
-macOS host's library folders are each folder named to `--view` and the
-folder of each song file named to it. `Library::scan` runs on the page
+macOS host's library folders are each folder named on the command line and
+the folder of each song file named on it; launched with no arguments, the
+viewer opens on search over the current folder, and closing search before
+a song is opened quits. `Library::scan` runs on the page
 worker when search opens, and again every `search_rescan_seconds` while
 search stays open; a rescan that changes nothing redraws nothing, and one
 that does keeps the selection on the same song, else the same file
@@ -44,13 +46,13 @@ table:
   when the song is played as written.
 
 The viewer's worker notes `opened` once per song change, after that page has
-gone to the host, for songs that came from a file; `cpl render` and the
+gone to the host, for songs that came from a file; `chordpro-live render` and the
 built-in samples note nothing. It writes `transpose` whenever `[` `]` or `0`
 change a file's song, and when a setlist is made (at launch, or by opening
 a search row) each song takes its remembered transpose before anything is
 measured, so a song opens in the key it was last played in. The worker
 keeps each setlist song's path, fingerprint and title from when it read
-the file, so neither write reads a song again. `cpl render` restores a
+the file, so neither write reads a song again. `chordpro-live render` restores a
 remembered transpose but never writes one.
 
 Keys this build does not know are kept verbatim and written back. A record
@@ -116,9 +118,9 @@ An `Open` reads and parses the rows' files and makes them a new `Setlist`
 at the chosen song. It bumps the setlist id: the host adopts the worker's
 song, count and position, and `n`/`p` then step through what was filtered,
 in its order. `/` or `o` opens search over the page. `--search QUERY` opens
-the viewer, or `cpl render`, in search with that query typed. In the
+the viewer, or `chordpro-live render`, in search with that query typed. In the
 viewer, `--open N` then sends the worker Home, N−1 Downs and Enter, the
 same inputs as the keys, and `--next K` steps K songs once the opened
-setlist is adopted, through the same path as `n`/`p`. `cpl render
+setlist is adopted, through the same path as `n`/`p`. `chordpro-live render
 <folder>` renders a folder's first song or, with `--search`, its search
 screen.

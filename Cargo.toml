@@ -3,7 +3,7 @@ members = ["crates/cpl-song", "crates/cpl-layout", "crates/cpl-app", "crates/cpl
 resolver = "3"
 
 [package]
-name = "cpl"
+name = "chordpro-live"
 version = "0.1.0"
 edition = "2024"
 

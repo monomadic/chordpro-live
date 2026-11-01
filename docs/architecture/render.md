@@ -86,7 +86,7 @@ so the goldens did not move. CTFont and CTLine are thread-safe, so
 three threads rasterise and holds them identical. (AppKit's `NSFont` once
 returned wrong advances under that load.)
 
-**Headless renders.** `cpl render <song|sample> --out page.png` answers one
+**Headless renders.** `chordpro-live render <song|sample> --out page.png` answers one
 request through the worker's real path (`Worker::answer`) and runs the
 fragment shader's placement rule on the CPU (`present`), so the PNG holds
 the pixels the window would present at any `--scale`, `--size`, polarity,
@@ -94,7 +94,7 @@ scroll offset or page. `cpl-render/src/png.rs` writes it with stored deflate
 blocks and no dependency.
 
 **Visual regression.** `tests/visual.rs` renders each case with the real
-binary (`cpl render`) and decodes both it and its golden with
+binary (`chordpro-live render`) and decodes both it and its golden with
 `cpl-render/src/png.rs`. Goldens are `sips`-compressed PNGs in
 `tests/goldens/`; a case fails when more than 0.02% of pixels move more than
 24 levels in any channel, which tolerates antialiasing drift from a macOS
@@ -112,7 +112,7 @@ page that arrived early. It returns `Presented::Skipped`, the host sets
 `ControlFlow::Wait`. `Presented::Reconfigure` (a lost or outdated surface)
 resizes the surface and requests the page again. With `CPL_TIMING=1` every
 present, accept and worker answer is logged with milliseconds since process
-start; `scripts/launch-check.sh [--rebuild] [count] [--view …]` launches the
+start; `scripts/launch-check.sh [--rebuild] [count] [arguments…]` launches the
 viewer repeatedly and fails if any launch's last accepted page was never
 presented.
 

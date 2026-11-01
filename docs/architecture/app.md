@@ -73,7 +73,7 @@ sits in the margin. `App::set_tabs` takes the reader's `Tabs` choice, drops
 the prepared page, and applies the choice to the fit and to the scroll page.
 `tabs_folded` tells the host whether this viewport folds a tab, so the `t`
 key can unfold a folded tab or fold a shown one; a song without tablature
-ignores `t`. `--tabs show|fold` opens the viewer, or `cpl render`, with the
+ignores `t`. `--tabs show|fold` opens the viewer, or `chordpro-live render`, with the
 choice pinned. The default config is embedded at
 build time; hot reload has not landed.
 
