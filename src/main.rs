@@ -913,6 +913,25 @@ fn parse_floor(value: &str) -> Option<f32> {
         .filter(|v| cpl_app::FLOOR_RANGE.contains(v))
 }
 
+/// What a bare launch opens as the library: the config's `[library]
+/// folders`, else the folder the app started in, else, started from Finder
+/// (in `/`, or nowhere), `[library] app_folder`. A leading `~` is `home`.
+fn home_library(config: &Config, current: Option<PathBuf>, home: Option<PathBuf>) -> Vec<PathBuf> {
+    let expand = |folder: &str| match (folder.strip_prefix('~'), &home) {
+        (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with('/') => {
+            home.join(rest.trim_start_matches('/'))
+        }
+        _ => PathBuf::from(folder),
+    };
+    if !config.library_folders.is_empty() {
+        return config.library_folders.iter().map(|f| expand(f)).collect();
+    }
+    match current {
+        Some(current) if current != Path::new("/") => vec![current],
+        _ => vec![expand(&config.app_library_folder)],
+    }
+}
+
 /// The folders search lists: each folder named on the command line, and the
 /// folder of each song file named on it.
 fn library_folders(args: &[String]) -> Vec<PathBuf> {
@@ -1472,7 +1491,11 @@ fn print_main(args: &[String]) -> ExitCode {
     for (index, part) in cpl_song::split(&source).into_iter().enumerate() {
         let result = cpl_song::parse(part.text);
         for diagnostic in &result.diagnostics {
-            eprintln!("line {}: {}", diagnostic.line + part.offset, diagnostic.message);
+            eprintln!(
+                "line {}: {}",
+                diagnostic.line + part.offset,
+                diagnostic.message
+            );
         }
         clean &= result.diagnostics.is_empty();
         let song = &result.song;
@@ -1912,11 +1935,7 @@ fn main() -> ExitCode {
         eprintln!("--open needs --search, and --next needs --open");
         return ExitCode::FAILURE;
     }
-    let folders = if library_home {
-        vec![env::current_dir().unwrap_or_else(|_| PathBuf::from("."))]
-    } else {
-        library_folders(&paths)
-    };
+    let folders = library_folders(&paths);
     let paths = match expand_paths(&paths) {
         Ok(paths) => paths,
         Err(error) => {
@@ -1977,6 +1996,23 @@ fn main() -> ExitCode {
             eprintln!("{error}");
             return ExitCode::FAILURE;
         }
+    };
+    let folders = if library_home {
+        let folders = home_library(
+            &config,
+            env::current_dir().ok(),
+            env::var_os("HOME").map(PathBuf::from),
+        );
+        // The app's own folder is made on first launch, so there is
+        // somewhere obvious to put songs; a folder the config names is not.
+        if config.library_folders.is_empty() {
+            for folder in &folders {
+                let _ = fs::create_dir_all(folder);
+            }
+        }
+        folders
+    } else {
+        folders
     };
     let polarity = if dark {
         Polarity::Dark
@@ -2161,7 +2197,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         CoreText, PageCompositor, PathBuf, Polarity, SearchInput, Setlist, Shift, SongFile, Store,
-        Worker, expand_paths, library_folders, parse_size,
+        Worker, expand_paths, home_library, library_folders, parse_size,
     };
     use cpl_app::Config;
 
@@ -2251,6 +2287,45 @@ mod tests {
         let rising = std::fs::read_to_string("testdata/house_of_the_rising_sun.cho").unwrap();
         assert!(store.opened(&cpl_app::library::fingerprint(&rising)) >= first);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_bare_launch_opens_the_configured_folders_else_where_it_started() {
+        let home = Some(PathBuf::from("/Users/ada"));
+        let config = Config::default();
+        assert_eq!(
+            home_library(&config, Some(PathBuf::from("/Users/ada/gig")), home.clone()),
+            [PathBuf::from("/Users/ada/gig")],
+            "a terminal launch opens the folder it started in"
+        );
+        for finder in [Some(PathBuf::from("/")), None] {
+            assert_eq!(
+                home_library(&config, finder, home.clone()),
+                [PathBuf::from("/Users/ada/Music/ChordPro")],
+                "a Finder launch starts in / and opens the app's folder"
+            );
+        }
+        let config = Config::with_overrides(
+            "[library]\nfolders = [\"~/Songs\", \"/Volumes/Gig # set\"] # mine\napp_folder = \"~\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            home_library(&config, Some(PathBuf::from("/")), home.clone()),
+            [
+                PathBuf::from("/Users/ada/Songs"),
+                PathBuf::from("/Volumes/Gig # set")
+            ]
+        );
+        assert_eq!(config.app_library_folder, "~");
+        for bad in [
+            "[library]\nfolders = \"~/one\"\n",
+            "[library]\napp_folder = [\"~\"]\n",
+            "[library]\nfolder = []\n",
+            "[library]\nfolders = [~/Songs]\n",
+            "[library]\napp_folder = \"open\n",
+        ] {
+            assert!(Config::with_overrides(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

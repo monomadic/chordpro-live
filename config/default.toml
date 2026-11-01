@@ -111,3 +111,11 @@ search_min_title = 160
 # While search is open the library folders are rescanned this often, in
 # seconds; only files whose size or modification time moved are reread.
 search_rescan_seconds = 2
+
+[library]
+# The folders a bare launch (no songs named) opens as the library. Empty
+# means the folder the app was started in; started from Finder, that is
+# `/`, so `app_folder` is used instead, made if it does not exist yet.
+# A leading `~` is the home folder.
+folders = []
+app_folder = "~/Music/ChordPro"

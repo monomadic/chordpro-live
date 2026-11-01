@@ -27,7 +27,9 @@ The header carries metadata pills and a chord diagram for every chord used.
 An overflowing song scrolls or, with `v`, turns pages.
 `/` or `o` opens search over the library, which is also the home screen
 when `chordpro-live` is launched with no arguments: the folders named on
-the command line (the current folder when none is named), scanned on the worker (and rescanned while search is open) and
+the command line (when none is named, `[library] folders` from the config,
+else the current folder, else `~/Music/ChordPro` for a Finder launch,
+which starts in `/`), scanned on the worker (and rescanned while search is open) and
 fingerprinted by content. Ratings, tags and when each song was last shown
 are kept in the `library.toml` sidecar, and opening a row makes the search
 results the setlist ([library](docs/architecture/library.md)). Saved
@@ -62,7 +64,9 @@ and keep these notes as specifications rather than history.
 Build with `cargo build --workspace`. Check with `cargo test --workspace`
 and `cargo clippy --workspace --all-targets -- -D warnings`. Run the
 viewer with `cargo run` (the binary is `chordpro-live`): with no arguments
-it opens the library of the current folder; `cargo run -- song.cho` opens a
+it opens the library of the current folder (or the config's `[library]
+folders`; the `.app` launched from Finder opens `~/Music/ChordPro`, made on
+first launch); `cargo run -- song.cho` opens a
 song, several songs open the first with the rest queued after it as a
 setlist, and a folder opens its songs as one (`cargo run -- testdata`).
 `cargo run -- page` (or `page-dark`) opens the sample page,

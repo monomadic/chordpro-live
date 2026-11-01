@@ -6,8 +6,14 @@ The library is every ChordPro file (`SONG_EXTENSIONS`, any case) under the
 library folders, recursively, skipping hidden entries, ordered by path. The
 macOS host's library folders are each folder named on the command line and
 the folder of each song file named on it; launched with no arguments, the
-viewer opens on search over the current folder, and closing search before
-a song is opened quits. `Library::scan` runs on the page
+viewer opens on search over the bare-launch library, and closing search
+before a song is opened quits. The bare-launch library (`home_library` in
+`src/main.rs`) is the config's `[library] folders` (a leading `~` is the
+home folder); when that list is empty, it is the folder the app started
+in, unless that is `/`, as it is for the `.app` launched from Finder, when
+it is `[library] app_folder` (`~/Music/ChordPro` by default), which is made
+if missing so there is an obvious place to put songs. A folder the config
+names is never made. `Library::scan` runs on the page
 worker when search opens, and again every `search_rescan_seconds` while
 search stays open; a rescan that changes nothing redraws nothing, and one
 that does keeps the selection on the same song, else the same file

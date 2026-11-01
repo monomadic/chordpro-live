@@ -226,10 +226,15 @@ automated checks. When every task in an epic is checked, the epic moves to
   changes) follow the live transpose; substitution now happens at parse.
 - [ ] Honour markup, `{chord}`, `{image}` and the layout hints on the
   page; they agree with the reference on parse only.
-- [ ] Give the `.app` a library folder when Finder launches it: a bare
+- [x] Give the `.app` a library folder when Finder launches it: a bare
   launch opens the library of the current folder, which for a Finder
-  launch is `/`. `packaging/build-app.sh` exists and ships the icon, but
-  the bundle has not been launched from Finder for that reason.
+  launch is `/`. A bare launch now opens the config's new `[library]
+  folders`, else the current folder, else (started in `/`) `[library]
+  app_folder`, `~/Music/ChordPro` by default, made on first launch. A unit
+  test covers each case and the table's errors. Checked by launching the
+  built `.app` through LaunchServices (`open`): it ran in `/` and opened an
+  empty library at `~/Music/ChordPro` at once. `scripts/window-id.swift`
+  now also finds the bundle's windows, which macOS names "ChordPro Live".
 - [ ] Finish the bundle as PROPOSAL.md's packaging section describes:
   `CFBundleDocumentTypes` for the song extensions together with
   `open_shim.m` (Finder delivers opened files as an Apple Event, not

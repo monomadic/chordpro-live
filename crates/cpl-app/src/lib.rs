@@ -211,6 +211,19 @@ pub struct Config {
     /// Seconds between library rescans while search is open, so a song
     /// saved into a library folder appears without reopening search.
     pub search_rescan_seconds: f32,
+    /// `[library] folders`: what a bare launch opens, as written (`~` not
+    /// yet expanded); empty means the folder the app started in.
+    pub library_folders: Vec<String>,
+    /// `[library] app_folder`: the library of a bare launch from Finder,
+    /// whose starting folder is `/`, when `library_folders` is empty.
+    pub app_library_folder: String,
+}
+
+/// A `[library]` value: a string or a one-line array of strings.
+#[derive(Debug, Clone, PartialEq)]
+enum LibraryValue {
+    One(String),
+    Many(Vec<String>),
 }
 
 const DEFAULT_CONFIG: &str = include_str!("../../../config/default.toml");
@@ -225,9 +238,9 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Reads a complete numeric `[page]` table.
+    /// Reads a complete numeric `[page]` table and a complete `[library]`.
     pub fn parse(source: &str) -> Result<Self, String> {
-        Self::from_values(Self::values(source)?)
+        Self::from_values(Self::values(source)?, Self::library_values(source)?)
     }
 
     /// The bundled defaults with a user's `[page]` table laid over them. The
@@ -244,12 +257,19 @@ impl Config {
                 None => return Err(format!("unknown page key: {key}")),
             }
         }
+        let mut library = Self::library_values(DEFAULT_CONFIG)?;
+        for (key, value) in Self::library_values(user)? {
+            match library.get_mut(&key) {
+                Some(slot) => *slot = value,
+                None => return Err(format!("unknown library key: {key}")),
+            }
+        }
         if !overrides.contains_key("max_body_size") {
             let floor = values["body_size"];
             let max = values.get_mut("max_body_size").expect("a default key");
             *max = max.max(floor);
         }
-        Self::from_values(values)
+        Self::from_values(values, library)
     }
 
     /// This config with the readability floor at `points`: body text is never
@@ -270,17 +290,22 @@ impl Config {
     fn values(source: &str) -> Result<std::collections::BTreeMap<String, f32>, String> {
         let mut values = std::collections::BTreeMap::new();
         let mut in_page = false;
+        let mut in_library = false;
         for (index, raw) in source.lines().enumerate() {
             let line = raw.split('#').next().unwrap_or("").trim();
             if line.is_empty() {
                 continue;
             }
             if line.starts_with('[') {
-                if line != "[page]" {
+                in_page = line == "[page]";
+                in_library = line == "[library]";
+                if !in_page && !in_library {
                     return Err(format!("line {}: unsupported table", index + 1));
                 }
-                in_page = true;
                 continue;
+            }
+            if in_library {
+                continue; // read by library_values
             }
             if !in_page {
                 return Err(format!("line {}: expected [page]", index + 1));
@@ -303,7 +328,77 @@ impl Config {
         Ok(values)
     }
 
-    fn from_values(mut values: std::collections::BTreeMap<String, f32>) -> Result<Self, String> {
+    /// The `[library]` table's keys: quoted strings, or one-line arrays of
+    /// them (`["~/Songs", "/Volumes/Gig"]`). A `#` outside quotes starts a
+    /// comment.
+    fn library_values(
+        source: &str,
+    ) -> Result<std::collections::BTreeMap<String, LibraryValue>, String> {
+        let mut values = std::collections::BTreeMap::new();
+        let mut in_library = false;
+        for (index, raw) in source.lines().enumerate() {
+            let error = |what: &str| format!("line {}: {what}", index + 1);
+            let line = raw.trim();
+            if line.starts_with('[') {
+                in_library = line.split('#').next().unwrap_or("").trim() == "[library]";
+                continue;
+            }
+            if !in_library || line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (key, rest) = line
+                .split_once('=')
+                .ok_or_else(|| error("expected key = value"))?;
+            // The strings in order, and the shape around them with each
+            // string as one quote mark.
+            let mut strings = Vec::new();
+            let mut shape = String::new();
+            let mut chars = rest.chars();
+            while let Some(c) = chars.next() {
+                match c {
+                    '"' => {
+                        let mut text = String::new();
+                        loop {
+                            match chars.next() {
+                                Some('"') => break,
+                                Some('\\') => text.extend(chars.next()),
+                                Some(c) => text.push(c),
+                                None => return Err(error("unclosed string")),
+                            }
+                        }
+                        strings.push(text);
+                        shape.push('"');
+                    }
+                    '#' => break,
+                    c if !c.is_whitespace() => shape.push(c),
+                    _ => {}
+                }
+            }
+            let list = shape.len() >= 2
+                && shape.starts_with('[')
+                && shape.ends_with(']')
+                && (shape == "[]"
+                    || shape[1..shape.len() - 1]
+                        .split(',')
+                        .all(|item| item == "\""));
+            let value = if shape == "\"" {
+                LibraryValue::One(strings.remove(0))
+            } else if list {
+                LibraryValue::Many(strings)
+            } else {
+                return Err(error("expected a quoted string or a list of them"));
+            };
+            if values.insert(key.trim().to_owned(), value).is_some() {
+                return Err(error("duplicate key"));
+            }
+        }
+        Ok(values)
+    }
+
+    fn from_values(
+        mut values: std::collections::BTreeMap<String, f32>,
+        mut library: std::collections::BTreeMap<String, LibraryValue>,
+    ) -> Result<Self, String> {
         macro_rules! take {
             ($name:literal) => {
                 values.remove($name).ok_or(concat!("missing ", $name))?
@@ -398,6 +493,18 @@ impl Config {
             search_box_radius: take!("search_box_radius"),
             search_min_title: take!("search_min_title"),
             search_rescan_seconds: take!("search_rescan_seconds"),
+            library_folders: match library.remove("folders") {
+                Some(LibraryValue::Many(folders)) => folders,
+                Some(LibraryValue::One(_)) => return Err("library folders must be a list".into()),
+                None => return Err("missing folders".into()),
+            },
+            app_library_folder: match library.remove("app_folder") {
+                Some(LibraryValue::One(folder)) => folder,
+                Some(LibraryValue::Many(_)) => {
+                    return Err("library app_folder must be one folder".into());
+                }
+                None => return Err("missing app_folder".into()),
+            },
         };
         if let Some(key) = values.keys().next() {
             return Err(format!("unknown page key: {key}"));
