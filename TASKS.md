@@ -76,7 +76,7 @@ automated checks. When every task in an epic is checked, the epic moves to
   pages were inspected through `chordpro-live render --scale 1`, which runs the worker's
   real page path and the shader's placement rule. **Still to do: a real 1x
   window**, which needs a 1x display.
-- [x] Add a visual regression path for `--view` sample pages at known logical
+- [x] Add a visual regression path for the sample pages at known logical
   sizes. Verify light and dark polarity and the 17–28 pt type range on macOS.
   `tests/visual.rs` renders eleven cases through the real `chordpro-live render` and
   compares them with `sips`-compressed goldens in `tests/goldens/` (about 540 KB):

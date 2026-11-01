@@ -77,7 +77,7 @@ added to `Song::transpose` for the status strip. `{define}` voicings keep
 their names, so a shifted chord takes the built-in shape unless the song
 defines that chord too.
 
-Diagnosed, which makes the `cpl` command fail: mismatched, orphaned or
+Diagnosed, which makes `chordpro-live print` fail: mismatched, orphaned or
 unclosed environments, recall before any chorus, empty comments, layout
 hints (`new_page`, `column_break`, `columns`) until the fit engine honours
 them, embedded notation until it is drawn, a `{new_song}` given to `parse`

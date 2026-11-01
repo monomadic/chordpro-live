@@ -25,8 +25,9 @@ draws as small, soft staves that wrap into systems at bar lines; ladder
 step 5 folds it, and `t` pins it shown or folded.
 The header carries metadata pills and a chord diagram for every chord used.
 An overflowing song scrolls or, with `v`, turns pages.
-`/` or `o` opens search over the library: the folders named on the command
-line, scanned on the worker (and rescanned while search is open) and
+`/` or `o` opens search over the library, which is also the home screen
+when `chordpro-live` is launched with no arguments: the folders named on
+the command line (the current folder when none is named), scanned on the worker (and rescanned while search is open) and
 fingerprinted by content. Ratings, tags and when each song was last shown
 are kept in the `library.toml` sidecar, and opening a row makes the search
 results the setlist ([library](docs/architecture/library.md)). Saved
