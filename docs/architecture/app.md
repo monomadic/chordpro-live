@@ -12,8 +12,10 @@ window or GPU dependency.
 
 The page uses up to four columns, `column_gutter` apart. The body follows
 the Figma mock at 17 pt: a chord/lyric pair is `Page/Chord` (SF Pro
-Semibold 15/16 pt, ink-soft) four points over `Page/Lyric` (17/25 pt,
-ink), repeated every `line_height` (53 pt, the 45 pt pair plus 8);
+Semibold 15/16 pt, ink-soft) over `Page/Lyric` (17/25 pt, ink), the
+lyric's box tucked three points under the chord row so each chord sits
+close on its words, repeated every `line_height` (46 pt, the 38 pt pair
+plus 8);
 a section's `Page/Label` (Bold 14/27 pt, tracked 8%, ink-soft, ink for a
 chorus) sits `label_gap` above its first line, its baseline `label_baseline`
 into its row; sections are 18 pt apart (`section_gap` plus the last line's
