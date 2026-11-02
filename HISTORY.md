@@ -4,8 +4,111 @@ This is a record of implemented work and observed checks. `TASKS.md` holds
 open work; `PROPOSAL.md` holds design decisions. Dates are local to the project
 session. A passing headless test does not stand in for a visual window check.
 
+## 2026-11-01
+
+- **A library folder for the Finder-launched `.app`.** A Finder launch runs
+  in `/`, so a bare launch used to open the library of `/`. It now opens the
+  config's new `[library] folders`, else the current folder, else (when
+  started in `/`) `[library] app_folder`, `~/Music/ChordPro` by default,
+  made on first launch. A unit test covers each case and the table's
+  errors. Checked by launching the built `.app` through LaunchServices
+  (`open`): it ran in `/` and opened an empty library at `~/Music/ChordPro`
+  at once. `scripts/window-id.swift` now also finds the bundle's windows,
+  which macOS names "ChordPro Live".
+- **Parse differences from `conform` closed.** `{start_of_grid}`, the
+  delegated `abc`, `ly`, `svg` and `textblock` environments, `{new_song}`,
+  `[*annotation]` (kept as a chord named `*…`), `%{…}` substitution and
+  selectors such as `{comment-guitar}` now parse as the reference does;
+  each was probed in the reference first and matched to what it printed.
+  Grids are cells (margin, bars, chords, comment) drawn as aligned
+  monospace rows with their chords transposed; text blocks read as verses;
+  both use the compact inline rows. abc, ly and svg are kept verbatim,
+  diagnosed and left off the page. Annotations sit in the chord row and
+  never transpose. Selectors match the guitar or a set metadata item, and a
+  skipped environment drops to its end. A file of several songs is several
+  setlist songs and search rows, each with its own fingerprint; a file of
+  one song keeps the whole file's. Six new probes cover margins,
+  conditionals and selector forms, and `testdata/harbour_lights.cho` uses
+  all of it: 59 of 60 constructs and 7 of 7 files parse alike. Window
+  checks at 760x900: both songs of that file, the second transposed +2,
+  search listing both and opening the second. New golden
+  `harbour-transposed-760x900@1x`; the two search goldens re-blessed for
+  the larger library.
+- **ChordPro 6 conformance measured against the reference.** `conform`
+  runs the reference (ChordPro 6.101.0 from CPAN, in `~/perl5`) through
+  `scripts/conform/ChordPro/Output/CplJSON.pm`, an output backend that
+  writes its parse as JSON (the reference has none of its own), and
+  compares songs, metadata, structure, chords and text with `cpl-song`'s.
+  The song note's status table is generated from 53 probe songs and six
+  files; `--check` and `tests/conform.rs` fail when it is stale. At first
+  44 of 53 constructs and 5 of 6 files parsed alike. It found one parser
+  defect, fixed: an unlabelled tab was given the label "Tab"; the label is
+  now kept as written and the page still says TAB. Not a window change;
+  goldens unchanged.
+
+## 2026-10-31
+
+- **Live transpose, remembered per song.** `[` `]` transpose a semitone
+  and `0` resets, with chordpro-tui's spelling rules: `transpose.go` and
+  its tests were ported into `cpl_song::transpose`. `{transpose: n}` (with
+  `f`/`s`, and empty to cancel) shifts the chords after it and sets
+  `key_actual`, which the KEY pill shows; chord diagrams follow. The
+  worker's `Setlist` keeps a transpose per song, within an octave, and
+  re-measures only that song; the old page stays up until the new one is
+  composed. The status strip names the key after the mode as the mock does
+  (`FIT · Bm +2 · …`) and the fit hints lead with `[ ] transpose`.
+  `--transpose N` opens transposed (`render` too). The sidecar keeps
+  `transpose = n` in the song's table, written whenever it changes and
+  dropped at 0, and a setlist made at launch or from search opens each song
+  at it. Checked in 2x windows (Greensleeves at +2: chords, folded tabs and
+  status; a `--transpose -2` run wrote the sidecar and a second launch with
+  no flag opened Greensleeves in Gm), headless at 1x, and by worker tests
+  (writes, restore in a fresh worker and from search, reset forgets). A new
+  golden holds House of the Rising Sun at −3; the status change re-blessed
+  seven others. Unverified: real `[` `]` `0` keypresses in a window, and
+  the mock's `c chords` hint, which waits on a chord viewer.
+- **CoreText fonts, no lock.** The shim builds its fonts with `CTFont`
+  rather than AppKit's `NSFont`, so measurement is thread-safe without the
+  process-wide lock in `cpl-render/src/text.rs`, as a second worker or the
+  iOS host will need. The shim uses CoreText, CoreGraphics and
+  CoreFoundation only (no AppKit link in `cpl-render`). Faces are the
+  system UI font with a weight trait, plus the monospace trait after the
+  weight; every weight was checked against AppKit's face by name, and all
+  seventeen goldens are pixel-identical. The first attempt applied the
+  weight after the monospace trait, which CoreText ignores, and the goldens
+  caught the regular-weight diagram names; a unit test now pins that.
+  `tests/coretext_threads.rs` passed five runs in a row without the lock.
+  The shim's unused truncation, tabular-figure and caret-offset options
+  went with it. Window-checked at 2x.
+
 ## 2026-10-29
 
+- **The song body matches the Figma mock.** Chords are `Page/Chord` SF Pro
+  Semibold 15 pt and labels `Page/Label` Bold 14 pt tracked 8%, both
+  ink-soft (a chorus label is ink); a chord/lyric pair repeats every 53 pt;
+  sections are 18 pt apart; columns 32 pt; the status strip is SF Pro 12 pt
+  ink-soft with the mode's keys flush right; the inks are the mock's
+  Polarity variables (ink-faint 184/74, ink-wash 242/22). Checked against
+  the mock at 1x through `render` (label, chord, lyric and pitch offsets
+  exact) and in light and dark 2x windows; goldens re-blessed. Not
+  matched: `Page/Comment` is italic in the mock and upright here (the shim
+  has no italic face).
+- **Last-opened and a live rescan.** The worker notes `opened` (a UTC
+  date-time) in the sidecar once per song change, after the page has gone
+  out, and search's Tab sort gains RECENT. While search is open the library
+  folders are rescanned every `search_rescan_seconds` (2), keeping the
+  selection on the same file. Checked in a 2x window: a song saved into the
+  folder appeared and a deleted one went within one interval; an
+  `--open 2 --next 2` run wrote both shown songs' `opened`. Unverified: the
+  RECENT sort in a window (covered headless only; no flag reaches it).
+- **Opening from search makes the results the setlist.** `n`/`p` step
+  through what was filtered, in its order. Tested headless
+  (`Worker::search_input` with Enter) and in 2x windows through
+  `--search Q --open N [--next K]`, which sends the worker the keys a
+  performer would press (Home, Down, Enter) and then steps as `n`/`p` do:
+  rows 2 then 3 and 1 of the unfiltered library opened in order, and
+  `--search "+folk " --open 1 --next 5` stopped on the filter's last song.
+  Unverified: real keypresses in a window.
 - **Library, sidecar and search (first slice of the P2 library epic).**
   `/` or `o` opens a search screen built after the Figma mock. It lists every
   ChordPro file under the folders named on the command line, scanned on the
