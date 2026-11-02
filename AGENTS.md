@@ -81,8 +81,8 @@ cargo clippy --workspace --all-targets -- -D warnings
   renders with `tests/goldens/`. After an intended visual change, inspect
   `target/visual/` and re-bless with `CPL_BLESS=1 cargo test --test visual`.
 - **Conformance:** `cargo run -- conform` compares `cpl-song`'s parse with
-  the reference `chordpro` (`cpan App::Music::ChordPro`, found in `~/perl5`
-  or via `$CPL_CHORDPRO`), construct by construct and file by file. After a
+  the reference `chordpro` (`cpan App::Music::ChordPro`, found via `$CPL_CHORDPRO`,
+  `PATH` or `~/perl5`), construct by construct and file by file. After a
   parser change, regenerate the song note's table with
   `cargo run -- conform --table docs/architecture/chordpro.md`;
   `tests/conform.rs` fails while it is stale. Never hand-edit that table.

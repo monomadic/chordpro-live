@@ -24,8 +24,7 @@ and no shadow — on macOS 26 the window contour is drawn with the shadow, so
 dropping the shadow is what removes it (switchblade's finding). The page
 runs under a `TITLE_STRIP_PT` (28 pt) strip of paper so the traffic lights
 float over it; the strip is part of the view key and shrinks the page's
-logical height. It is a constant until fullscreen exists, where it must be
-zero.
+logical height. The strip is zero in fullscreen (`f`).
 Coverage rasters are cached by text, face, weight, size, tracking and
 display scale, with a 32 MiB cap. A `Text`'s `tracking` (a fraction of its
 size) reaches CoreText as `NSKernAttributeName`, added after every
@@ -52,23 +51,18 @@ page bounds at 1x and 2x for several viewport sizes. It includes header,
 section label, lyric and chord runs.
 
 The CoreText shim is copied from
-`switchblade/crates/sb-window/src/text_shim.m`. This starter does not yet
-use switchblade's R8 atlas, span highlighting, raster budget, or scheduler.
-Page composition and rasterisation run on a worker. `CPL_TIMING=1` logs each
-answer as `slab` or `view` with its wall time; in a debug build a slab takes
-50–120 ms and a view 2 µs for a fitted page or 3–9 ms for a scrolling one
-(the status strip raster). Release timings and the upload cost itself are
-still to be measured.
+`switchblade/crates/sb-window/src/text_shim.m`; switchblade's R8 atlas,
+span highlighting and scheduler are not used. Page composition and
+rasterisation run on a worker. `CPL_TIMING=1` logs each answer as `slab` or
+`view` with its wall time.
 
 The worker also owns the `Setlist`. Whenever no request is waiting it does
 one unit of preparation and checks again: measure a missing neighbour song,
 or compose the next song's first page at the last viewport and polarity.
 A song-change request that matches that preloaded page (same song, size,
-scale, polarity, offset zero) is answered with it directly; anything else
+scale, title inset, polarity and tablature choice) is answered with it directly; anything else
 composes as usual. Only the newest generation is accepted, so a page from
-the previous song can never land after the change. `--song N` opens the
-viewer on a given song and `scripts/window-id.swift` finds the window, so a
-capture of any song needs no keypress.
+the previous song can never land after the change.
 
 In paged mode the worker answers a page request the same way: it asks the
 app for the page's view first, then keeps the slab if it covers that offset
@@ -80,11 +74,10 @@ CoreGraphics and CoreFoundation only. A face is the system UI font with a
 weight trait (AppKit's `NSFontWeight` values), and the monospaced face adds
 the monospace symbolic trait after the weight, since a weight applied to
 the monospaced copy is ignored; both resolve to exactly the faces AppKit's
-`systemFontOfSize:weight:` and `monospacedSystemFontOfSize:weight:` give,
-so the goldens did not move. CTFont and CTLine are thread-safe, so
+`systemFontOfSize:weight:` and `monospacedSystemFontOfSize:weight:` give.
+CTFont and CTLine are thread-safe, so
 `text.rs` takes no lock; `tests/coretext_threads.rs` measures layouts while
-three threads rasterise and holds them identical. (AppKit's `NSFont` once
-returned wrong advances under that load.)
+three threads rasterise and holds them identical.
 
 **Headless renders.** `chordpro-live render <song|sample> --out page.png` answers one
 request through the worker's real path (`Worker::answer`) and runs the
@@ -99,9 +92,9 @@ binary (`chordpro-live render`) and decodes both it and its golden with
 `tests/goldens/`; a case fails when more than 0.02% of pixels move more than
 24 levels in any channel, which tolerates antialiasing drift from a macOS
 font update but not a moved run. After an intended visual change, inspect
-`target/visual/*.png`, then run `CPL_BLESS=1 cargo test --test visual`.
-A layout constant only reaches a golden if some case exercises it; the
-crowded-chords fixture exists because no song case crowded its chords.
+`target/visual/*.png`, then re-bless (see AGENTS.md). A layout constant
+only reaches a golden if some case exercises it, which is why
+`testdata/crowded_chords.cho` exists.
 
 **A skipped present is retried.** A new window reports its surface as
 `Occluded` for its first few frames, so `Gpu::render` can fail to present a
@@ -110,9 +103,8 @@ page that arrived early. It returns `Presented::Skipped`, the host sets
 `WindowEvent::Occluded(false)` or, failing that, on a 100 ms idle tick
 (`ControlFlow::WaitUntil`), after which the loop returns to
 `ControlFlow::Wait`. `Presented::Reconfigure` (a lost or outdated surface)
-resizes the surface and requests the page again. With `CPL_TIMING=1` every
-present, accept and worker answer is logged with milliseconds since process
-start; `scripts/launch-check.sh [--rebuild] [count] [arguments…]` launches the
+resizes the surface and requests the page again.
+`scripts/launch-check.sh [--rebuild] [count] [arguments…]` launches the
 viewer repeatedly and fails if any launch's last accepted page was never
 presented.
 

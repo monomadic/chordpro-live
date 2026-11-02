@@ -1,8 +1,8 @@
 # App and page composition
 
-`cpl-app` owns the current headless `App`, `Config`, and plain `Frame` data.
+`cpl-app` owns the headless `App`, `Config`, and plain `Frame` data.
 `App::new` takes a parsed `Song` and the host's text `Measure`. It keeps the
-source song intact and measures it whole, tablature included. It measures the display song at the floor and larger whole-point
+source song intact and measures it whole, tablature included. It measures the song at the floor and larger whole-point
 sizes up to the configured maximum. `frame` and `frame_scrolled` then take
 only logical window dimensions and the scroll offset, and never measure, so
 resize, scroll and polarity changes need no new CoreText measurement. The
@@ -29,38 +29,41 @@ transposed), and the keys
 for the page's mode at the right margin when both fit with two em between
 them. The hints' widths are measured once per candidate body size in
 `App::new`, so composing never measures. All page dimensions are in
-`config/default.toml`; font sizes are points and the other values are in
-body-size units except margins, which are points. `Config::with_overrides`
-lays a user's `[page]` table over those defaults: the file names only the
-keys it changes, and a key the defaults lack is an error. `body_size` is
+`config/default.toml`. Sizes and spacing are in body-size units, except
+`body_size`, `comfort_size` and `max_body_size`, the margins and the
+`search_*` keys, which are in points (`search_rescan_seconds` is seconds).
+`Config::with_overrides` lays a user's `[page]` and `[library]` tables over
+those defaults: the file names only the keys it changes, a key the defaults
+lack is an error, and a `body_size` above `max_body_size` raises it unless
+the file sets it. `body_size` is
 the readability floor; `Config::with_floor` (the host's `--floor`) sets it
 from 6 to 72 pt and raises `max_body_size` to meet it. `App::fit_solution`
 weighs every ladder candidate that fits at the floor (`cpl_layout::candidates`)
 by `Config::size_value` of its largest fitting size less
 `Config::step_cost`, so text shrinks toward the floor before the page drops
 diagrams, pills or the title; a tab fold the reader pinned costs nothing. A
-page that fits at no candidate scrolls at `Config::scroll_size`, the
-comfortable size, as does the search screen's strip. A song crossing the bottom
+page that fits at no candidate scrolls at `Config::scroll_size`: `comfort_size`, clamped between the
+floor and the maximum and rounded down to a whole point, as does the search screen's strip. A song crossing the bottom
 margin scrolls at the same body size. A line wider than the content box
 wraps (see [layout](layout.md)); only an unbreakable run reaches the
 width-needed state, and a scrolling page clips a too-wide title rather than
 withholding the song.
-Chord-only progressions sit on one compact row at full chord size. Whitespace
-used to separate their chords is measured for alignment but not drawn as
-an empty lyric run.
+Comments render in the soft ink at lyric size until the Figma mock defines
+a comment style. Chord-only progressions sit on one compact row at full
+chord size. The
+spaces between their chords are measured for alignment but not drawn as an
+empty lyric run.
 
-`frame` asks `cpl_layout::solve` for the least-reduced page that fits the
-content box (inside the margins, above the status strip) and composes it in
+`frame` takes the best-scoring candidate from `fit_solution` (above) for
+the content box (inside the margins, above the status strip) and composes it in
 points; the ladder order and its skip rules are in [layout](layout.md). An
 unfit candidate draws no lyrics. When fit fails, `frame_scrolled` lays the
 full song out as one column of unbounded height, falling back to inline
 chords only if a line is too wide, and selects complete chord/lyric line
-groups for the viewport. The macOS host owns the offset and handles arrow,
-Page Up/Down, Home, and End keys. The scroll status names the section
+groups for the viewport. The macOS host owns the offset and handles
+Up/Down, Space, Page Up/Down, Home and End. The scroll status names the section
 containing the first visible song line, even after its label leaves the
-viewport. Timed scroll modes, per-step on/off/auto pins (other than the
-tablature pin), and normalised input events in the proposal are not
-implemented yet.
+viewport.
 
 ## Tablature
 
@@ -75,9 +78,7 @@ sits in the margin. `App::set_tabs` takes the reader's `Tabs` choice, drops
 the prepared page, and applies the choice to the fit and to the scroll page.
 `tabs_folded` tells the host whether this viewport folds a tab, so the `t`
 key can unfold a folded tab or fold a shown one; a song without tablature
-ignores `t`. `--tabs show|fold` opens the viewer, or `chordpro-live render`, with the
-choice pinned. The default config is embedded at
-build time; hot reload has not landed.
+ignores `t`. The default config is embedded at build time.
 
 ## Setlist
 
@@ -89,7 +90,9 @@ between requests, and `go_to`/`step` move without wrapping and drop any
 `App` more than one song away, so memory is bounded by three measured songs.
 The host keeps the song index and the scroll offset; a song change is a page
 request like any other, which is what lets the old page stay visible until
-the new song's complete page replaces it.
+the new song's complete page replaces it. `Setlist` also keeps a live
+transpose per song, within ±11 semitones; `set_transpose` drops that song's
+measured `App` so it is measured again in the new key.
 
 ## Retained page and view
 
@@ -116,22 +119,21 @@ page), with a status naming the section and `PAGE n / N`;
 `App::page_count` is 1 for a song that fits. The host keeps the page index
 and toggles the mode with `v`.
 
-A scroll page lays its header out at the content width like any other. If
-the wrapped title would take more than half the content box, the scroll page
-drops it, as ladder step 9 would: the header is one scroll group, and a
-group taller than the viewport could never be shown whole.
+A scroll page lays its header out at the content width like any other.
+The header is one scroll group, and a group taller than the viewport could
+never be shown whole, so the scroll page keeps its header under half the
+viewport by dropping diagrams, then pills, then the title, the ladder's own
+order.
 
 Frames carry `Shape`s beside `Text`: rounded rectangles in page points,
 filled or outlined, with a group and an ink like text. Pills are an ink-soft
 capsule outline with the label in soft ink and the value in strong ink, the
-baseline 0.35 of the pill text size below the capsule's centre. A scroll
+baseline 0.355 of the pill text size below the capsule's centre. A scroll
 page's group bounds include its shapes, so a pill shows only with its header.
 
-A diagram is composed by `App::compose_diagram`, after chordpro-pdf's
-`drawDiagram`: the name centred over the grid, o and x over open and muted
+A diagram is composed by `App::compose_diagram`, after `drawDiagram` in
+chordpro-tui's `internal/pdf/pdf.go`: the name centred over the grid, o and x over open and muted
 strings, grid lines as thin filled shapes, a heavy nut (or the `Nfr` note
 for a shape above it), a dot per fretted string, a capsule for each barre,
 and finger numbers under the strings. Name, grid and dots are strong ink;
-the marks are soft. The scroll page keeps its header under half the
-viewport by dropping diagrams, then pills, then the title, the ladder's own
-order.
+the marks are soft.

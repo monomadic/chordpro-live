@@ -78,7 +78,8 @@ order, the cursor and the matched rows. `input` takes a decoded
 - digits 0–5 rate the selected song (`Rate`);
 - `#name⏎` toggles a sidecar tag on it (`Tag`);
 - Tab cycles the sort order (title, artist, rating, recent: newest
-  `opened` first, never-shown songs last by title) when there is no query;
+  `opened` first, never-shown songs last by title), which orders the rows
+  when there is no query and breaks score ties when there is;
 - Enter opens (`Open`: every row, in order, and the cursor's position);
 - Escape cancels tag entry or closes search (`Close`);
 - the query edits as a Mac text field, at a caret: ← → (Ctrl-B F), ⌘← ⌘→
@@ -115,7 +116,8 @@ chordpro-tui's order: year, tempo, capo, tags, key, rating.
 
 ## Host
 
-The window thread sends the worker `ToWorker` messages. Page requests
+The window thread sends the worker `ToWorker` messages (page requests,
+`OpenSearch`, `Search` keys, `Clipboard`, `Transpose`). Page requests
 coalesce to the newest; `OpenSearch` and every `Search` key are applied in
 order, so typing never loses a key. While search is up the worker composes
 its frame whole for each request, and `ReadyPage::searching` routes keys.
@@ -123,7 +125,7 @@ its frame whole for each request, and `ReadyPage::searching` routes keys.
 An `Open` reads and parses the rows' files and makes them a new `Setlist`
 at the chosen song. It bumps the setlist id: the host adopts the worker's
 song, count and position, and `n`/`p` then step through what was filtered,
-in its order. `/` or `o` opens search over the page. `--search QUERY` opens
+in its order. `/`, `o` or ⌘F opens search over the page. `--search QUERY` opens
 the viewer, or `chordpro-live render`, in search with that query typed. In the
 viewer, `--open N` then sends the worker Home, N−1 Downs and Enter, the
 same inputs as the keys, and `--next K` steps K songs once the opened

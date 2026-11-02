@@ -40,7 +40,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 
 /// Height of the title strip the page runs under on macOS (transparent
 /// titlebar, hidden title, full-size content view): the traffic lights float
-/// over paper and the page starts below them. Zero until fullscreen exists.
+/// over paper and the page starts below them. Zero in fullscreen.
 #[cfg(target_os = "macos")]
 const TITLE_STRIP_PT: f32 = 28.0;
 #[cfg(not(target_os = "macos"))]

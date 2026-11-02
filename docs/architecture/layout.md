@@ -1,7 +1,8 @@
 # Column fit
 
 `cpl-layout` measures a song with `measure_song` into a `MeasuredSong` at
-each candidate size, from the body floor to the configured maximum:
+one set of metrics; the app calls it once per candidate size, from the body
+floor to the configured maximum. A `MeasuredSong` holds
 the header, each section's upper-cased label, and for every line two run
 lists with em offsets and widths, one with chords above the lyric and one
 with inline chords. A chord wider than its syllable pushes the next lyric past
@@ -16,10 +17,11 @@ progression keeps its full chord runs at step 7 and contributes the compact
 inline row height to its section block.
 
 Section blocks are built from those widths in body-size units. `fit` packs
-whole sections into up to four columns with the greedy rising-target method
-from `chordpro-tui/internal/pdf/layout.go`. For each column count it computes
-the largest body size allowed by the available width and height, then reports
-the best split and whether that split meets the configured floor.
+whole sections into up to `max_columns` columns with the greedy
+rising-target method from `chordpro-tui/internal/pdf/layout.go`. For each
+column count it computes the largest scale (at most 1) the available width
+and height allow at the candidate's body size, then reports the best split
+and whether it reaches 1.
 
 The reduction ladder lives here too. `Options` holds one choice per step, and
 its methods give the em geometry each choice implies: the header layout,
@@ -27,20 +29,15 @@ each section's block, visible lines and line height. `layout` lays out one
 candidate; `solve` tries the full page, then each `LADDER` step in order,
 cumulatively, and returns the first that fits or the last one tried. Each
 step carries an `applies` test, so a step that cannot change this song's
-page (no tablature, no repeated chorus,
-labels too wide for the margin, a single section) is skipped rather than
+page (a single section, labels too wide for the margin, no chord diagrams,
+no tablature, no repeated chorus, no pills) is skipped rather than
 tried, and never leaves a failing option on for the steps after it:
 
 1. section gaps close; 2. labels move to the side margin; 4. the chord
 diagrams drop; 5. tablature folds to its label; 6. a repeated chorus keeps
 only its first line; 7. chords go inline; 8. the pills drop; 9. the title
-drops.
-
-Step 4 drops the chord diagrams; 6 collapses repeated choruses and 7 sets
-chords inline; then the header goes, last: 8 the metadata pills, 9 the
-title. There is
-no step 3: the header always keeps the byline on its own line (see
-PROPOSAL.md). A side
+drops. The header goes last. There is no step 3: the header always keeps
+the byline on its own line (see PROPOSAL.md). A side
 label beside a section with every line hidden keeps one row. A song with no
 sections fits. `candidates` lists the full page and each applicable step,
 cumulatively; the app draws each one that fits at the floor at the largest
@@ -95,8 +92,7 @@ space. `Options::block` wraps at the viewport width and
 the app accepts a larger body size only while it wraps no more rows than the
 floor. A row wider than the limit means an unbreakable token, and the fit
 reports it as not meeting the floor — the only case left for the
-width-needed state. Wrapping at a column's own width, to allow more columns,
-is not attempted yet.
+width-needed state.
 
 A title wider than the content box wraps the same way, by its measured words
 (`Header::title_tokens`): `Options::header` takes the content width and
@@ -138,6 +134,7 @@ pills.
 song uses that has a shape (`Header::diagrams`: name, shape, and an `Nfr`
 note for a shape above the nut), plus one mark width (the mark face is
 monospaced). `Options::header` lays the cells out in rows under the pills,
-`diagram_top_gap` below the header's last line, each cell
+`diagram_top_gap` below the header rule, each cell
 `PageMetrics::diagram_width` wide and `diagram_height` tall, wrapping at the
-content width. Step 4 sets `hide_diagrams`. The geometry is chordpro-pdf's.
+content width. Step 4 sets `hide_diagrams`. The geometry is that of
+`chordpro-tui/internal/pdf/layout.go`.
