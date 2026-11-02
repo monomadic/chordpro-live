@@ -1430,9 +1430,10 @@ usage: chordpro-live                      open the library of the current folder
        --store lib.toml                   keep ratings and tags in another sidecar
        --floor 10                         let body text go down to 10 pt before
                                           the page compacts or scrolls
-       --config my.toml                   lay my.toml's [page] keys over the
-                                          defaults (else $CPL_CONFIG, else
-                                          config.toml in Application Support)
+       --config my.toml                   lay my.toml's [page] and [library]
+                                          keys over the defaults (else
+                                          $CPL_CONFIG, else config.toml in
+                                          Application Support)
        chordpro-live print <song.cho>     print the parsed lyrics
        chordpro-live render <song.cho|sample> --out page.png [--size 980x720]
            [--scale 1|2] [--dark] [--scroll P | --page N] [--tabs show|fold]
@@ -1442,10 +1443,10 @@ usage: chordpro-live                      open the library of the current folder
                                           compare cpl-song's parse with the
                                           reference chordpro's, construct by
                                           construct and file by file
-In the viewer: f fullscreen, ⌘F or / search, ⌘Q quits, i polarity, v scroll or paged, t fold or show tablature,
+In the viewer: f fullscreen, / o or ⌘F search, ⌘Q quits, i polarity, v scroll or paged, t fold or show tablature,
 [ ] transpose down or up a semitone, 0 back to the chords as written,
 n / p or ← → next and previous song, ↑ ↓ / Space / Page Up / Page Down / Home / End scroll or turn
-pages, q or Escape closes.";
+pages, q or Escape quits.";
 
 /// Each argument is a song file, or a folder whose ChordPro files are taken
 /// in name order. A folder with no songs is an error, not an empty setlist.

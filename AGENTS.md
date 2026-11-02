@@ -6,139 +6,175 @@ manuscript page; when a song cannot fit at a readable size the app compacts in
 a fixed order and then scrolls or pages, never squeezes. Lyrics outrank chords.
 It is not an editor and never writes a `.cho` file.
 
+## Where things are written down
+
+| File | Holds |
+|---|---|
+| [PROPOSAL.md](PROPOSAL.md) | Design decisions, ranked unknowns, phases. The source of truth: read the relevant section before structural work, do not re-litigate a settled decision without the user, and change it in the same commit as any decision. |
+| [TASKS.md](TASKS.md) | Open work only, by epic. |
+| [HISTORY.md](HISTORY.md) | Shipped work, one dated entry per finished epic or task. |
+| `docs/architecture/` | One specification per subsystem: [song](docs/architecture/chordpro.md), [layout](docs/architecture/layout.md), [app](docs/architecture/app.md), [render](docs/architecture/render.md), [library](docs/architecture/library.md). Specs, not history; add a note as each subsystem lands. |
+| [assets/icons/README.md](assets/icons/README.md) | The app icon and its alternatives. |
+
 ## Status
 
-An initial macOS viewer is built. `cpl-song` parses ChordPro 6 to the
-reference's parse in all but one probed construct, grids, annotations,
-selectors, substitution and multi-song files included
-([what it covers](docs/architecture/chordpro.md));
-`cpl-layout` measures each song at the floor and larger point sizes into em-unit
-runs and fits whole sections into columns; `cpl-app` composes the page
-from those runs without measuring again; `cpl-render` composites CoreText
-rasters on a worker into a retained page slab that the shader places by a
-view uniform, so a scroll step uploads only the status strip;
-`src/main.rs` hosts the chromeless winit window and owns the page worker,
-which also holds the `Setlist`: several songs or a folder open as an ordered
-setlist, the next song's page is composed while the worker is idle, and a
-song change shows the old page until the new one is complete. Tablature
-draws as small, soft staves that wrap into systems at bar lines; ladder
-step 5 folds it, and `t` pins it shown or folded.
-The header carries metadata pills and a chord diagram for every chord used.
-An overflowing song scrolls or, with `v`, turns pages.
-`/` or `o` opens search over the library, which is also the home screen
-when `chordpro-live` is launched with no arguments: the folders named on
-the command line (when none is named, `[library] folders` from the config,
-else the current folder, else `~/Music/ChordPro` for a Finder launch,
-which starts in `/`), scanned on the worker (and rescanned while search is open) and
-fingerprinted by content. Ratings, tags and when each song was last shown
-are kept in the `library.toml` sidecar, and opening a row makes the search
-results the setlist ([library](docs/architecture/library.md)). Saved
-setlists, full ChordPro 6 conformance, text atlas, and iOS host are still
-planned. Do not describe these as implemented.
+A macOS viewer is built; the iOS host is not.
 
-[PROPOSAL.md](PROPOSAL.md) remains the source of truth for design decisions,
-ranked unknowns, and phases. Read the relevant section before structural
-work; do not re-litigate a settled decision without the user. When a
-decision changes, change the proposal in the same commit.
+- **`cpl-song`** parses ChordPro 6 to the reference's parse in all but one
+  probed construct: grids, annotations, selectors, `%{}` substitution and
+  multi-song files included ([coverage](docs/architecture/chordpro.md)).
+  Live transpose follows chordpro-tui's spelling rules.
+- **`cpl-layout`** measures each song at the floor and larger point sizes
+  into em-unit runs, fits whole sections into columns, and walks the
+  reduction ladder.
+- **`cpl-app`** composes the page from those runs without measuring again,
+  and owns the library, search, the `library.toml` sidecar and the
+  `Setlist`.
+- **`cpl-render`** composites CoreText rasters on a worker into a retained
+  page slab that the shader places by a view uniform, so a scroll step
+  uploads only the status strip.
+- **`src/main.rs`** hosts the chromeless winit window and owns the page
+  worker. Several songs or a folder open as an ordered setlist; the next
+  song is composed while the worker is idle, and a song change shows the
+  old page until the new one is complete.
+
+On the page: a header with metadata pills and a chord diagram for every
+chord used; tablature as small, soft staves that wrap into systems at bar
+lines (ladder step 5 folds it, `t` pins it); an overflowing song scrolls or,
+with `v`, turns pages.
+
+Search (`/`, `o` or ⌘F) covers the library, which is also the home screen
+on a bare launch: the folders named on the command line, else the config's
+`[library] folders`, else the current folder, else `~/Music/ChordPro` for a
+Finder launch (which starts in `/`). The library is scanned on the worker,
+rescanned while search is open, and fingerprinted by content. Ratings, tags
+and when each song was last shown live in the sidecar; opening a row makes
+the results the setlist ([library](docs/architecture/library.md)).
+
+**Still planned — do not describe as implemented:** saved setlists, full
+ChordPro 6 conformance (see TASKS.md), a text atlas, the iOS host, and
+Finder document opening for the `.app`.
+
 ## Working from the task list
 
 **[TASKS.md](TASKS.md) is where work comes from.** When you need something
 to do, take the first unchecked task in the highest open epic there; do not
-invent work the list does not name without the user. A task is checked off
-only after the real window check and the automated checks it names have
-passed. **When every task in an epic is checked, remove the epic from
-TASKS.md and record it in [HISTORY.md](HISTORY.md)** as one dated entry that
-names the epic, what shipped, what was checked, and anything left
-unverified. HISTORY.md is the record of shipped work; TASKS.md holds only
-open work, so a finished epic never lingers there. New work discovered while
-doing a task goes into TASKS.md under the right epic, not into the commit
-message alone.
+invent work the list does not name without the user.
 
-Architecture notes: [song](docs/architecture/chordpro.md),
-[layout](docs/architecture/layout.md), [app](docs/architecture/app.md),
-[render](docs/architecture/render.md),
-[library](docs/architecture/library.md).
-Add a `docs/architecture/<subsystem>.md` note as each subsystem lands,
-and keep these notes as specifications rather than history.
+- A task is checked off only after the real window check and the automated
+  checks it names have passed.
+- **When every task in an epic is checked, remove the epic from TASKS.md and
+  record it in [HISTORY.md](HISTORY.md)** as one dated entry naming the
+  epic, what shipped, what was checked, and anything left unverified.
+- New work found while doing a task goes into TASKS.md under the right
+  epic, not into the commit message alone.
 
-Build with `cargo build --workspace`. Check with `cargo test --workspace`
-and `cargo clippy --workspace --all-targets -- -D warnings`. Run the
-viewer with `cargo run` (the binary is `chordpro-live`): with no arguments
-it opens the library of the current folder (or the config's `[library]
-folders`; the `.app` launched from Finder opens `~/Music/ChordPro`, made on
-first launch); `cargo run -- song.cho` opens a
-song, several songs open the first with the rest queued after it as a
-setlist, and a folder opens its songs as one (`cargo run -- testdata`).
-`cargo run -- page` (or `page-dark`) opens the sample page,
-`page-inline` inline chords and `page-scroll` overflow. Options follow
-the songs: `--dark` for white on black,
-`--size 980x720` for a repeatable logical-point window
-size, `--song 2` to open on a given song, `--scroll 120` to open scrolled
-that many points, `--paged` or `--page 2` to open in paged mode, `--fullscreen` to open in
-fake fullscreen as `f` toggles it, and
-`--tabs show` or `--tabs fold` to pin tablature (`testdata/greensleeves.cho`
-has long tabs), `--transpose 2` (or `-3`) to open the song transposed as
-`]` or `[` would, and `--search ris` to open in search with a query typed
-(add `--open 2` to open the second result as Enter would, and `--next 1`
-to then step through the results as `n` does);
-`--store tests/fixtures/library.toml` (or `$CPL_LIBRARY_STORE`) points the
-sidecar at a file other than the one in Application Support, which tests
-and captures must do. `--floor 10` sets the readability floor in points,
-and `--config my.toml` (or `$CPL_CONFIG`, else `config.toml` in
-Application Support) lays a user's `[page]` keys over `config/default.toml`;
-tests and captures pass `--config tests/fixtures/config.toml` (or set
-`$CPL_CONFIG` to it) so they never pick up the user's file.
-`chordpro-live --help` lists the forms. Press `f` for fake fullscreen (simple
-fullscreen over the desktop, as switchblade's `fast_fullscreen`), ⌘Q to
-quit, ⌘F to search, `i` for polarity, `[` `]` to transpose a semitone down or up and `0`
-to reset, `v` for scroll or
-paged, `t` to fold or show tablature, `/` or `o` to search (where
-digits rate, `#` tags, Tab sorts, Enter opens and Escape returns; the
-query edits as a Mac text field: ← →, ⌥ and ⌘ arrows, ⌥⌫, ⌘⌫, Ctrl-A E
-B F W U K D N P, and ⌘V ⌘C ⌘X), `n`/`p` (or ← →) for the next and previous song, and `q` or Escape
-to close. Up/Down, Space, Page Up/Down, Home, and End scroll or turn pages. Capture
-the window with
-`screencapture -x -l "$(swift scripts/window-id.swift | head -1)" shot.png`;
-`CPL_TIMING=1` logs worker answers, accepted pages and presents to stderr,
-stamped in milliseconds from process start; `scripts/launch-check.sh`
-launches the viewer repeatedly and fails if a page was never presented.
-`cargo run -- render song.cho --out page.png --scale 1 --size 420x720`
-writes exactly what the window would show, headless; use it for 1x checks.
-`cargo test --test visual` compares eighteen such renders with
-`tests/goldens/`; after an intended visual change, inspect `target/visual/`
-and re-bless with `CPL_BLESS=1 cargo test --test visual`.
-`packaging/build-app.sh` builds `target/release/bundle/ChordProLive.app`
-(release binary, `Info.plist` from `packaging/Info.plist.in` and
-`packaging/version.sh`, `assets/icons/icon-01.icns` as its icon, ad-hoc
-signed and registered with LaunchServices); `--install` copies it to
-/Applications and `--open` launches it. The repo folder carries a
-`com.apple.macl` privacy label, so macOS may draw the bundle in `target/`
-with a blank icon; a copy outside the repo shows the real one.
-`cargo run -- print song.cho` prints the parsed lyrics. `cargo run -- conform`
-compares `cpl-song`'s parse with the reference `chordpro` (installed with
-`cpan App::Music::ChordPro`, found in `~/perl5` or via `$CPL_CHORDPRO`),
-construct by construct and file by file; after a parser change, regenerate
-the song note's table with `cargo run -- conform --table
-docs/architecture/chordpro.md` (`tests/conform.rs` fails while it is stale).
+## Build and check
+
+```bash
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+- **Visual goldens:** `cargo test --test visual` compares eighteen headless
+  renders with `tests/goldens/`. After an intended visual change, inspect
+  `target/visual/` and re-bless with `CPL_BLESS=1 cargo test --test visual`.
+- **Conformance:** `cargo run -- conform` compares `cpl-song`'s parse with
+  the reference `chordpro` (`cpan App::Music::ChordPro`, found in `~/perl5`
+  or via `$CPL_CHORDPRO`), construct by construct and file by file. After a
+  parser change, regenerate the song note's table with
+  `cargo run -- conform --table docs/architecture/chordpro.md`;
+  `tests/conform.rs` fails while it is stale. Never hand-edit that table.
+- **Launch:** `scripts/launch-check.sh` launches the viewer repeatedly and
+  fails if a page was never presented. `CPL_TIMING=1` logs worker answers,
+  accepted pages and presents to stderr, in milliseconds from process start.
+- **Isolation:** tests and captures must pass
+  `--store tests/fixtures/library.toml` (or set `$CPL_LIBRARY_STORE`) and
+  `--config tests/fixtures/config.toml` (or `$CPL_CONFIG`), so they never
+  touch the user's sidecar or config in Application Support.
+
+## Running the viewer
+
+The binary is `chordpro-live`; `chordpro-live --help` lists every form.
+
+| Command | Opens |
+|---|---|
+| `cargo run` | The library: the current folder, or the config's `[library] folders` |
+| `cargo run -- song.cho` | One song |
+| `cargo run -- a.cho b.cho` | The first song, the rest queued after it as a setlist |
+| `cargo run -- testdata` | A folder's songs as a setlist |
+| `cargo run -- page` | The sample page (`page-dark`, `page-inline` inline chords, `page-scroll` overflow) |
+| `cargo run -- render song.cho --out page.png --scale 1 --size 420x720` | Nothing: writes exactly what the window would show, headless; use it for 1x checks |
+| `cargo run -- print song.cho` | Nothing: prints the parsed lyrics |
+
+Options follow the songs:
+
+| Option | Effect |
+|---|---|
+| `--dark` | White on black |
+| `--size 980x720` | A repeatable window size in logical points |
+| `--song 2` | Open on the second song of the setlist |
+| `--scroll 120` | Open scrolled that many points |
+| `--paged`, `--page 2` | Open in paged mode, optionally on a page |
+| `--fullscreen` | Open in fake fullscreen, as `f` toggles it |
+| `--tabs show\|fold` | Pin tablature (`testdata/greensleeves.cho` has long tabs) |
+| `--transpose 2` (or `-3`) | Open transposed, as `]` or `[` would |
+| `--search ris [--open 2 [--next 1]]` | Open in search with a query typed; open the second result as Enter would; step through the results as `n` does |
+| `--store lib.toml` | Use another sidecar (or `$CPL_LIBRARY_STORE`) |
+| `--floor 10` | Set the readability floor in points |
+| `--config my.toml` | Lay a `[page]`/`[library]` table over `config/default.toml` (else `$CPL_CONFIG`, else `config.toml` in Application Support) |
+
+Keys in the viewer:
+
+| Key | Action |
+|---|---|
+| `f` | Fake fullscreen (simple fullscreen over the desktop, as switchblade's `fast_fullscreen`) |
+| `i` | Polarity |
+| `[` `]`, `0` | Transpose a semitone down or up; reset |
+| `v` | Scroll or paged |
+| `t` | Fold or show tablature |
+| `n` `p`, ← → | Next and previous song |
+| ↑ ↓, Space, Page Up/Down, Home, End | Scroll or turn pages |
+| `/`, `o`, ⌘F | Search: digits rate, `#` tags, Tab sorts, Enter opens, Escape returns. The query edits as a Mac text field (← →, ⌥ and ⌘ arrows, ⌥⌫, ⌘⌫, Ctrl-A E B F W U K D N P, ⌘V ⌘C ⌘X) |
+| `q`, Escape, ⌘Q | Quit |
+
+**Window captures.** Verify visual changes with a capture reached through
+launch flags, never by injecting global keystrokes:
+
+```bash
+screencapture -x -l "$(swift scripts/window-id.swift | head -1)" shot.png
+```
+
+**App bundle.** `packaging/build-app.sh` builds
+`target/release/bundle/ChordProLive.app`: the release binary, `Info.plist`
+from `packaging/Info.plist.in` and `packaging/version.sh`,
+`assets/icons/icon-01.icns` as its icon, ad-hoc signed and registered with
+LaunchServices. `--install` copies it to /Applications and `--open`
+launches it; launched from Finder it opens `~/Music/ChordPro`, made on first
+launch. The repo folder carries a `com.apple.macl` privacy label, so macOS
+may draw the bundle in `target/` with a blank icon; a copy outside the repo
+shows the real one.
 
 ## Design source
 
-Every surface is mocked in Figma — [chordpro-live — Screens](https://www.figma.com/design/0ovWyKEx7qyWh38a08Wl82)
+Every surface is mocked in Figma —
+[chordpro-live — Screens](https://www.figma.com/design/0ovWyKEx7qyWh38a08Wl82)
 — and PROPOSAL.md's "Design source" section says how the file maps to the
-code (Polarity variables, `Page/*` text styles, segment auto-layout). Keep the
-mock and the em table in step: a layout constant that changes in one changes
-in the other.
+code (Polarity variables, `Page/*` text styles, segment auto-layout). Keep
+the mock and the em table in `config/default.toml` in step: a layout
+constant that changes in one changes in the other.
 
 ## Sibling projects
 
-Three local checkouts this project borrows from; their notes document the
+Local checkouts this project borrows from; their notes document the
 rationale behind what is reused here:
 
 | Project | Path | Borrowed |
 |---|---|---|
-| chordpro-tui (Go) | `~/src/chordpro-tui` | parse → Song → render pipeline, fit search, reduction ladder, scroll modes, finder, the PDF exporter's em-unit layout |
+| chordpro-tui (Go) | `~/src/chordpro-tui` | parse → Song → render pipeline, fit search, reduction ladder, scroll modes, finder, transpose, the PDF exporter's em-unit layout |
 | switchblade (Rust) | `~/src/switchblade` | `App` trait boundary, `schedule.rs`, `Waker`, CoreText text atlas, span highlights, config/theme hot reload, `.app` packaging, the iOS proposal |
-| abner (Rust) | `~/src/abner` | slim crate layout, complete-default TOML config, SDF quad pipeline, `--view` flags, chromeless window shims |
+| abner (Rust) | `~/src/abner` | slim crate layout, complete-default TOML config, SDF quad pipeline, launch flags, chromeless window shims |
 | chordpro-library | `~/src/chordpro-library` | the local ChordPro 6 working specs |
 
 chordpro-tui is the original ChordPro app this viewer grows out of: a Go
@@ -154,38 +190,36 @@ the commit message.
 
 ## Product and architecture rules
 
-- **ChordPro 6 in full is the target.** The current parser is not conformant.
-  Extend it against the spec (chordpro.org), then measure it against the
-  reference implementation with a `conform` subcommand. Formatting
-  directives are accepted and ignored by design; everything else must be
-  honoured. Generate the conformance note's status table; never hand-edit it.
+- **ChordPro 6 in full is the target.** Extend the parser against the spec
+  (chordpro.org) and measure it with `conform`. Formatting directives are
+  accepted and ignored by design; everything else must be honoured.
 - **The page is always readable.** Body text never drops below the
-  readability floor. After ladder steps 1–9 fail, the window scrolls
-  the full song at that size. Lines too wide for the window wrap at word
-  boundaries; only an unbreakable run reaches the width-needed state.
-  Step 4 drops the chord diagrams, step 8 the metadata pills and step 9,
-  the last, the title.
+  readability floor. The ladder (`LADDER` in `cpl-layout/src/ladder.rs`)
+  compacts least destructive first: 1 tight sections, 2 side labels,
+  4 chord diagrams, 5 fold tablature, 6 collapse repeats, 7 inline chords,
+  8 metadata pills, 9 title (step 3 was removed; the numbers stand). When
+  every step fails, the window scrolls the full song at the floor. Lines
+  too wide for the window wrap at word boundaries; only an unbreakable run
+  reaches the width-needed state.
 - **Nothing surprising happens during a song.** No reflow, no atlas blink, no
   I/O on the frame path, no screen sleep. Page measurement and CoreText
   rasterisation run on a worker, which preloads the next song while idle;
   the page is retained as a slab and a scroll step uploads only the status
   strip. The render thread must never touch the filesystem.
 - **Sidecar metadata only.** Tags, ratings, timings and setlists live in the
-  planned library store keyed by content fingerprint. The app never rewrites
-  a song file.
+  library sidecar keyed by content fingerprint. The app never rewrites a
+  song file.
 - **No winit, wgpu or UIKit types in `cpl-app`.** That boundary is what makes
   the iOS host a second caller rather than a port.
-- **Xcode-minimal.** macOS needs only the Command Line Tools. Bundle scripts
-  in `packaging/` and `ios/` are planned. No `.xcodeproj`, ever.
+- **Xcode-minimal.** macOS needs only the Command Line Tools; bundles are
+  built by scripts in `packaging/` (and `ios/`, planned). No `.xcodeproj`,
+  ever.
 - **Black and white only**, as a polarity toggle. No colour themes.
 - Keep dependencies lean; ask before adding one.
 
 ## Conventions
 
-- Rust edition 2024, rustfmt defaults, `cargo clippy --workspace --all-targets
-  -- -D warnings` clean.
-- Feel and layout constants live in the config file, never hardcoded.
-- Verify visual changes with a window capture reached through launch
-  flags, never by injecting global keystrokes.
+- Rust edition 2024, rustfmt defaults, clippy clean with `-D warnings`.
+- Feel and layout constants live in `config/default.toml`, never hardcoded.
 - Commit messages say what changed for the user, then why; cite the sibling
   file when something was ported.

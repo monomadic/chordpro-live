@@ -243,9 +243,10 @@ impl Config {
         Self::from_values(Self::values(source)?, Self::library_values(source)?)
     }
 
-    /// The bundled defaults with a user's `[page]` table laid over them. The
-    /// user's file names only the keys it changes; a key the defaults do not
-    /// have is an error, so a typo never passes silently. Raising
+    /// The bundled defaults with a user's `[page]` and `[library]` tables
+    /// laid over them. The user's file names only the keys it changes; a
+    /// key the defaults do not have is an error, so a typo never passes
+    /// silently. Raising
     /// `body_size` (the readability floor) above the default largest size
     /// raises that too, unless the file sets `max_body_size` itself.
     pub fn with_overrides(user: &str) -> Result<Self, String> {

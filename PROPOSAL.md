@@ -1,12 +1,15 @@
 # chordpro-live — technical proposal
 
-*Status: implementation started, 2026-10-20. A partial parser and a
-multi-column macOS viewer exist; all nine reduction steps are built, then
-scrolling or paging. Tablature draws as small, soft monospaced staves that
-wrap into systems at bar lines (see the ladder's step 5), and the reader can
-pin it shown or folded. The library, conformance work, and iOS host remain
-proposed. Where a decision is settled it says so; where
-it is an unknown it says what will settle it.*
+*Status: implementation started 2026-10-20. A macOS viewer is built: a
+ChordPro 6 parser measured against the reference implementation, the
+reduction ladder's eight steps (1, 2, 4–9) and then scrolling or paging,
+live transpose, tablature as small, soft staves the reader can pin shown or
+folded, and a library with search, ratings and tags in a sidecar, whose
+results open as the setlist. Saved setlists, the text atlas and spans, sync
+mode, the chord viewer, keep-awake, config hot reload, Finder document
+opening and the iOS host remain proposed; items below marked *(planned)*
+are not built. Where a decision is settled it says so; where it is an
+unknown it says what will settle it. HISTORY.md records what shipped.*
 
 ## The pitch in one paragraph
 
@@ -58,10 +61,11 @@ chordpro-live/
   crates/cpl-layout          measurement, fit search, reduction ladder, Page    (pure Rust, Measure trait)
   crates/cpl-app             implements App: views, library, tags, input map   (headless, no winit/wgpu)
   crates/cpl-render          wgpu renderer: quads + text atlas, TextRaster      (knows wgpu, not winit)
-  crates/cpl-ios             iOS host (see "iOS")
-  packaging/                 build-app.sh, Info.plist.in, version.sh, check-icon.swift
-  ios/                       build-ios.sh, Info.plist.in, entitlements
-  testdata/                  songs of every length, golden renders
+  crates/cpl-ios             iOS host (see "iOS")                               (planned)
+  packaging/                 build-app.sh, Info.plist.in, version.sh; check-icon.swift (planned)
+  ios/                       build-ios.sh, Info.plist.in, entitlements          (planned)
+  testdata/                  songs of several lengths and features
+  tests/                     page bounds, conformance, golden renders (tests/goldens/)
   docs/architecture/         one note per subsystem, written as each lands
 ```
 
@@ -153,15 +157,15 @@ the OS, through a one-method `Measure` trait. Font advances scale nearly
 linearly with size under CoreText, but are not exactly linear for the system font, whose tracking and
 optical size change with point size (about 5% narrower at 34 pt than twice
 17 pt). Candidate measurement at the actual drawn size prevents that difference
-from accepting a page that overflows. The initial implementation does this
-synchronously on song load; worker preparation remains future work.
+from accepting a page that overflows. Measurement and composition run on
+the page worker, which also prepares the next song.
 
 **The fit search is then arithmetic.** **Settled (2026-11-01): the ladder
 is weighed against size.** Every ladder candidate that fits at the
 readability floor is drawn at the largest measured size that keeps it, and
 scored: that size's worth less the price of each step taken, in points of
-body size (`cost_*` in the config; dropping the title costs the most after
-inline chords). A point below the comfortable size (`comfort_size`, 17 pt)
+body size (`cost_*` in the config; dropping the title costs the most, then the
+pills, then inline chords). A point below the comfortable size (`comfort_size`, 17 pt)
 is worth `size_loss_below`, a point above it `size_gain_above`, so text
 shrinks some way toward the floor before the page gives anything up, and
 grows only while that is cheap. The best score wins, the less reduced on a
@@ -185,7 +189,8 @@ with presets for viewing distance:
 | `far` | 22 pt | monitor across a room |
 
 The floor is a tunable, not a constant, and the numbers above are to be
-measured on a real stand and not believed. **Settled (2026-11-01): the
+measured on a real stand and not believed; the presets are not built, and
+the config has one floor, `body_size`. **Settled (2026-11-01): the
 reader sets it.** `body_size` in a user `config.toml` (Application
 Support, `$CPL_CONFIG` or `--config`) or `--floor PT` sets the floor in
 points, 6 to 72; a reader at a laptop may take it to 9 or 10 pt. There is
@@ -239,7 +244,8 @@ collapsed, pins the step. Step 10 is the behaviour the brief asks for in
 
 **Lyrics first** is enforced by the ladder's order and by one more rule inside
 a line: when a lyric run and a chord run compete for width, the chord row
-shrinks to its own floor (0.8 of body) before the lyric does, and chord
+shrinks to its own floor before the lyric does *(planned; today chords are
+a fixed `chord_size` of body)*, and chord
 overhang pushes later lyrics right rather than compressing them.
 Chord-only progressions, such as an intro, use one compact row at the normal
 chord size; they do not reserve an empty lyric row or shrink at the inline
@@ -251,17 +257,20 @@ the chosen ladder level, column count and whether the floor was met. `Page` is
 pure data. The scroll views window over a `Page` laid out as one tall column
 with no height constraint, which is chordpro-tui's `RenderLong`.
 
-**Cost control.** Layout is never computed on the frame path from scratch.
-`cpl-app` holds a `LayoutCache` keyed by `(song fingerprint, transpose,
-viewport in points, options)`, computes on change, and pre-computes the next
-and previous song in the queue on a worker. The measurement step calls CoreText
-synchronously, so it too runs on the worker; the frame path only reads a
-finished `Page`.
+**Cost control.** Layout is never computed on the frame path. The page
+worker owns `cpl_app::Setlist`, which keeps each song measured (per song
+transpose included) and composes the next song while idle; measurement
+calls CoreText, so it too runs on the worker. The frame path only places a
+finished, retained page.
 
 ### Text and vector rendering (`cpl-render`)
 
 The brief asks for a manuscript page: black and white, crisp, "perfectly
 aliased beautiful fonts and vector rendering". That sets the rendering rules.
+
+*Today pages are CoreText rasters composited on the worker into a retained
+page slab ([render](docs/architecture/render.md)); the atlas and spans below
+are planned for the karaoke work.*
 
 **Text is rasterised by CoreText, whole strings, into an R8 atlas.** This is
 switchblade's `text_shim.m` and `TextRaster` trait, brought across unchanged
@@ -315,11 +324,13 @@ switchblade does so a panel can sit over the page's own labels.
 ### The app (`cpl-app`)
 
 Four surfaces, one modal ladder, every key remappable through the same
-`[keys]` table switchblade uses, with groups per surface.
+`[keys]` table switchblade uses, with groups per surface *(planned; keys
+are fixed in `src/main.rs` today)*.
 
-**Page** — the song. Fit mode by default; `v` cycles fit → scroll → sync →
-paged. Transpose `[`/`]`, reset `0`, polarity `i`, fold tabs `T`, hide header
-`h`. The status strip (one line, bottom, `ink_faint`) shows mode, key with
+**Page** — the song. Fit mode by default; an overflowing song scrolls,
+and `v` switches it between scroll and paged (sync mode is planned).
+Transpose `[`/`]`, reset `0`, polarity `i`, fold or show tablature `t`,
+fake fullscreen `f`. The status strip (one line, bottom, `ink_faint`) shows mode, key with
 transpose offset, ladder level when any step fired, the section containing
 the top visible line in scroll mode, and a `MORE ↓` flag when
 a scrolling mode has content below. In scroll mode `+`/`-` nudge the
@@ -337,7 +348,7 @@ newest. Tab cycles the sort. Enter opens the selected row with every row,
 in order, as the setlist, so `n`/`p` on the page step through what was
 filtered; this replaces stepping the folder from inside search.
 
-**Chords** — `c`. Fingering diagrams for every chord in the current song,
+**Chords** — `c` *(planned; the header's diagrams cover the song today)*. Fingering diagrams for every chord in the current song,
 following the live transpose, `{define}` winning over the database, the
 `{tuning}` shown. Diagrams are quads (above), so they are crisp at any size
 and need no image assets.
@@ -351,7 +362,7 @@ decision below.
 reason someone will or will not use the app on stage:
 
 - The screen never sleeps while a page is up (switchblade's `power.rs`
-  activity token on macOS; `isIdleTimerDisabled` on iOS).
+  activity token on macOS; `isIdleTimerDisabled` on iOS) *(planned)*.
 - Bluetooth page turners (AirTurn and the like) are HID keyboards sending
   Page Up/Down or arrows. They work through `[keys]` with no pedal code.
 - Fullscreen is chromeless: titlebar glass, `FullSizeContentView`,
@@ -442,8 +453,8 @@ Settled, and it is switchblade's and abner's shipped recipe: **no Xcode
 project, no Xcode.app dependency.**
 
 - `cargo build --release` produces the binary. AppKit is reached through the
-  `objc2-app-kit` crates (window chrome, keep-awake, Open With); the two or
-  three Objective-C shims (`text_shim.m`, `open_shim.m`) compile through the
+  `objc2-app-kit` crates (window chrome, keep-awake, Open With); the
+  Objective-C shims (`text_shim.m`; `open_shim.m` planned) compile through the
   `cc` crate, which needs only the Command Line Tools' `clang`, which cargo
   needs to link on macOS anyway.
 - `packaging/build-app.sh` assembles `ChordProLive.app`: the binary,
@@ -451,13 +462,14 @@ project, no Xcode.app dependency.**
   committed, complete `.icns` in `assets/icons/` (now `icon-01.icns`; the
   script names it, so swapping the icon is one line), ad-hoc
   `codesign` (ships with macOS), `lsregister -f` so an in-place reinstall is
-  seen. `check-icon.swift` runs under `swift` from the Command Line Tools and
+  seen. `check-icon.swift` *(planned)* runs under `swift` from the Command Line Tools and
   renders what the OS will composite before a build; abner's notes on the
   macOS 26 icon plate apply.
 - The version is derived, never written: `packaging/version.sh` computes
-  `major.minor.<commit count>` for both `build.rs` and the plist, so binary
-  and bundle cannot disagree.
-- `Info.plist.in` declares `CFBundleDocumentTypes` for `.cho .chopro
+  `major.minor.<commit count>` for the plist; baking the same value into
+  the binary through `build.rs`, so binary and bundle cannot disagree, is
+  planned.
+- *(Planned.)* `Info.plist.in` declares `CFBundleDocumentTypes` for `.cho .chopro
   .chordpro .crd .pro .cp`, and `open_shim.m` grafts `application:openURLs:`
   onto winit's delegate, because LaunchServices delivers opened files as an
   Apple Event, never argv, and winit 0.30 panics if its delegate is replaced.
@@ -533,7 +545,7 @@ measurement that settles it.
    iPad mini at `stand`, and at which ladder level? If most songs land at
    step 9 or 10 the premise weakens and the paged mode becomes primary.
    *Measurement:* a headless `chordpro-live fit-report <folder> --device ipad-mini`
-   subcommand built in Phase 1, before any window exists. chordpro-pdf's
+   subcommand *(planned; not built)*. chordpro-pdf's
    device presets (logical point sizes) are the device table.
 4. **Atlas capacity at retina body sizes.** A whole song at 17 pt on a 2x
    iPad Pro is a few hundred strings of up to ~1,400 device px; a 2048² R8
@@ -559,15 +571,15 @@ measurement that settles it.
 9. **Delegated environments and images.** `abc` and `ly` blocks are rendered
    by the reference implementation through external programs (abcm2ps,
    LilyPond); an `svg` block needs a vector rasteriser. None of that belongs
-   in a stage viewer's frame path. *Decision to make in Phase 1:* either
+   in a stage viewer's frame path. Today the three are parsed, kept
+   verbatim and left off the page. *Decision still to make:* either
    rasterise `svg` through `resvg` on the worker and show `abc`/`ly` as a
    labelled placeholder, or pre-render all three at library-scan time into
    the cache. Images follow the same worker-rendered, cached path.
-10. **Measurement on the worker versus the frame.** The layout cache assumes
-   a `Page` is always ready; the first open of a cold song is not. *Rule:*
-   the first frame draws the header and a `laying out…` line, never a
-   half-measured page, the same "pending state" shape as switchblade's
-   `MetaLookup::Pending`.
+10. **Measurement on the worker versus the frame.** The first open of a
+   cold song has no page ready. *Settled:* the previous page stays up until
+   the new one is complete, and the next song is prepared while the worker
+   is idle; no half-measured page or pending line is ever drawn.
 
 ## Settled decisions
 
@@ -588,7 +600,7 @@ These are not re-litigated without the user:
 - No Xcode project for either platform; scripts assemble both bundles.
 - Config is a complete default TOML overlaid by a user file with unknown keys
   rejected (abner), feel and layout constants live in it (switchblade), and
-  it hot-reloads on macOS.
+  it hot-reloads on macOS (hot reload planned).
 - Not in scope: editing, PDF export (cheap later because the layout is
   shared, as chordpro-pdf proved), setlists beyond folder order (likely wanted
   soon, not before the page is right), audio following, cloud sync beyond
@@ -605,12 +617,13 @@ These are not re-litigated without the user:
   It runs in CI over the spec's examples and the testdata, and on demand over
   the corpus. The conformance note's status table is generated from its
   output, so the table cannot drift from the code.
-- **Golden renders.** A headless `chordpro-live render song.cho --device ipad-mini
-  --out page.png` draws through the real wgpu pipeline to an offscreen
-  texture, chordpro-tui's `--print` for pixels. Goldens are diffed per
-  commit; a change to layout constants shows up as an image diff a human can
+- **Golden renders.** A headless `chordpro-live render song.cho --out
+  page.png --size 980x720 --scale 1` writes what the window would show: the
+  worker's real page path and the shader's placement rule, run on the CPU,
+  chordpro-tui's `--print` for pixels. `tests/visual.rs` diffs eighteen
+  goldens per commit; a change to layout constants shows up as an image diff a human can
   judge. This is also how the polarity spike is scored.
-- **Fit report.** `chordpro-live fit-report` over the corpus prints a table of songs ×
+- **Fit report** *(planned)*. `chordpro-live fit-report` over the corpus prints a table of songs ×
   devices with ladder level and body size. It is the product metric and runs
   in CI.
 - A launch flag reaches every surface for window captures (abner's rule),
@@ -628,6 +641,12 @@ These are not re-litigated without the user:
 
 Each phase ends with something that runs. Nothing is promised before Phase 0
 reports.
+
+*Where things stand (2026-11-03):* Phase 0's spikes were not run;
+implementation went to Phases 1–3. Phase 1 is done except `fit-report`.
+Phase 2 lacks sync mode, the atlas and spans, keep-awake, hot reload and
+`[keys]`. Phase 3 lacks the chord viewer, Open With and saved setlists.
+Phases 4 and 5 have not started.
 
 **Phase 0 — spikes, two weeks, in parallel.**
 Text polarity A/B (unknown 1). Fit-coverage prototype over the corpus using a
@@ -670,7 +689,6 @@ device-class overlay, lifecycle, TestFlight.
    switchblade's planning.
 4. **Scope creep toward an editor.** Tap timing, tags and ratings are all
    "just one write" away from touching the file. The sidecar rule holds.
-5. **Setlists.** The first rehearsal will ask for them. They are a list of
-   fingerprints in the sidecar and a next/prev order; they are kept out of
-   the phases above so the page is finished first, and they are the first
-   thing after Phase 3.
+5. **Setlists.** The first rehearsal will ask for them. Command-line,
+   folder and search-result setlists are built; saved setlists, a list of
+   fingerprints in the sidecar, are the open part (TASKS.md).

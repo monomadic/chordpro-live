@@ -8,19 +8,11 @@ automated checks. When every task in an epic is checked, the epic moves to
 
 ## P1 — dependable performance behavior
 
-- [ ] Check actual CoreText extents at 1x and 2x against fit bounds, including
-  title, byline, labels, and long chords. `tests/page_bounds.rs` now checks
-  real CoreText ink at 1x and 2x for the sample, both testdata songs at five
-  window sizes (roomy, stand, wrapping, narrow, scrolling, plus the scroll
-  end), and wrapped lines with long chords. Expanding it found and fixed
-  three defects: a title wider than the content box crossed the margin (it
-  now wraps by words); a page that needed side labels at the floor kept them
-  at a larger size where they no longer fit the margin (such a candidate is
-  now unfit); and measuring while another thread rasterised returned wrong
-  advances (the shim is now serialised; `tests/coretext_threads.rs`). 1x
-  pages were inspected through `chordpro-live render --scale 1`, which runs the worker's
-  real page path and the shader's placement rule. **Still to do: a real 1x
-  window**, which needs a 1x display.
+- [ ] Check actual CoreText extents at 1x and 2x against fit bounds in a
+  **real 1x window**, which needs a 1x display. Everything else is done
+  (HISTORY.md, 2026-10-21): `tests/page_bounds.rs` checks real CoreText ink
+  at 1x and 2x across the testdata songs and window sizes, and 1x pages
+  were inspected through `chordpro-live render --scale 1`.
 
 ## P2 — complete the proposed viewer
 
