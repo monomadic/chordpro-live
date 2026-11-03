@@ -19,6 +19,11 @@ session. A passing headless test does not stand in for a visual window check.
   workspace tests, clippy and the visual goldens, which did not change.
   The tabs drawn as lyrics outside a tab section, and
   `{start_of_tablature}`, are new tasks.
+- **Continuous lyrics under chords.** Chord widths no longer insert gaps
+  inside words or between lyric segments. Chords start at their syllable,
+  moving right only when needed to clear a preceding chord. Checked in a
+  real window with `Oh E[A]lise`, with wrapped/unwrapped regression coverage,
+  page-bound checks, and inspected visual goldens at 1x and 2x.
 
 ## 2026-11-01
 

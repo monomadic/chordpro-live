@@ -5,8 +5,9 @@ one set of metrics; the app calls it once per candidate size, from the body
 floor to the configured maximum. A `MeasuredSong` holds
 the header, each section's upper-cased label, and for every line two run
 lists with em offsets and widths, one with chords above the lyric and one
-with inline chords. A chord wider than its syllable pushes the next lyric past
-the chord and its gap, so every chord starts exactly over the syllable it names. It is the only stage
+with inline chords. Lyrics retain their natural spacing, including across mid-word chord changes.
+Chords start above their syllable; a crowded chord moves right only far enough
+to clear the previous chord and its gap, without moving any lyric. It is the only stage
 that calls the host's `Measure`. A run's `Role` fixes its face, weight and em
 size through `Metrics::style`, so measurement and drawing cannot disagree.
 Text is measured at the body size rather than an abstract 1 em, because

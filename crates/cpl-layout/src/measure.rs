@@ -190,19 +190,18 @@ impl MeasuredLine {
         } else {
             self.chord_gap
         };
-        // (segment, chord, token, last token of its segment), in order.
+        // (segment, chord, token), in order.
         let mut items = Vec::new();
         for (index, segment) in self.segments.iter().enumerate() {
             if segment.tokens.is_empty() {
                 if let Some(chord) = &segment.chord {
-                    items.push((index, Some(chord), None, true));
+                    items.push((index, Some(chord), None));
                 }
                 continue;
             }
-            let last = segment.tokens.len() - 1;
             for (position, token) in segment.tokens.iter().enumerate() {
                 let chord = segment.chord.as_ref().filter(|_| position == 0);
-                items.push((index, chord, Some(token), position == last));
+                items.push((index, chord, Some(token)));
             }
         }
         let mut rows = Vec::new();
@@ -224,9 +223,9 @@ impl MeasuredLine {
             let unit = &items[start..=end];
             if row.can_break {
                 let mut probe = row.clone();
-                let exceeds = unit.iter().any(|&(index, chord, token, last)| {
+                let exceeds = unit.iter().any(|&(index, chord, token)| {
                     let over = probe.exceeds(chord, token, max_width);
-                    probe.push(chord, token, index, last);
+                    probe.push(chord, token, index);
                     over
                 });
                 if exceeds {
@@ -234,8 +233,8 @@ impl MeasuredLine {
                     row = RowBuilder::new(indent, inline, gap);
                 }
             }
-            for &(index, chord, token, last) in unit {
-                row.push(chord, token, index, last);
+            for &(index, chord, token) in unit {
+                row.push(chord, token, index);
             }
             start = end + 1;
         }
@@ -244,9 +243,8 @@ impl MeasuredLine {
     }
 }
 
-/// Lays runs along one row with the chord-over-syllable rule: a chord wider
-/// than its syllable pushes the next lyric past the chord and its gap, which
-/// is exactly where the next chord can start.
+/// Flows lyrics independently of the chord row. Crowded chords move right
+/// to avoid each other without inserting whitespace into the lyrics.
 #[derive(Clone)]
 struct RowBuilder {
     inline: bool,
@@ -308,16 +306,8 @@ impl RowBuilder {
         extent > max + 1e-4
     }
 
-    /// Appends a chord and/or a token of `segment`. `segment_end` applies the
-    /// overhang rule once the whole segment is down, so the words of one
-    /// segment stay contiguous under a chord wider than its first word.
-    fn push(
-        &mut self,
-        chord: Option<&MeasuredChord>,
-        token: Option<&Token>,
-        segment: usize,
-        segment_end: bool,
-    ) {
+    /// Appends a chord and/or a token without reserving chord width in lyrics.
+    fn push(&mut self, chord: Option<&MeasuredChord>, token: Option<&Token>, segment: usize) {
         if self.inline {
             if let Some(chord) = chord {
                 let width = chord.inline_width;
@@ -362,9 +352,6 @@ impl RowBuilder {
             self.width = self.width.max(self.lyric_x);
             self.can_break = token.text.ends_with(char::is_whitespace);
             self.last_segment = Some(segment);
-        }
-        if !self.inline && segment_end {
-            self.lyric_x = self.lyric_x.max(self.chord_x);
         }
     }
 
@@ -796,33 +783,29 @@ mod tests {
     }
 
     #[test]
-    fn chord_overhang_pushes_the_next_lyric_right() {
-        // "Cmaj7" is 2.5 em over a 0.5 em syllable, so "bc" moves past it.
-        let (song, _) = measured("[Cmaj7]a[G]bc");
-        let runs = &song.sections[0].lines[0].above;
-        let next_lyric = runs.iter().find(|r| r.text == "bc").unwrap();
-        let next_chord = runs.iter().find(|r| r.text == "G").unwrap();
-        assert_eq!(next_chord.x, 3.0, "chords keep a gap between them");
-        assert_eq!(
-            next_lyric.x, next_chord.x,
-            "the chord stays over its syllable"
-        );
-    }
-
-    #[test]
-    fn every_chord_starts_at_its_own_lyric() {
-        let (song, _) = measured("[Cmaj7]I [G]love [F#m7b5]a [D]song [E]");
-        let runs = &song.sections[0].lines[0].above;
-        for pair in runs.windows(2) {
-            if pair[0].role == Role::Chord && pair[1].role == Role::Lyric {
-                assert_eq!(
-                    pair[0].x, pair[1].x,
-                    "{} over {:?}",
-                    pair[0].text, pair[1].text
-                );
+    fn chord_overhang_does_not_split_lyrics() {
+        let (song, _) = measured("Oh E[A]lise [Cmaj7]a[G]bc");
+        let line = &song.sections[0].lines[0];
+        for row in [
+            line.rows(false, f32::INFINITY, 0.0),
+            line.rows(false, 5.0, 0.5),
+        ] {
+            for row in row {
+                let lyrics: Vec<_> = row.runs.iter().filter(|r| r.role == Role::Lyric).collect();
+                for pair in lyrics.windows(2) {
+                    assert_eq!(pair[1].x, pair[0].x + pair[0].width);
+                }
+                let chords: Vec<_> = row.runs.iter().filter(|r| r.role == Role::Chord).collect();
+                for pair in chords.windows(2) {
+                    assert!(pair[1].x >= pair[0].x + pair[0].width + metrics().chord_gap);
+                }
             }
-            assert!(pair[1].x >= pair[0].x, "runs move left to right");
         }
+        let chord = line.above.iter().find(|r| r.text == "A").unwrap();
+        assert_eq!(chord.x, 2.0, "A sits directly above the l in Elise");
+        let lyric = line.above.iter().find(|r| r.text == "bc").unwrap();
+        let chord = line.above.iter().find(|r| r.text == "G").unwrap();
+        assert!(chord.x > lyric.x, "only crowded chord labels move right");
     }
 
     #[test]

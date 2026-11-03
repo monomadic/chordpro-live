@@ -151,8 +151,10 @@ gutters, insets, chord gap, label size, diagram geometry are constants in em
 (the exporter's `layout.go` table is the starting set). A song is measured
 **at the floor and at each whole-point candidate up to the configured maximum**
 into blocks of lines of runs, each
-run with an x offset and a width in em, chords pushed right of their syllable where
-they overhang exactly as the TUI does. Measurement is the only part that needs
+run with an x offset and a width in em. Lyrics flow continuously without
+reserving chord widths, even at mid-word chord changes. Chords start above
+their syllable and move right only to clear a preceding chord; lyrics never
+move to accommodate them. Measurement is the only part that needs
 the OS, through a one-method `Measure` trait. Font advances scale nearly
 linearly with size under CoreText, but are not exactly linear for the system font, whose tracking and
 optical size change with point size (about 5% narrower at 34 pt than twice
