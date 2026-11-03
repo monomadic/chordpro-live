@@ -602,9 +602,11 @@ These are not re-litigated without the user:
   rejected (abner), feel and layout constants live in it (switchblade), and
   it hot-reloads on macOS (hot reload planned).
 - Not in scope: editing, PDF export (cheap later because the layout is
-  shared, as chordpro-pdf proved), setlists beyond folder order (likely wanted
-  soon, not before the page is right), audio following, cloud sync beyond
+  shared, as chordpro-pdf proved), audio following, cloud sync beyond
   what iCloud Drive does to a folder, Android, Linux, Catalyst, SwiftUI.
+- **Setlists are in scope (2026-11-03).** Command-line, folder and
+  search-result setlists are built; saved, named setlists live in the
+  sidecar as ordered fingerprints (TASKS.md).
 
 ## Verification
 
