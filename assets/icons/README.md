@@ -9,10 +9,12 @@ point `ICON` in that script at another `.icns` here.
 - `split-pick.icns`: original blue/red split-pick concept (number 2 from the
   first coloured concept board).
 - `split-pick-enamel.icns`: photorealistic clear-enamel treatment.
+- `split-pick-translucent.icns`: retro marbled blue/red translucent pick
+  (number 4 from the retro concept board).
 - Matching `.png` files are 1024×1024 RGBA masters, with transparent space
   outside the rounded ivory tile. Presentation backgrounds and labels are removed.
 
-Both icons include 16, 32, 64, 128, 256, 512 and 1024 pixel representations.
+All three alternatives include 16, 32, 64, 128, 256, 512 and 1024 pixel representations.
 The original concept was extracted from a roughly 380-pixel tile and upscaled;
 its 1024-pixel representation does not contain additional source detail.
 The enamel source tile was roughly 1016 pixels wide. These exports preserve
@@ -31,3 +33,9 @@ successfully. Apple's `iconutil` rejected the intermediate iconsets on this host
 To regenerate and validate the containers from the masters, run
 `python3 assets/icons/build.py` with Pillow installed. The exporter includes
 standard and Retina PNG representations in the ICNS container.
+
+The translucent alternative was extracted from the roughly 413-pixel tile in
+`exec-048763fb-531e-4ddc-a7aa-2e4cb44a861d.png`, cropped at
+(85, 511)–(498, 919), with an 88-pixel rounded-corner mask. It uses the same
+824-pixel tile width on a transparent 1024-pixel canvas. Large sizes are
+upscaled from the concept board; this export adds no new source detail.

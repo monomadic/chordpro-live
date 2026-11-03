@@ -1,4 +1,4 @@
-"""Rebuild both ICNS containers from their RGBA PNG masters (requires Pillow)."""
+"""Rebuild the ICNS containers from their RGBA PNG masters (requires Pillow)."""
 from pathlib import Path
 import io
 import struct
@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent
 CHUNKS = ((b'icp4', 16), (b'icp5', 32), (b'icp6', 64),
           (b'ic07', 128), (b'ic08', 256), (b'ic09', 512), (b'ic10', 1024),
           (b'ic11', 32), (b'ic12', 64), (b'ic13', 256), (b'ic14', 512))
-for name in ('split-pick', 'split-pick-enamel'):
+for name in ('split-pick', 'split-pick-enamel', 'split-pick-translucent'):
     master = Image.open(ROOT / f'{name}.png')
     assert master.size == (1024, 1024) and master.mode == 'RGBA'
     chunks = []
