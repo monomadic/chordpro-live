@@ -131,6 +131,7 @@ Keys in the viewer:
 |---|---|
 | `f` | Fake fullscreen (simple fullscreen over the desktop, as switchblade's `fast_fullscreen`) |
 | `i` | Polarity |
+| `e` | Open the current file in `$EDITOR` (or `vi`) in Terminal; reopen from search after saving |
 | `[` `]`, `0` | Transpose a semitone down or up; reset |
 | `v` | Scroll or paged |
 | `t` | Fold or show tablature |

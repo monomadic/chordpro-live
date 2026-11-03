@@ -6,6 +6,14 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-11-03
 
+- **Open the source in an external editor.** `e` hands the current song to
+  `$EDITOR` (or `vi`) in macOS Terminal, following the TUI binding in
+  `chordpro-tui/internal/tui/model.go`. The viewer keeps running; built-in
+  samples have no file to open and search keeps `e` as text input. Saved
+  edits load when the song is reopened from search. Checked filename quoting
+  with shell metacharacters and ran a real Terminal handoff with a stand-in
+  editor recording the exact source path. Workspace build, tests (including
+  visual goldens), and strict Clippy passed.
 - **Real scraped tabs wrap like printed tab.** Checked the 16 tab
   sections of the user's iCloud tab library (`Music/Tablature/ChordPro`)
   at 980, 560 and 400 points wide. Fixed what they showed: a chord-name

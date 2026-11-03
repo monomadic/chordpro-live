@@ -21,7 +21,9 @@ away the least important elements in a fixed order, and when that is not enough
 it scrolls or pages. Lyrics outrank chords. A singer should be able to follow
 the words the way they follow a karaoke line. Around the page sit a library
 search with tags and ratings, and a chord viewer. It is not an editor and never
-writes a `.cho` file.
+writes a `.cho` file. Pressing `e` opens the current source file in `$EDITOR`
+(falling back to `vi`) in macOS Terminal. This is an external handoff; the
+page stays unchanged until the song is reopened through the library.
 
 It is the third sibling of three local projects and borrows from each:
 

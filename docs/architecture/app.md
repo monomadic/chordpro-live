@@ -137,3 +137,13 @@ strings, grid lines as thin filled shapes, a heavy nut (or the `Nfr` note
 for a shape above it), a dot per fretted string, a capsule for each barre,
 and finger numbers under the strings. Name, grid and dots are strong ink;
 the marks are soft.
+
+## External editor
+
+The macOS host handles `e` outside search by sending the displayed setlist
+ID and song index to the worker. It resolves that song's source path, ignores
+stale setlists and built-in samples, and launches `$EDITOR` (or `vi`) in
+Terminal on a separate thread. Editor arguments and quoting are interpreted
+by the user's shell; the absolute filename is separately shell-quoted. The
+window and page worker keep running. Reopen the song from search to load
+saved edits; this handoff does not automatically reload the active page.

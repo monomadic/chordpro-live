@@ -1,4 +1,5 @@
 mod conform;
+mod editor;
 mod json;
 
 use cpl_app::{
@@ -139,6 +140,11 @@ enum ToWorker {
     /// Open search over the library, with this query typed.
     OpenSearch(String),
     Search(SearchInput),
+    /// Open the file belonging to the displayed page in the external editor.
+    Edit {
+        setlist: u64,
+        song: usize,
+    },
     /// ⌘V, ⌘C and ⌘X in search: the worker reads or writes the clipboard,
     /// so the window thread never waits on it.
     Clipboard(Clipboard),
@@ -487,6 +493,21 @@ impl Worker {
             },
             composed_slab,
         )
+    }
+
+    fn edit(&self, setlist: u64, song: usize) {
+        if self.search.is_some() || setlist != self.setlist_id {
+            return;
+        }
+        let Some(Some(file)) = self.setlist_files.get(song) else {
+            return; // Built-in samples have no source file.
+        };
+        let path = file.path.clone();
+        std::thread::spawn(move || {
+            if let Err(error) = editor::open(&path) {
+                eprintln!("could not open {} in $EDITOR: {error}", path.display());
+            }
+        });
     }
 
     /// Transposes a song of the setlist the host is showing. Its page is
@@ -1249,6 +1270,12 @@ impl ApplicationHandler<PageReady> for Viewer {
                     self.request_page();
                 }
                 Key::Character(key) if key.eq_ignore_ascii_case("q") => event_loop.exit(),
+                Key::Character(key) if key.eq_ignore_ascii_case("e") => {
+                    let _ = self.requests.send(ToWorker::Edit {
+                        setlist: self.setlist,
+                        song: self.song,
+                    });
+                }
                 Key::Character(key) if key.eq_ignore_ascii_case("i") => {
                     self.polarity = if self.polarity == Polarity::Light {
                         Polarity::Dark
@@ -1414,6 +1441,7 @@ usage: chordpro-live                      open the library of the current folder
        chordpro-live <folder>             open every ChordPro file in a folder
        chordpro-live [page|page-dark|page-inline|page-scroll]
                                           open a built-in sample page
+     Press e to open the current file in $EDITOR (or vi), in Terminal.
      Options come after the songs:
        --dark                             open white on black (`i` toggles)
        --size 980x720                     set the window size in logical points
@@ -2125,6 +2153,7 @@ fn main() -> ExitCode {
                     ToWorker::Page(request) => latest = Some(request),
                     ToWorker::OpenSearch(query) => worker.open_search(&query),
                     ToWorker::Search(input) => worker.search_input(input),
+                    ToWorker::Edit { setlist, song } => worker.edit(setlist, song),
                     ToWorker::Clipboard(action) => worker.clipboard(action),
                     ToWorker::Transpose {
                         setlist,
