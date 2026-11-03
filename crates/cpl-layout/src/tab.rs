@@ -10,16 +10,21 @@
 #[derive(Debug, Clone, PartialEq)]
 pub struct Staff {
     pub rows: Vec<Vec<char>>,
+    /// Which rows are staff lines (they carry a bar line `|`). The others
+    /// are text written over or under the staff: chord names, counts,
+    /// fingering notes. A staff with no bar line at all reads every row as a
+    /// staff line.
+    pub lines: Vec<bool>,
     /// The widest row, trailing whitespace excluded.
     pub columns: usize,
-    /// Columns of the string-name prefix (`e|`) every staff row shares, which
-    /// a continuation system repeats; 0 when the rows have none.
+    /// Columns of the string-name prefix (`e|`) every staff line shares,
+    /// which a continuation system repeats; 0 when the lines have none.
     pub prefix: usize,
-    /// Columns past the prefix where every row that reaches them has a bar
-    /// line and at least one row does. A system may end just after one.
+    /// Columns past the prefix where every staff line that reaches them has
+    /// a bar line and at least one does. A system may end just after one.
     pub bars: Vec<usize>,
     /// Columns `c` past the prefix where a system may end before `c`
-    /// without splitting a fret number, technique or word in any row.
+    /// without splitting a fret number, technique or word on a staff line.
     pub gaps: Vec<usize>,
 }
 
@@ -63,19 +68,29 @@ impl Staff {
             .iter()
             .map(|line| line.trim_end().chars().collect())
             .collect();
+        let mut staff_lines: Vec<bool> = rows.iter().map(|row| row.contains(&'|')).collect();
+        if !staff_lines.contains(&true) {
+            staff_lines = vec![true; rows.len()];
+        }
         let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
-        let prefix = prefix(&rows);
+        let prefix = prefix(&rows, &staff_lines);
         let at = |row: &Vec<char>, column: usize| row.get(column).copied();
+        let staff = || {
+            rows.iter()
+                .zip(&staff_lines)
+                .filter(|(_, l)| **l)
+                .map(|(r, _)| r)
+        };
         let bars = (prefix..columns)
             .filter(|&column| {
                 let mut any = false;
-                let all = rows.iter().all(|row| match at(row, column) {
+                let all = staff().all(|row| match at(row, column) {
                     Some('|') => {
                         any = true;
                         true
                     }
-                    // A row that has ended, or a blank over the bar (a
-                    // chord-name row above the staff), does not object.
+                    // A line that has ended, or a blank where the others
+                    // have a bar, does not object.
                     None | Some(' ') => true,
                     _ => false,
                 });
@@ -84,54 +99,113 @@ impl Staff {
             .collect();
         let gaps = (prefix + 1..columns)
             .filter(|&column| {
-                rows.iter()
-                    .all(|row| separator(at(row, column - 1)) || separator(at(row, column)))
+                staff().all(|row| separator(at(row, column - 1)) || separator(at(row, column)))
             })
             .collect();
-        Self {
+        let mut staff = Self {
             rows,
+            lines: staff_lines,
             columns,
             prefix,
             bars,
             gaps,
-        }
+        };
+        // The bar of a second staff's string names, written beside the
+        // first, is no place to break: the names belong to what follows.
+        let names = |bar: &usize| (bar + 1).checked_sub(staff.prefix);
+        let restated: Vec<usize> = (staff.bars.iter())
+            .filter(|bar| names(bar).is_some_and(|start| start > 0 && staff.restates_prefix(start)))
+            .copied()
+            .collect();
+        staff.bars.retain(|bar| !restated.contains(bar));
+        staff
     }
 
     /// The staff broken into systems no wider than `max` columns where its
     /// breaks allow, as evenly as the fewest systems permit: eight bars that
-    /// need two systems break four and four, not five and three. A system
+    /// need two systems break four and four, not five and three. Evening
+    /// out never trades a break at a bar line for one inside a bar. A system
     /// that is still wider holds a stretch with no break at all, and the
     /// caller reports it as too wide.
     pub fn systems(&self, max: usize) -> Vec<System> {
         let fewest = self.greedy(max);
         if fewest.len() < 2 {
-            return fewest;
+            return self.draw(&fewest);
         }
-        // The narrowest width that still needs no more systems.
+        // The narrowest width that still needs no more systems and breaks
+        // at as many bar lines.
+        let at_bars = |ends: &[(usize, usize)]| {
+            ends.iter()
+                .filter(|(_, end)| *end < self.columns && self.bars.contains(&(end - 1)))
+                .count()
+        };
         let mut best = fewest;
         for narrower in (self.prefix + 1..max).rev() {
             let systems = self.greedy(narrower);
             if systems.len() > best.len() {
                 break;
             }
-            best = systems;
+            if at_bars(&systems) >= at_bars(&best) {
+                best = systems;
+            }
         }
-        best
+        self.draw(&best)
     }
 
-    /// Systems filled one after another, each as wide as `max` allows.
-    fn greedy(&self, max: usize) -> Vec<System> {
+    fn draw(&self, spans: &[(usize, usize)]) -> Vec<System> {
+        let mut after = 0;
+        spans
+            .iter()
+            .map(|&(start, end)| {
+                let system = self.system(after, start, end);
+                after = end;
+                system
+            })
+            .collect()
+    }
+
+    /// Where text over or under the staff is cut for a break before `end`:
+    /// a word that starts at or past it goes to the next system. Such text
+    /// is often lined up without the string names, so a word that starts on
+    /// the bar line, or within their width before it, belongs to the bar
+    /// after it.
+    fn cut(&self, end: usize) -> usize {
+        if end >= self.columns {
+            usize::MAX
+        } else if self.prefix == 0 {
+            end
+        } else {
+            end.saturating_sub(self.prefix + 1)
+        }
+    }
+
+    /// The words of the text rows, as each row's (start, end) columns.
+    fn text(&self) -> impl Iterator<Item = (&Vec<char>, Vec<(usize, usize)>)> {
+        self.rows
+            .iter()
+            .zip(&self.lines)
+            .filter(|(_, line)| !**line)
+            .map(|(row, _)| (row, words(row)))
+    }
+
+    /// Systems filled one after another, each as wide as `max` allows, as
+    /// the column span each takes.
+    fn greedy(&self, max: usize) -> Vec<(usize, usize)> {
         let mut out = Vec::new();
         let mut start = 0;
         while start < self.columns {
-            let lead = if start == 0 { 0 } else { self.prefix };
+            let lead = if start == 0 || self.restates_prefix(start) {
+                0
+            } else {
+                self.prefix
+            };
             let room = max.saturating_sub(lead);
-            let end = if self.columns - start <= room {
+            let end = if self.columns - start + self.overhang(self.columns) <= room {
                 self.columns
             } else {
                 self.end_of_system(start, room)
             };
-            out.push(self.system(start, end));
+            out.push((start, end));
             start = end;
             // A break before blanks starts the next system at its content.
             while start < self.columns
@@ -146,15 +220,40 @@ impl Staff {
         out
     }
 
+    /// Whether every staff line already shows the string names at `start`,
+    /// as when a second staff is written beside the first on the same rows.
+    fn restates_prefix(&self, start: usize) -> bool {
+        self.prefix > 0
+            && self
+                .rows
+                .iter()
+                .zip(&self.lines)
+                .filter(|(_, l)| **l)
+                .all(|(row, _)| row.get(start..start + self.prefix) == row.get(..self.prefix))
+    }
+
+    /// How far text over or under the staff runs past a break before `end`:
+    /// a word that starts before the cut stays whole in its system.
+    fn overhang(&self, end: usize) -> usize {
+        let cut = self.cut(end);
+        self.text()
+            .flat_map(|(_, words)| words)
+            .filter(|&(from, to)| from < cut && to > end)
+            .map(|(_, to)| to - end)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Where a system that starts at `start` and may take `room` columns
     /// ends: just after the last bar that fills at least half the room, else
     /// at the last gap, else at the last bar that fits, else at the first
-    /// break past the room (too wide), else the staff's end.
+    /// break past the room (too wide), else the staff's end. A break fits
+    /// when the text it carries past itself fits too.
     fn end_of_system(&self, start: usize, room: usize) -> usize {
         let limit = start + room;
         // Each system must show something past the repeated prefix.
         let least = start.max(self.prefix) + 1;
-        let fits = |end: &usize| (least..=limit).contains(end);
+        let fits = |end: &usize| *end >= least && end + self.overhang(*end) <= limit;
         let bar = self.bars.iter().map(|b| b + 1).rev().find(fits);
         let gap = self.gaps.iter().copied().rev().find(fits);
         match (bar, gap) {
@@ -172,22 +271,55 @@ impl Staff {
         }
     }
 
-    fn system(&self, start: usize, end: usize) -> System {
+    /// The system spanning `start..end` of the staff lines, after a break
+    /// before `after` (0 for the first).
+    fn system(&self, after: usize, start: usize, end: usize) -> System {
+        // A system of nothing but words written beside the staff (a
+        // "repeat" note) is not a staff, so it takes no string names.
+        let shown = || {
+            (self.rows.iter().zip(&self.lines))
+                .filter(|(_, l)| **l)
+                .map(|(row, _)| &row[start.min(row.len())..end.min(row.len())])
+        };
+        let words_only = shown().all(|cells| !cells.iter().any(|c| matches!(c, '-' | '|' | '=')))
+            && shown().any(|cells| {
+                cells
+                    .windows(2)
+                    .any(|pair| pair.iter().all(|c| c.is_alphabetic()))
+            });
+        let lead = if start > 0 && !words_only && !self.restates_prefix(start) {
+            self.prefix
+        } else {
+            0
+        };
+        let (from, to) = (if after == 0 { 0 } else { self.cut(after) }, self.cut(end));
         let rows: Vec<String> = self
             .rows
             .iter()
-            .map(|row| {
-                let mut text = String::new();
-                if start > 0 {
-                    text.extend(row.iter().take(self.prefix));
+            .zip(&self.lines)
+            .filter_map(|(row, &line)| {
+                if line {
+                    let mut text: String = row.iter().take(lead).collect();
                     // A row shorter than the prefix pads to it.
-                    text.extend(std::iter::repeat_n(
-                        ' ',
-                        self.prefix.saturating_sub(row.len()),
-                    ));
+                    text.extend(std::iter::repeat_n(' ', lead - row.len().min(lead)));
+                    text.extend(row.iter().take(end).skip(start));
+                    let text = text.trim_end();
+                    // A note keeps only the rows it is written on.
+                    return (!(words_only && text.is_empty())).then(|| text.to_owned());
                 }
-                text.extend(row.iter().take(end).skip(start));
-                text.trim_end().to_owned()
+                // Text keeps each word whole in the system where it falls,
+                // at its column relative to the staff.
+                let mut text: Vec<char> = Vec::new();
+                for (ws, we) in words(row)
+                    .into_iter()
+                    .filter(|&(ws, _)| from <= ws && ws < to)
+                {
+                    let column = (ws + lead).saturating_sub(start).max(text.len());
+                    text.resize(column, ' ');
+                    text.extend(&row[ws..we]);
+                }
+                // Text with nothing in this system takes no row.
+                (!text.is_empty()).then(|| text.into_iter().collect())
             })
             .collect();
         let columns = rows
@@ -199,15 +331,31 @@ impl Staff {
     }
 }
 
-/// The string-name prefix shared by every row of a staff: the columns up to
-/// and including a first bar at the same column in each row, preceded by at
-/// most three characters of name (`e|`, `D#|`, `E ||`'s first bar). A row
-/// that is blank across those columns (chord names over the staff) agrees;
-/// at least two rows must carry the bar.
-fn prefix(rows: &[Vec<char>]) -> usize {
+/// The words of a row of text, as (start, end) columns.
+fn words(row: &[char]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (column, c) in row.iter().chain([&' ']).enumerate() {
+        match (start, c.is_whitespace()) {
+            (None, false) => start = Some(column),
+            (Some(from), true) => {
+                out.push((from, column));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The string-name prefix shared by every staff line: the columns up to and
+/// including a first bar at the same column in each, preceded by at most
+/// three characters of name (`e|`, `D#|`, `E ||`'s first bar). At least two
+/// lines must carry it; text over or under the staff does not count.
+fn prefix(rows: &[Vec<char>], lines: &[bool]) -> usize {
     let mut column = None;
     let mut barred = 0;
-    for row in rows {
+    for row in rows.iter().zip(lines).filter(|(_, l)| **l).map(|(r, _)| r) {
         match row.iter().position(|c| *c == '|') {
             Some(bar) if bar <= 3 && row[..bar].iter().any(|c| !c.is_whitespace()) => {
                 if column.is_some_and(|column| column != bar) {
@@ -216,17 +364,12 @@ fn prefix(rows: &[Vec<char>]) -> usize {
                 column = Some(bar);
                 barred += 1;
             }
-            _ => {}
+            _ => return 0,
         }
     }
-    let Some(column) = column else { return 0 };
-    let blank_or_named = rows.iter().all(|row| {
-        row.get(column) == Some(&'|') || row.iter().take(column + 1).all(|c| c.is_whitespace())
-    });
-    if barred >= 2 && blank_or_named {
-        column + 1
-    } else {
-        0
+    match column {
+        Some(column) if barred >= 2 => column + 1,
+        _ => 0,
     }
 }
 
@@ -354,11 +497,120 @@ mod tests {
     fn an_unbreakable_stretch_overflows_rather_than_splitting() {
         let staff = Staff::new(&["e|-3h5p3-|", "B|-1h3p1-|"]);
         let systems = staff.systems(5);
-        assert!(systems.iter().any(|s| s.columns > 5));
+        assert!(systems.iter().any(|s| s.columns > 5), "{systems:?}");
         assert!(
             systems
                 .iter()
                 .all(|s| !s.rows[0].contains("h5p") || s.rows[0].contains("3h5p3"))
         );
+    }
+
+    // The staves below are shaped after real scraped tabs in the user's
+    // library (4 Non Blondes, Crowded House, A Star Is Born, Ween).
+
+    #[test]
+    fn chord_names_from_the_first_column_keep_the_string_names_repeating() {
+        let staff = Staff::new(&[
+            "C             G",
+            "e|-----0-----|-----0-----|",
+            "B|---1---1---|---1---1---|",
+        ]);
+        assert_eq!(staff.prefix, 2);
+        assert_eq!(staff.lines, [false, true, true]);
+        let systems = staff.systems(16);
+        assert_eq!(systems.len(), 2);
+        assert_eq!(systems[0].rows, ["C", "e|-----0-----|", "B|---1---1---|"]);
+        assert_eq!(systems[1].rows, ["  G", "e|-----0-----|", "B|---1---1---|"]);
+    }
+
+    #[test]
+    fn a_count_under_the_staff_does_not_cost_the_string_names() {
+        let staff = Staff::new(&[
+            "e|-------3--|----0---|",
+            "B|---3------|--3-----|",
+            "1 + 2 + 3   1 e + a",
+        ]);
+        assert_eq!(staff.prefix, 2);
+        let systems = staff.systems(13);
+        assert_eq!(systems.len(), 2);
+        assert_eq!(systems[1].rows[0], "e|----0---|");
+        assert_eq!(systems[0].rows[2], "1 + 2 + 3");
+        assert_eq!(systems[1].rows[2], " 1 e + a");
+    }
+
+    #[test]
+    fn a_chord_name_across_a_bar_line_stays_whole_in_the_bar_it_starts_in() {
+        let staff = Staff::new(&[
+            "Csus2          C7(sus2)   C7sus4",
+            "e|---3-------3----|---3--------3---|",
+            "G|5--5--5-5--5--5-|3--5--5-3---3---|",
+        ]);
+        // The chord crosses the first bar line, which is still a bar.
+        assert_eq!(staff.bars, [18, 35]);
+        let systems = staff.systems(26);
+        assert_eq!(systems.len(), 2);
+        assert_eq!(systems[0].rows[0], "Csus2          C7(sus2)");
+        assert_eq!(systems[0].rows[1], "e|---3-------3----|");
+        assert_eq!(systems[1].rows[0], "         C7sus4");
+        assert_eq!(systems[1].rows[1], "e|---3--------3---|");
+        assert!(systems.iter().all(|s| s.columns <= 26), "{systems:?}");
+    }
+
+    #[test]
+    fn evening_out_never_trades_a_bar_line_for_a_break_inside_a_bar() {
+        // Bars of 12, 26 and 28 columns: the break after the second bar
+        // leaves systems of 40 and 28; anything narrower splits a bar.
+        let staff = Staff::new(&[
+            "  .  . G Am",
+            "e|------------|-------------------------|---------------------------|",
+            "D|------------|-7-----------------7-7-\\-|-4-----2h4-----4--2--4---4-|",
+        ]);
+        let systems = staff.systems(52);
+        assert_eq!(systems.len(), 2);
+        assert!(systems[0].rows[1].ends_with('|'), "{systems:?}");
+        // The chord names all fall in the first system.
+        assert_eq!(systems[1].rows[0], "e|---------------------------|");
+    }
+
+    #[test]
+    fn a_second_staff_beside_the_first_does_not_repeat_its_string_names() {
+        let staff = Staff::new(&[
+            "e|---0----0-----|        e|---x-----x-----|",
+            "B|---2----0-----|        B|---5-----7-----|",
+        ]);
+        let systems = staff.systems(24);
+        assert_eq!(systems.len(), 2);
+        assert_eq!(systems[0].rows[0], "e|---0----0-----|");
+        assert_eq!(systems[1].rows[0], "e|---x-----x-----|");
+        assert_eq!(systems[1].rows[1], "B|---5-----7-----|");
+        // Even when the second staff's names fall where the first ends.
+        let systems = staff.systems(28);
+        assert_eq!(systems[0].rows[0], "e|---0----0-----|");
+        assert_eq!(systems[1].rows[0], "e|---x-----x-----|");
+    }
+
+    #[test]
+    fn a_note_beside_the_staff_that_wraps_alone_takes_no_string_names() {
+        let staff = Staff::new(&[
+            "Gb|-----x-----2-2-0--| continue strumming",
+            "Db|-2---2-----2-2-0--| then repeat",
+            "Ab|-2---2-----0-0-0--|",
+        ]);
+        let systems = staff.systems(24);
+        assert_eq!(systems.len(), 2);
+        assert_eq!(systems[0].rows[0], "Gb|-----x-----2-2-0--|");
+        assert_eq!(systems[1].rows, ["continue strumming", "then repeat"]);
+    }
+
+    #[test]
+    fn text_with_nothing_in_a_system_takes_no_row_there() {
+        let staff = Staff::new(&[
+            "  G",
+            "e|-----0-----|-----0-----|",
+            "B|---1---1---|---1---1---|",
+        ]);
+        let systems = staff.systems(16);
+        assert_eq!(systems[0].rows.len(), 3);
+        assert_eq!(systems[1].rows, ["e|-----0-----|", "B|---1---1---|"]);
     }
 }

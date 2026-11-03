@@ -53,15 +53,30 @@ tablature, while `Show` and `Fold` pin it and skip step 5.
 `measure_song` reads a tab section's lines into **staves** (`tab.rs`):
 blank lines separate them, and each staff's rows share columns. It also
 measures the monospaced column advance at `tab_size` once per section.
-`Staff::new` finds the string-name prefix every row shares (`e|`, a blank
-chord-name row agreeing), the **bar** columns where every row that reaches
-them has `|`, and the **gaps** where a cut splits no fret number, technique
-or word in any row. `Staff::systems(max)` breaks a staff wider than `max`
-columns into systems: each ends after the last bar that fills at least half
-its room, otherwise at the last gap, and a continuation repeats the prefix.
-It then narrows the width while the system count holds, so eight bars over
-two systems break four and four. A stretch with no break at all stays whole
-and overflows, which the fit reports as unfit like any unbreakable run.
+`Staff::new` sorts the rows into **staff lines**, which carry a `|`, and
+**text** written over or under them (chord names, counts, fingering), which
+does not; a staff with no `|` at all reads every row as a staff line. It
+finds the string-name prefix every staff line shares (`e|`), the **bar**
+columns where every staff line that reaches them has `|`, and the **gaps**
+where a cut splits no fret number, technique or word on a staff line. The
+string-name bar of a second staff written beside the first on the same rows
+is not a bar to break at. `Staff::systems(max)` breaks a staff wider than
+`max` columns into systems: each ends after the last bar that fills at least
+half its room, otherwise at the last gap. It then narrows the width while
+the system count holds and no bar-line break turns into one inside a bar,
+so eight bars over two systems break four and four. A stretch with no break
+at all stays whole and overflows, which the fit reports as unfit like any
+unbreakable run.
+
+A continuation system repeats the prefix on its staff lines and pads text
+rows to it, unless its staff lines already start with the names (the
+second staff beside the first) or hold only a note written beside the staff
+(`continue strumming`), which keeps just the rows it is written on. Text
+never splits: each word goes to the system where it starts, and a word that
+starts on the bar line or within the prefix's width before it goes to the
+next, because scraped tabs often line text up without the string names. A
+word that crosses a break stays whole, and the break must leave room for it.
+Text with no word in a system takes no row there.
 `Options::tab_systems` breaks every staff at the content width beside
 `tab_inset`. A shown tab block is `tab_row` per row plus `tab_system_gap`
 between systems. `groups` counts one scroll group per system.

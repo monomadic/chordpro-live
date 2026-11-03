@@ -4,6 +4,22 @@ This is a record of implemented work and observed checks. `TASKS.md` holds
 open work; `PROPOSAL.md` holds design decisions. Dates are local to the project
 session. A passing headless test does not stand in for a visual window check.
 
+## 2026-11-03
+
+- **Real scraped tabs wrap like printed tab.** Checked the 16 tab
+  sections of the user's iCloud tab library (`Music/Tablature/ChordPro`)
+  at 980, 560 and 400 points wide. Fixed what they showed: a chord-name
+  or count row over or under the staff no longer stops the string names
+  from repeating on a continuation, and its words follow their bars;
+  evening out systems no longer trades a bar-line break for one inside a
+  bar; a second staff written beside the first breaks before its names
+  instead of after them; a note beside the staff that wraps alone drops
+  the names. `tab.rs` gained a test for each, shaped after the songs.
+  Checked in a real window (Crowded House at 560×720, 2x) and with the
+  workspace tests, clippy and the visual goldens, which did not change.
+  The tabs drawn as lyrics outside a tab section, and
+  `{start_of_tablature}`, are new tasks.
+
 ## 2026-11-01
 
 - **A library folder for the Finder-launched `.app`.** A Finder launch runs

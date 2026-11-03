@@ -16,8 +16,6 @@ automated checks. When every task in an epic is checked, the epic moves to
 
 ## P2 — complete the proposed viewer
 
-- [ ] Check tablature against real scraped tabs once the corpus has some:
-  irregular staves, missing bars, tabs mixed with lyrics, and legends.
 - [ ] Build the library, search, sidecar metadata, and setlist navigation.
   Split into:
   - [ ] Saved setlists in the sidecar: an ordered list of fingerprints,
@@ -26,6 +24,14 @@ automated checks. When every task in an epic is checked, the epic moves to
 - [ ] Parse chords inside a comment (`{comment: [C]Capo}`), as the
   reference does; `chordpro-live conform` reports it. Needs a design for drawing a
   comment's chords.
+- [ ] Keep a section the spec does not name as the reference does:
+  `{start_of_tablature}` (in the iCloud tab library) opens a section
+  named `tablature` there, an unnamed stanza here. `conform` reports it
+  per file; add it to the probe constructs.
+- [ ] Lenient import of tab outside a tab section: about a dozen songs in
+  the iCloud tab library (Riptide, How Soon Is Now, True Colors) have
+  staff lines in a verse, drawn as lyrics. PROPOSAL.md's lenient import
+  should recognise them and draw them as tablature.
 - [ ] Draw the delegated notation the parser keeps (`abc`, `ly`, `svg`):
   SVG first, since it needs no external program; abc and Lilypond need a
   renderer, which is a dependency question for the user.
