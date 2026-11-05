@@ -18,8 +18,8 @@ close on its words, repeated every `line_height` (46 pt, the 38 pt pair
 plus 8);
 a section's `Page/Label` (Bold 14/27 pt, tracked 8%, ink-soft, ink for a
 chorus) sits `label_gap` above its first line, its baseline `label_baseline`
-into its row; sections are 18 pt apart (`section_gap` plus the last line's
-lead).
+into its row. Sections get `section_gap` after the last line's lead, with
+half that gap in the compact spacing step.
 
 The status strip is `Page/Status` (SF Pro 12/21 pt, ink-soft) `status_drop`
 above the bottom margin: where the page stands on the left (the mode,

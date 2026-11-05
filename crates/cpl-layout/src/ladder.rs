@@ -7,6 +7,8 @@ use cpl_song::SectionKind;
 /// Page geometry in em (multiples of the body size).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PageMetrics {
+    /// Header em divided by body em.
+    pub header_scale: f32,
     pub title_size: f32,
     /// The first title row's baseline below the top of the header.
     pub title_baseline: f32,
@@ -14,7 +16,7 @@ pub struct PageMetrics {
     /// Byline advance under a title, in subtitle sizes.
     pub byline_leading: f32,
     pub header_gap: f32,
-    /// Space between title and byline on a one-line header.
+    /// Space between sections.
     pub section_gap: f32,
     pub label_height: f32,
     pub label_gap: f32,
@@ -117,9 +119,6 @@ pub struct HeaderLayout {
     /// The title as drawn: each row's text and baseline. One row unless the
     /// title is wider than the content box.
     pub title_rows: Vec<(String, f32)>,
-    /// The title's size as a fraction of `title_size`: below 1 only when one
-    /// word is wider than the content box, and never below the body size.
-    pub title_scale: f32,
     /// The widest header row, in em.
     pub width: f32,
     /// Each shown pill's left edge and vertical centre, index-aligned with
@@ -138,7 +137,7 @@ pub struct HeaderLayout {
 impl Options {
     pub fn section_gap(&self, m: &PageMetrics) -> f32 {
         if self.tight_sections {
-            0.0
+            m.section_gap / 2.0
         } else {
             m.section_gap
         }
@@ -213,7 +212,7 @@ impl Options {
         line: &crate::MeasuredLine,
         m: &PageMetrics,
     ) -> f32 {
-        if line.chord_only || self.inline(section) {
+        if line.chord_only || line.is_comment() || self.inline(section) {
             m.inline_line_height
         } else {
             m.line_height
@@ -229,6 +228,15 @@ impl Options {
         wrap: f32,
     ) -> Vec<crate::Row> {
         line.rows(self.inline(section), wrap, m.wrap_indent)
+    }
+
+    /// Breathing room before a comment used as a cue within a section.
+    pub fn line_gap(&self, line: &crate::MeasuredLine, index: usize, m: &PageMetrics) -> f32 {
+        if index > 0 && line.is_comment() {
+            self.section_gap(m)
+        } else {
+            0.0
+        }
     }
 
     /// Height of the whole line, every wrapped row included.
@@ -303,7 +311,10 @@ impl Options {
                     .lines
                     .iter()
                     .take(visible)
-                    .map(|line| self.line_height(section, line, m, wrap))
+                    .enumerate()
+                    .map(|(index, line)| {
+                        self.line_gap(line, index, m) + self.line_height(section, line, m, wrap)
+                    })
                     .sum::<f32>()
                 + self.label_row(section, m),
         }
@@ -316,25 +327,17 @@ impl Options {
         let mut y = 0.0;
         let mut title_baseline = None;
         let mut title_rows = Vec::new();
-        let mut title_scale = 1.0_f32;
         let mut width: f32 = 0.0;
         if !self.hide_title {
             let rows = title_rows_within(header, max_width);
-            // A word that cannot wrap shrinks the whole title to fit, down to
-            // the body size; past that it stays wide and the page is unfit.
-            let widest = rows.iter().map(|(_, w)| *w).fold(0.0_f32, f32::max);
-            if widest > max_width && widest > 0.0 {
-                title_scale = (max_width / widest).max(1.0 / m.title_size).min(1.0);
-            }
             for (index, (text, row_width)) in rows.into_iter().enumerate() {
-                y += title_scale
-                    * if index == 0 {
-                        m.title_baseline
-                    } else {
-                        m.title_size * m.title_leading
-                    };
+                y += if index == 0 {
+                    m.title_baseline
+                } else {
+                    m.title_size * m.title_leading
+                };
                 title_baseline.get_or_insert(y);
-                width = width.max(row_width * title_scale);
+                width = width.max(row_width);
                 title_rows.push((text, y));
             }
         }
@@ -411,7 +414,6 @@ impl Options {
         HeaderLayout {
             title_baseline,
             title_rows,
-            title_scale,
             width,
             pills,
             diagrams,
@@ -532,8 +534,8 @@ pub fn layout(
     options: Options,
     step: u8,
 ) -> Solution {
-    let header = options.header(&song.header, m, view.width);
-    let header_width = header.width;
+    let header = options.header(&song.header, m, view.width / m.header_scale);
+    let header_width = header.width * m.header_scale;
     // Lines wider than the content box wrap at its width; a block that is
     // still wider holds an unbreakable run, and the fit reports it.
     let blocks: Vec<Block> = song
@@ -568,7 +570,7 @@ pub fn layout(
         &blocks,
         FitOptions {
             available_width: view.width.max(0.0),
-            available_height: (view.height - header.height).max(0.0),
+            available_height: (view.height - header.height * m.header_scale).max(0.0),
             header_height: 0.0,
             header_gap: 0.0,
             section_gap: options.section_gap(m),
@@ -664,22 +666,13 @@ mod tests {
     use crate::{Face, Measure, Metrics, measure_song};
 
     #[test]
-    fn a_title_word_too_wide_to_wrap_shrinks_to_fit_but_not_below_the_body() {
-        // "Scarborough" is 11 em wide at a 2 em title in the fixed measure.
+    fn an_unbreakable_title_word_keeps_its_size() {
         let song = song("{title: Scarborough}\n[C]Alpha");
         let roomy = Options::default().header(&song.header, &PAGE, 20.0);
-        assert_eq!(roomy.title_scale, 1.0);
         let narrow = Options::default().header(&song.header, &PAGE, 8.0);
-        assert!((narrow.title_scale - 8.0 / 11.0).abs() < 1e-5);
-        assert!(narrow.width <= 8.0 + 1e-4);
-        assert!(
-            narrow.title_rows[0].1 < roomy.title_rows[0].1,
-            "a smaller title sits higher"
-        );
-        // Never smaller than the body: past that the title stays wide.
-        let tiny = Options::default().header(&song.header, &PAGE, 4.0);
-        assert_eq!(tiny.title_scale, 1.0 / PAGE.title_size);
-        assert!(tiny.width > 4.0);
+        assert_eq!(narrow.title_rows, roomy.title_rows);
+        assert_eq!(narrow.width, roomy.width);
+        assert!(narrow.width > 8.0);
     }
 
     #[test]
@@ -719,6 +712,7 @@ mod tests {
     }
 
     const PAGE: PageMetrics = PageMetrics {
+        header_scale: 1.0,
         title_size: 2.0,
         title_baseline: 2.0,
         subtitle_size: 0.75,
@@ -759,6 +753,7 @@ mod tests {
     fn song(source: &str) -> MeasuredSong {
         let metrics = Metrics {
             reference_size: 10.0,
+            header_reference_size: 10.0,
             title_size: PAGE.title_size,
             subtitle_size: PAGE.subtitle_size,
             label_size: 0.7,

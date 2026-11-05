@@ -22,7 +22,7 @@ def cases():
         ("alignment", "tests/visual/wrapping.cho", "420x720", 0),
         ("width-needed", "tests/visual/unbreakable.cho", "360x420", 0),
         ("type-ceiling", "tests/visual/type-ceiling.cho", "980x720", 0),
-        ("inline", "page-inline", "360x420", 0),
+        ("inline", "page-inline", "300x244", 0),
     ]
     for name, source, size, scroll in probes:
         for dark in (False, True):
@@ -33,7 +33,7 @@ def cases():
             if dark:
                 args += ["page-dark"]
                 if source == "page-inline":
-                    # This built-in has a distinct inline-mode flag; don't
+                    # This built-in has a distinct compact chord fixture; don't
                     # pretend a file or the default dark page exercises it.
                     continue
             args += [target, "--size", size, "--scroll", str(scroll)]

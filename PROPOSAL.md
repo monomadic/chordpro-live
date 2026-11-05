@@ -169,7 +169,7 @@ is weighed against size.** Every ladder candidate that fits at the
 readability floor is drawn at the largest measured size that keeps it, and
 scored: that size's worth less the price of each step taken, in points of
 body size (`cost_*` in the config; dropping the title costs the most, then the
-pills, then inline chords). A point below the comfortable size (`comfort_size`, 17 pt)
+pills, then compact chords). A point below the comfortable size (`comfort_size`, 17 pt)
 is worth `size_loss_below`, a point above it `size_gain_above`, so text
 shrinks some way toward the floor before the page gives anything up, and
 grows only while that is cheap. The best score wins, the less reduced on a
@@ -207,13 +207,15 @@ floor the layout engine does **not** draw it. It descends the ladder.
 is applied, the fit re-run, and the first layout at or above the floor wins.
 Least destructive first:
 
-1. Section spacing gives back its blank rows.
+1. Vertical space between sections is halved.
 2. Section labels move to the side margin (if the margin does not cost a column).
 3. *(removed 2026-10-29)* The header no longer collapses to one line. The
    step applied only when the window was wide enough, so maximising a window
    could collapse the header and drop the text to the floor while a smaller
    window kept both. The header always keeps title and byline on their own
-   lines; the other steps keep their numbers.
+   lines; the other steps keep their numbers. The title, byline, pills and
+   diagrams use a fixed point scale. The title wraps at word boundaries.
+   The body columns are centred together within the content margins.
 4. Chord diagrams leave the header.
 5. Tablature sections fold to their label, which says `FOLDED`.
    **Settled (2026-10-29): tablature is a part for the player, not the
@@ -230,19 +232,19 @@ Least destructive first:
    line. The singer knows the words; the chords were shown once. A `{chorus}`
    recall is already this in the model; a chorus the author retyped in full is
    detected by text equality.
-7. Chords go inline with the lyric, superscript. This halves line height at
-   the cost of chord-over-syllable alignment.
+7. Chords use smaller type and a shorter dedicated row above the lyrics.
+   Chord placement and natural lyric spacing follow the same rules at every step.
 8. Metadata pills drop.
 9. The title drops.
    **Settled (2026-11-01): the header is the last resort.** Pills and title
-   were steps 6 and 7; they now come after inline chords, and their prices
+   were steps 6 and 7; they now come after compact chords, and their prices
    (`cost_pills`, `cost_title`) are the highest, so a page gives up anything
    in the body before it gives up its name.
 10. **Fit fails.** The app switches to a scrolling or paged mode and says so in
     the status strip. It never draws a page under the floor.
 
 Each step is a tri-state option (`on`, `off`, `auto`) exactly as the TUI's
-config, so a user who always wants inline chords, or never wants choruses
+config, so a user who always wants compact chords, or never wants choruses
 collapsed, pins the step. Step 10 is the behaviour the brief asks for in
 "isn't trying in vain to squeeze everything into view".
 
@@ -252,7 +254,7 @@ shrinks to its own floor before the lyric does *(planned; today chords are
 a fixed `chord_size` of body)*, and chord
 overhang pushes later lyrics right rather than compressing them.
 Chord-only progressions, such as an intro, use one compact row at the normal
-chord size; they do not reserve an empty lyric row or shrink at the inline
+chord size; they do not reserve an empty lyric row or shrink at the compact
 chord step.
 
 The output of fit is a **`Page`**: a list of positioned items in points (text
@@ -388,7 +390,7 @@ Three layers, each useful without the next:
 size; chords in `ink_soft`, bold, at 0.8 em so they read as annotation on the
 words rather than the other way round. A `lyrics` display option strips the
 chord rows entirely for the singer's device while the guitarist's shows them;
-the ladder's inline-chord step is the midpoint. Section labels in the side
+the ladder's compact chord step is the midpoint. Section labels in the side
 margin, small caps, so the eye runs down one left edge of text.
 
 **2. Line following (coarse timing).** A margin marker — a short hairline or a

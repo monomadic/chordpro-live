@@ -4,8 +4,7 @@
 one set of metrics; the app calls it once per candidate size, from the body
 floor to the configured maximum. A `MeasuredSong` holds
 the header, each section's upper-cased label, and for every line two run
-lists with em offsets and widths, one with chords above the lyric and one
-with inline chords. Lyrics retain their natural spacing, including across mid-word chord changes.
+lists with em offsets and widths, one with full-size chords and one with smaller chords, both above the lyrics. Lyrics retain their natural spacing, including across mid-word chord changes.
 Chords start above their syllable; a crowded chord moves right only far enough
 to clear the previous chord and its gap, without moving any lyric. It is the only stage
 that calls the host's `Measure`. A run's `Role` fixes its face, weight and em
@@ -15,14 +14,18 @@ system-font tracking changes with point size. Equal strings in one role are
 measured once per candidate.
 Measured lines distinguish chord-only progressions from sung lines. A
 progression keeps its full chord runs at step 7 and contributes the compact
-inline row height to its section block.
+row height to its section block.
 
 Section blocks are built from those widths in body-size units. `fit` packs
 whole sections into up to `max_columns` columns with the greedy
 rising-target method from `chordpro-tui/internal/pdf/layout.go`. For each
 column count it computes the largest scale (at most 1) the available width
 and height allow at the candidate's body size, then reports the best split
-and whether it reaches 1.
+and whether it reaches 1. The app centres the fitted column group using the
+measured column widths and gutters. The title, byline, pills and diagrams
+use fixed point sizes, and the fitter converts their dimensions to body
+units when budgeting room for the song. Comments use a heavier weight and
+extra space when they appear within a section.
 
 The reduction ladder lives here too. `Options` holds one choice per step, and
 its methods give the em geometry each choice implies: the header layout,
@@ -34,9 +37,9 @@ page (a single section, labels too wide for the margin, no chord diagrams,
 no tablature, no repeated chorus, no pills) is skipped rather than
 tried, and never leaves a failing option on for the steps after it:
 
-1. section gaps close; 2. labels move to the side margin; 4. the chord
+1. section gaps halve; 2. labels move to the side margin; 4. the chord
 diagrams drop; 5. tablature folds to its label; 6. a repeated chorus keeps
-only its first line; 7. chords go inline; 8. the pills drop; 9. the title
+only its first line; 7. chord rows get smaller; 8. the pills drop; 9. the title
 drops. The header goes last. There is no step 3: the header always keeps
 the byline on its own line (see PROPOSAL.md). A side
 label beside a section with every line hidden keeps one row. A song with no
@@ -101,7 +104,7 @@ word would not fit, never inside it. Tab lines wrap as staves (below);
 comments wrap by words. An annotation (`[*rit.]`) is measured and drawn as
 a chord is. A grid row is one unwrapped token in the tab face, its cells
 padded to their column's widest so rows of one shape align; grids and text
-blocks always take the compact inline rows (`Options::inline`), having no
+blocks always take the compact rows (`Options::inline`), having no
 chord row to keep. Embedded notation is not measured, so it takes no
 space. `Options::block` wraps at the viewport width and
 `layout` counts each candidate's continuation rows in `Solution::wrapped_rows`;

@@ -54,6 +54,8 @@ pub struct Metrics {
     /// Text is measured at this body size. System-font tracking varies with
     /// point size, so em widths are exact here and close nearby.
     pub reference_size: f32,
+    /// Fixed point size that defines the header em.
+    pub header_reference_size: f32,
     pub title_size: f32,
     pub subtitle_size: f32,
     pub label_size: f32,
@@ -86,7 +88,7 @@ impl Metrics {
             Role::Lyric => (1.0, 400, Face::System, 0.0),
             Role::InlineChord => (self.inline_chord_size, 590, Face::System, 0.0),
             Role::Tab => (self.tab_size, 400, Face::Monospace, 0.0),
-            Role::Comment => (1.0, 400, Face::System, 0.0),
+            Role::Comment => (1.0, 600, Face::System, 0.0),
             // The mock's `Page/Meta` (SF Pro Heavy) and `MetaValue` (Medium).
             Role::PillLabel => (self.meta_size, 860, Face::System, self.meta_tracking),
             Role::PillValue => (self.meta_size, 510, Face::System, self.meta_tracking),
@@ -147,10 +149,10 @@ pub struct Row {
 pub struct MeasuredLine {
     /// The source segments with every word measured; `rows` flows them.
     pub segments: Vec<MeasuredSegment>,
-    /// Chords on their own row above the lyric, overhang pushing lyrics right.
+    /// Chords on their own row above the lyric, with only crowded chords nudged right.
     pub above: Vec<Run>,
     pub above_width: f32,
-    /// Small chords set inline before their lyric segment (ladder step 7).
+    /// Small chords stacked above their lyric segment (ladder step 7).
     pub inline: Vec<Run>,
     pub inline_width: f32,
     /// A chord progression with no sung words, such as an intro or turnaround.
@@ -160,6 +162,12 @@ pub struct MeasuredLine {
 }
 
 impl MeasuredLine {
+    pub fn is_comment(&self) -> bool {
+        self.above
+            .first()
+            .is_some_and(|run| run.role == Role::Comment)
+    }
+
     pub fn runs(&self, inline: bool) -> &[Run] {
         if inline && !self.chord_only {
             &self.inline
@@ -285,52 +293,33 @@ impl RowBuilder {
     /// The row's extent if `chord` and `token` were appended.
     fn exceeds(&self, chord: Option<&MeasuredChord>, token: Option<&Token>, max: f32) -> bool {
         let mut extent = self.width;
-        if self.inline {
-            let mut x = self.lyric_x;
-            if let Some(chord) = chord {
-                x += self.chord_width(chord) + self.gap;
-                extent = extent.max(x);
-            }
-            if let Some(token) = token {
-                extent = extent.max(x + token.width);
-            }
-        } else {
-            if let Some(chord) = chord {
-                let chord_x = self.chord_x.max(self.lyric_x);
-                extent = extent.max(chord_x + self.chord_width(chord));
-            }
-            if let Some(token) = token {
-                extent = extent.max(self.lyric_x + token.width);
-            }
+        if let Some(chord) = chord {
+            let chord_x = self.chord_x.max(self.lyric_x);
+            extent = extent.max(chord_x + self.chord_width(chord));
+        }
+        if let Some(token) = token {
+            extent = extent.max(self.lyric_x + token.width);
         }
         extent > max + 1e-4
     }
 
     /// Appends a chord and/or a token without reserving chord width in lyrics.
     fn push(&mut self, chord: Option<&MeasuredChord>, token: Option<&Token>, segment: usize) {
-        if self.inline {
-            if let Some(chord) = chord {
-                let width = chord.inline_width;
-                self.runs.push(Run {
-                    role: Role::InlineChord,
-                    text: chord.text.clone(),
-                    x: self.lyric_x,
-                    width,
-                });
-                self.lyric_x += width + self.gap;
-                self.width = self.width.max(self.lyric_x);
-                self.last_segment = None;
-            }
-        } else if let Some(chord) = chord {
+        if let Some(chord) = chord {
+            let width = self.chord_width(chord);
             self.chord_x = self.chord_x.max(self.lyric_x);
             self.runs.push(Run {
-                role: Role::Chord,
+                role: if self.inline {
+                    Role::InlineChord
+                } else {
+                    Role::Chord
+                },
                 text: chord.text.clone(),
                 x: self.chord_x,
-                width: chord.above_width,
+                width,
             });
-            self.chord_x += chord.above_width + self.gap;
-            self.width = self.width.max(self.chord_x - self.gap);
+            self.width = self.width.max(self.chord_x + width);
+            self.chord_x += width + self.gap;
             self.last_segment = None;
         }
         if let Some(token) = token {
@@ -356,17 +345,9 @@ impl RowBuilder {
     }
 
     fn finish(self) -> Row {
-        let width = if self.inline {
-            self.lyric_x
-        } else {
-            self.runs
-                .iter()
-                .map(|run| run.x + run.width)
-                .fold(0.0, f32::max)
-        };
         Row {
             runs: self.runs,
-            width,
+            width: self.width,
         }
     }
 }
@@ -618,7 +599,15 @@ impl<M: Measure> Measurer<'_, M> {
             return width;
         }
         let style = self.metrics.style(role);
-        let body = self.metrics.reference_size;
+        let body = match role {
+            Role::Title
+            | Role::Subtitle
+            | Role::PillLabel
+            | Role::PillValue
+            | Role::DiagramName
+            | Role::DiagramMark => self.metrics.header_reference_size,
+            _ => self.metrics.reference_size,
+        };
         let width = self
             .measure
             .width(text, style.size * body, style.weight, style.face)
@@ -742,6 +731,7 @@ mod tests {
     fn metrics() -> Metrics {
         Metrics {
             reference_size: 20.0,
+            header_reference_size: 20.0,
             title_size: 2.0,
             subtitle_size: 1.0,
             label_size: 1.0,
@@ -814,13 +804,14 @@ mod tests {
         for line in &song.sections[0].lines {
             let extent = |runs: &[Run]| runs.iter().map(|r| r.x + r.width).fold(0.0, f32::max);
             assert_eq!(line.above_width, extent(&line.above));
-            // Inline width may include one trailing chord gap, never less than the runs.
-            assert!(line.inline_width >= extent(&line.inline));
-            let mut x = 0.0;
-            for run in &line.inline {
-                assert!(run.x >= x, "inline runs never overlap");
-                x = run.x + run.width;
-            }
+            assert_eq!(line.inline_width, extent(&line.inline));
+            let lyrics = |runs: &[Run]| {
+                runs.iter()
+                    .filter(|run| run.role == Role::Lyric)
+                    .map(|run| (run.text.clone(), run.x))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(lyrics(&line.above), lyrics(&line.inline));
         }
     }
 

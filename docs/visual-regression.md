@@ -48,13 +48,13 @@ resize images to manufacture 1x evidence from 2x.
 | Cases | Logical size | Required observations |
 | --- | --- | --- |
 | scarborough-light/dark | 420x720 | Original real-song check: whitespace wraps, intact words, chords over their original syllables, consistent continuation inset, no right-edge lyric clipping. |
-| scroll-top-light/dark | 360x420 | Original overflow check: readable floor, visible song despite title clipping if necessary, status clear of lyrics. |
+| scroll-top-light/dark | 360x420 | Original overflow check: readable floor, visible song and fixed-size header where it fits, status clear of lyrics. |
 | scroll-middle-light/dark | 360x420, offset 120 | Whole chord/lyric groups enter/leave together; no half rows under the header/status mask. |
 | scroll-end-light/dark | 360x420, offset 100000 (clamped) | Last group reachable and complete; no bottom clipping or lost last words. |
 | alignment-light/dark | 420x720 | Follow C/G/Am/F and the chord inside `syll[Dm]able`; chord and syllable move together. Continuation rows start one body em inward (`wrap_indent = 1`), not one extra indent per row. |
 | width-needed-light/dark | 360x420 | Deliberately unbreakable word shows width-needed state; no squeezed or split word presented as a readable song. |
 | type-ceiling-light/dark | 980x720 | Short lyrics at 28 pt; title/chords/status remain distinct and unclipped. |
-| inline-light | 360x420 | Compact inline-chord mode remains legible and does not collide with lyrics. |
+| inline-light | 300x244 | Compact chords stay on their own row above the lyrics. |
 
 Both documented commands are exercised verbatim apart from an explicit zero
 scroll offset. The CLI has no dark selector for the built-in scroll sample, so
@@ -66,7 +66,7 @@ Compare light/dark geometry: line breaks, baselines, chord anchors and insets mu
 match. Check black/white paper and ink, softer secondary text, thin glyph strokes,
 and punctuation at native image scale. Assess readability on the actual display
 at normal viewing distance; a zoomed screenshot cannot establish it. The scrolling
-fixture exercises the 17 pt floor; the short fixture exercises the 28 pt ceiling.
+fixture exercises the 17 pt comfortable scroll size; the short fixture exercises the 28 pt ceiling.
 The automated fixture test verifies both endpoint sizes with real CoreText.
 Existing layout tests cover refusal to enlarge type when it adds wrapped rows.
 

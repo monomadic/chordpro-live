@@ -28,7 +28,7 @@ use winit::{
 const SAMPLE: &str = "{title: The Long Road Home}\n{artist: Sample song}\n{start_of_verse: Verse 1}\n[C]Morning light is [G]falling on the [Am]road\n[F]Every step is [C]bringing us back [G]home\n{end_of_verse}\n{start_of_chorus: Chorus}\n[F]Carry on, [C]carry on\n[G]We can hear the [Am]morning song\n{end_of_chorus}\n{start_of_verse: Verse 2}\n[C]When the night is [G]quiet we will [Am]know\n[F]All the roads we [C]travel lead us [G]home\n{end_of_verse}";
 const INLINE_SAMPLE: &str =
     "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n[G]Bravo\n[Am]Charlie\n{end_of_verse}";
-const SCROLL_SAMPLE: &str = "{title: The Long Road Home}\n{artist: Sample song}\n{start_of_verse: Verse 1}\n[C]Morning light is [G]falling on the [Am]road\n[F]Every step is [C]bringing us back [G]home\n{end_of_verse}\n{start_of_chorus: Chorus}\n[F]Carry on, [C]carry on\n[G]We can hear the [Am]morning song\n{end_of_chorus}\n{start_of_verse: Verse 2}\n[C]When the night is [G]quiet we will [Am]know\n[F]All the roads we [C]travel lead us [G]home\n{end_of_verse}\n{start_of_chorus: Chorus}\n[F]Carry on, [C]carry on\n[G]We can hear the [Am]morning song\n{end_of_chorus}";
+const SCROLL_SAMPLE: &str = "{title: The Long Road Home}\n{artist: Sample song}\n{start_of_verse: Verse 1}\n[C]Morning light is [G]falling on the [Am]road\n[F]Every step is [C]bringing us back [G]home\n{end_of_verse}\n{start_of_chorus: Chorus}\n[F]Carry on, [C]carry on\n[G]We can hear the [Am]morning song\n{end_of_chorus}\n{start_of_verse: Verse 2}\n[C]When the night is [G]quiet we will [Am]know\n[F]All the roads we [C]travel lead us [G]home\n{end_of_verse}\n{start_of_chorus: Chorus}\n[F]Carry on, [C]carry on\n[G]We can hear the [Am]morning song\n{end_of_chorus}\n{start_of_verse: Verse 3}\n[C]Past the station, [G]down beside the [Am]stream\n[F]Through the valley, [C]where the lanterns [G]gleam\n[C]Take the footpath [G]round the maple [Am]tree\n[F]Leave the gate wide [C]open there for [G]me\n{end_of_verse}\n{start_of_verse: Verse 4}\n[C]Hear the river [G]underneath the [Am]bridge\n[F]See the rainclouds [C]moving past the [G]ridge\n[C]When the evening [G]settles on the [Am]field\n[F]We will follow [C]where the road is [G]sealed\n{end_of_verse}\n{start_of_verse: Verse 5}\n[C]One more mile and [G]then the road will [Am]bend\n[F]We can see the [C]village at the [G]end\n[C]There the lights will [G]guide us through the [Am]rain\n[F]To the place we'll [C]call our home a[G]gain\n{end_of_verse}";
 
 fn block_on<F: Future>(future: F) -> F::Output {
     let mut context = std::task::Context::from_waker(Waker::noop());
@@ -2318,9 +2318,8 @@ fn main() -> ExitCode {
         setlist: 0,
         pending_step: next_step,
         initial_size: requested_size.unwrap_or(if inline {
-            // 200 pt of page under the 28 pt title strip: tight enough
-            // that the sample needs ladder step 7, inline chords.
-            (300.0, 228.0)
+            // Keep the title visible while exercising compact chord rows.
+            (300.0, 244.0)
         } else if scroll {
             (560.0, 340.0)
         } else {

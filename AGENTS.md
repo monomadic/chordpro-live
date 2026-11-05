@@ -104,7 +104,7 @@ The binary is `chordpro-live`; `chordpro-live --help` lists every form.
 | `cargo run -- song.cho` | One song |
 | `cargo run -- a.cho b.cho` | The first song, the rest queued after it as a setlist |
 | `cargo run -- testdata` | A folder's songs as a setlist |
-| `cargo run -- page` | The sample page (`page-dark`, `page-inline` inline chords, `page-scroll` overflow) |
+| `cargo run -- page` | The sample page (`page-dark`, `page-inline` compact stacked chords, `page-scroll` overflow) |
 | `cargo run -- render song.cho --out page.png --scale 1 --size 420x720` | Nothing: writes exactly what the window would show, headless; use it for 1x checks |
 | `cargo run -- print song.cho` | Nothing: prints the parsed lyrics |
 
@@ -203,7 +203,7 @@ the commit message.
 - **The page is always readable.** Body text never drops below the
   readability floor. The ladder (`LADDER` in `cpl-layout/src/ladder.rs`)
   compacts least destructive first: 1 tight sections, 2 side labels,
-  4 chord diagrams, 5 fold tablature, 6 collapse repeats, 7 inline chords,
+  4 chord diagrams, 5 fold tablature, 6 collapse repeats, 7 compact stacked chords,
   8 metadata pills, 9 title (step 3 was removed; the numbers stand). When
   every step fails, the window scrolls the full song at the floor. Lines
   too wide for the window wrap at word boundaries; only an unbreakable run

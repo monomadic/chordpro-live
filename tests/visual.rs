@@ -20,7 +20,7 @@ const CHANNEL_TOLERANCE: u8 = 24;
 const PIXEL_TOLERANCE: f64 = 0.0002;
 
 /// (golden name, `chordpro-live render` arguments). Together they cover light and dark,
-/// fit, scroll and paged pages, inline chords, wrapped lines and titles,
+/// fit, scroll and paged pages, compact chords, wrapped lines and titles,
 /// chords crowded over short syllables, tablature folded by the ladder and
 /// shown in wrapped systems, a chord grid with annotations, the search screen with its pills and
 /// dropping columns, 1x and 2x, and body sizes from the
@@ -35,8 +35,8 @@ const CASES: &[(&str, &[&str])] = &[
         &["page-dark", "--size", "980x720", "--scale", "1"],
     ),
     (
-        "sample-inline-300x228@2x",
-        &["page-inline", "--size", "300x228", "--scale", "2"],
+        "sample-inline-300x244@2x",
+        &["page-inline", "--size", "300x244", "--scale", "2"],
     ),
     (
         "scroll-560x340@1x",

@@ -179,6 +179,7 @@ pub struct Config {
     pub margin_x: f32,
     pub margin_top: f32,
     pub margin_bottom: f32,
+    pub header_size: f32,
     pub title_size: f32,
     pub subtitle_size: f32,
     pub label_size: f32,
@@ -487,6 +488,7 @@ impl Config {
             margin_x: take!("margin_x"),
             margin_top: take!("margin_top"),
             margin_bottom: take!("margin_bottom"),
+            header_size: take!("header_size"),
             title_size: take!("title_size"),
             subtitle_size: take!("subtitle_size"),
             label_size: take!("label_size"),
@@ -656,6 +658,7 @@ impl Config {
     fn metrics_at(&self, body_size: f32) -> Metrics {
         Metrics {
             reference_size: body_size,
+            header_reference_size: self.header_size,
             title_size: self.title_size,
             subtitle_size: self.subtitle_size,
             label_size: self.label_size,
@@ -852,6 +855,7 @@ impl App {
     fn page_metrics(&self, body: f32) -> PageMetrics {
         let c = &self.config;
         PageMetrics {
+            header_scale: c.header_size / body,
             title_size: c.title_size,
             title_baseline: c.title_baseline,
             subtitle_size: c.subtitle_size,
@@ -1264,29 +1268,26 @@ impl App {
             height: f32::INFINITY,
             ..self.viewport(width, height, body)
         };
-        // Lines and titles wrap at the content width, so only an unbreakable
-        // run (a tab row, one enormous word) can still fail. A header is one
-        // scroll group, and a group taller than the viewport could never be
-        // shown whole, so a title that wraps past half the content box drops
-        // here exactly as ladder step 9 drops it from a fitted page.
-        // The header is one scroll group, so it must stay well inside the
-        // viewport: past half of it, drop what the ladder drops first —
-        // diagrams (step 4), then pills (step 8), then the title (step 9).
+        // The header is one scroll group. Keep it inside the content width
+        // and leave at least half the viewport for the song.
         let view_height = self.viewport(width, height, body).height;
         let mut base = Options {
             fold_tabs: self.tabs == Tabs::Fold,
             ..Options::default()
         };
-        let too_tall = |o: &Options| {
-            o.header(&measured.header, &metrics, tall.width).height > view_height / 2.0
+        let header_width = tall.width / metrics.header_scale;
+        let header_overflows = |o: &Options| {
+            let header = o.header(&measured.header, &metrics, header_width);
+            header.height * metrics.header_scale > view_height / 2.0
+                || header.width > header_width + 1e-4
         };
-        if too_tall(&base) {
+        if header_overflows(&base) {
             base.hide_diagrams = true;
         }
-        if too_tall(&base) {
+        if header_overflows(&base) {
             base.hide_pills = true;
         }
-        if too_tall(&base) {
+        if header_overflows(&base) {
             base.hide_title = true;
         }
         let mut long = cpl_layout::layout(measured, &metrics, tall, base, 0);
@@ -1297,8 +1298,7 @@ impl App {
             };
             long = cpl_layout::layout(measured, &metrics, tall, inline, 7);
         }
-        // A single title word wider than the window still clips at its edge
-        // rather than withholding the song.
+        // An overwide byline can still clip without withholding the song.
         long.fits = long.fit.meets_floor;
         if !long.fits {
             for item in &mut fit.text {
@@ -1634,13 +1634,14 @@ impl App {
             },
             ladder_step: solution.step,
         };
+        let header_size = c.header_size;
         for (row, baseline) in &solution.header.title_rows {
             frame.text.push(Text {
                 group: 0,
                 content: row.clone(),
                 x: c.margin_x,
-                baseline: c.margin_top + baseline * body,
-                size: c.title_size * solution.header.title_scale * body,
+                baseline: c.margin_top + baseline * header_size,
+                size: c.title_size * header_size,
                 weight: 700,
                 face: Face::System,
                 tracking: 0.0,
@@ -1651,9 +1652,9 @@ impl App {
             frame.text.push(Text {
                 group: 0,
                 content: artist.clone(),
-                x: c.margin_x + x * body,
-                baseline: c.margin_top + baseline * body,
-                size: c.subtitle_size * body,
+                x: c.margin_x + x * header_size,
+                baseline: c.margin_top + baseline * header_size,
+                size: c.subtitle_size * header_size,
                 weight: 400,
                 face: Face::System,
                 tracking: 0.0,
@@ -1661,28 +1662,28 @@ impl App {
             });
         }
         for (pill, &(x, centre)) in header.pills.iter().zip(&solution.header.pills) {
-            let left = c.margin_x + x * body;
-            let centre = c.margin_top + centre * body;
+            let left = c.margin_x + x * header_size;
+            let centre = c.margin_top + centre * header_size;
             frame.shapes.push(Shape {
                 group: 0,
                 x: left,
-                y: centre - c.pill_height * body / 2.0,
-                width: m.pill_width(pill) * body,
-                height: c.pill_height * body,
-                radius: c.pill_height * body / 2.0,
-                stroke: Some(c.pill_stroke * body),
+                y: centre - c.pill_height * header_size / 2.0,
+                width: m.pill_width(pill) * header_size,
+                height: c.pill_height * header_size,
+                radius: c.pill_height * header_size / 2.0,
+                stroke: Some(c.pill_stroke * header_size),
                 ink: Ink::Soft,
             });
             // The mock centres a 21 pt line box in the pill; for SF Pro that
             // puts the baseline 0.355 of the text size below the middle.
-            let baseline = centre + 0.355 * c.meta_size * body;
+            let baseline = centre + 0.355 * c.meta_size * header_size;
             let style = |role| c.metrics().style(role);
             frame.text.push(Text {
                 group: 0,
                 content: pill.label.clone(),
-                x: left + c.pill_pad * body,
+                x: left + c.pill_pad * header_size,
                 baseline,
-                size: c.meta_size * body,
+                size: c.meta_size * header_size,
                 weight: style(Role::PillLabel).weight,
                 face: Face::System,
                 tracking: c.meta_tracking,
@@ -1691,9 +1692,9 @@ impl App {
             frame.text.push(Text {
                 group: 0,
                 content: pill.value.clone(),
-                x: left + (c.pill_pad + pill.label_width + c.pill_kv_gap) * body,
+                x: left + (c.pill_pad + pill.label_width + c.pill_kv_gap) * header_size,
                 baseline,
-                size: c.meta_size * body,
+                size: c.meta_size * header_size,
                 weight: style(Role::PillValue).weight,
                 face: Face::System,
                 tracking: c.meta_tracking,
@@ -1704,9 +1705,9 @@ impl App {
             frame.shapes.push(Shape {
                 group: 0,
                 x: c.margin_x,
-                y: c.margin_top + rule * body - c.header_rule * body,
+                y: c.margin_top + rule * header_size - c.header_rule * header_size,
                 width: width - 2.0 * c.margin_x,
-                height: c.header_rule * body,
+                height: c.header_rule * header_size,
                 radius: 0.0,
                 stroke: None,
                 ink: Ink::Faint,
@@ -1717,20 +1718,35 @@ impl App {
                 &mut frame,
                 &m,
                 diagram,
-                (c.margin_x + x * body, c.margin_top + top * body),
-                body,
+                (
+                    c.margin_x + x * header_size,
+                    c.margin_top + top * header_size,
+                ),
+                header_size,
                 header.mark_width,
             );
         }
-        let y = c.margin_top + solution.header.height * body;
+        let y = c.margin_top + solution.header.height * header_size;
         let content_end = height - c.margin_bottom - c.status_height * body;
         let wrap = self.viewport(width, height, body).width;
         if frame.fits {
             let metrics = c.metrics();
             let label_style = metrics.style(Role::Label);
-            let mut column_x = c.margin_x;
+            let columns = &solution.fit.columns;
+            let column_widths: Vec<f32> = columns
+                .iter()
+                .map(|range| {
+                    solution.blocks[range.clone()]
+                        .iter()
+                        .map(|b| b.width)
+                        .fold(0.0, f32::max)
+                })
+                .collect();
+            let occupied = column_widths.iter().sum::<f32>()
+                + c.column_gutter * columns.len().saturating_sub(1) as f32;
+            let mut column_x = c.margin_x + (wrap - occupied).max(0.0) * body / 2.0;
             let mut line_group = 1;
-            for range in &solution.fit.columns {
+            for (range, column_width) in columns.iter().zip(column_widths) {
                 let mut section_y = y;
                 for (offset, index) in range.clone().enumerate() {
                     let section = &measured.sections[index];
@@ -1844,7 +1860,8 @@ impl App {
                         continue;
                     }
                     let visible = o.visible_lines(section);
-                    for line in section.lines.iter().take(visible) {
+                    for (index, line) in section.lines.iter().take(visible).enumerate() {
+                        section_y += o.line_gap(line, index, &m) * body;
                         let rows = o.rows(section, line, &m, wrap);
                         let row_height = o.row_height(section, line, &m) * body;
                         for (row_index, row) in rows.iter().enumerate() {
@@ -1866,10 +1883,9 @@ impl App {
                                     Role::Chord => (c.chord_baseline, Ink::Accent),
                                     Role::InlineChord => (c.inline_chord_baseline, Ink::Accent),
                                     Role::Lyric if inline => (c.inline_lyric_baseline, Ink::Strong),
-                                    Role::Comment if inline => (c.inline_lyric_baseline, Ink::Soft),
+                                    Role::Comment => (c.inline_lyric_baseline, Ink::Soft),
                                     // A grid row, in the tab face.
                                     Role::Tab if inline => (c.inline_lyric_baseline, Ink::Strong),
-                                    Role::Comment => (c.lyric_baseline, Ink::Soft),
                                     _ => (c.lyric_baseline, Ink::Strong),
                                 };
                                 frame.text.push(Text {
@@ -1893,10 +1909,6 @@ impl App {
                         line_group += 1;
                     }
                 }
-                let column_width = solution.blocks[range.clone()]
-                    .iter()
-                    .map(|b| b.width)
-                    .fold(0.0, f32::max);
                 column_x += (column_width + c.column_gutter) * body;
             }
         } else {
@@ -2048,20 +2060,33 @@ mod tests {
             .map(|l| find(&frame, l))
             .collect();
         assert!(lyrics.windows(2).all(|pair| pair[0].x < pair[1].x));
+        assert!(lyrics[0].x > app.config().margin_x);
         assert!(lyrics.iter().all(|item| item.size >= 17.0));
         assert!(lyrics.iter().all(|item| item.size == lyrics[0].size));
     }
 
     #[test]
-    fn removes_section_gap_before_anything_else() {
-        let app = app(
-            "{title: Test}\n{start_of_verse: Verse 1}\n[C]Alpha\n{end_of_verse}\n{start_of_verse: Verse 2}\n[G]Bravo\n{end_of_verse}",
+    fn compact_sections_keep_space_between_them() {
+        let app =
+            app("{title: Test}\n{sov: Verse 1}\n[C]Alpha\n{eov}\n{sov: Verse 2}\n[G]Bravo\n{eov}");
+        let body = 17.0;
+        let metrics = app.page_metrics(body);
+        let options = Options {
+            tight_sections: true,
+            ..Options::default()
+        };
+        let solution = cpl_layout::layout(
+            &app.measured,
+            &metrics,
+            app.viewport(400.0, 600.0, body),
+            options,
+            1,
         );
-        let frame = at_step(&app, 190.0, 1);
-        assert_eq!(frame.columns, 1);
-        let body = find(&frame, "Bravo").size;
-        assert!(body >= 17.0);
-        assert_eq!(find(&frame, "Test").size, body * app.config().title_size);
+        let frame = app.compose(400.0, 600.0, body, &app.measured, &solution);
+        let gap = find(&frame, "VERSE 2").baseline - find(&frame, "VERSE 1").baseline;
+        let section_height = solution.blocks[0].height * body;
+        assert!(gap > section_height);
+        assert!(gap < section_height + metrics.section_gap * body);
     }
 
     #[test]
@@ -2091,6 +2116,14 @@ mod tests {
                 let byline = frame.text.iter().find(|t| t.content == "Ada");
                 if let (Some(title), Some(byline)) = (title, byline) {
                     assert!(byline.baseline > title.baseline, "{width}×{height}");
+                    assert_eq!(
+                        title.size,
+                        app.config().header_size * app.config().title_size
+                    );
+                    assert_eq!(
+                        byline.size,
+                        app.config().header_size * app.config().subtitle_size
+                    );
                 }
             }
         }
@@ -2299,7 +2332,7 @@ mod tests {
     }
 
     #[test]
-    fn inline_chords_are_last_fit_that_keeps_lyrics_readable() {
+    fn compact_chords_stay_above_their_lyrics() {
         let app = app(
             "{title: Test}\n{start_of_verse: A}\n[C]Alpha\n[G]Bravo\n[Am]Charlie\n{end_of_verse}",
         );
@@ -2307,7 +2340,7 @@ mod tests {
         let chord = find(&frame, "C");
         let lyric = find(&frame, "Alpha");
         assert!(chord.baseline < lyric.baseline);
-        assert!(chord.x < lyric.x);
+        assert_eq!(chord.x, lyric.x);
         assert!(lyric.size >= app.config().body_size);
     }
 
@@ -2481,7 +2514,7 @@ mod tests {
     }
 
     #[test]
-    fn comments_draw_in_the_soft_ink_on_the_lyric_baseline() {
+    fn comments_draw_as_separated_cues() {
         let app = app("{title: Test}\n{sov: A}\n[C]Alpha\n{c: Repeat x2}\n{eov}");
         let frame = app.frame(600.0, 600.0);
         let comment = find(&frame, "Repeat x2");
@@ -2489,8 +2522,11 @@ mod tests {
         assert_eq!(comment.ink, Ink::Soft);
         assert_eq!(comment.size, lyric.size);
         assert_eq!(comment.x, lyric.x);
-        let row = app.config().line_height * lyric.size;
-        assert!((comment.baseline - lyric.baseline - row).abs() < 0.01);
+        assert!(comment.weight > lyric.weight);
+        let c = app.config();
+        let advance = (c.line_height + c.section_gap + c.inline_lyric_baseline - c.lyric_baseline)
+            * lyric.size;
+        assert!((comment.baseline - lyric.baseline - advance).abs() < 0.01);
     }
 
     #[test]
@@ -2893,7 +2929,7 @@ mod tests {
         }
         let song = || cpl_song::parse(&source).song;
         let at =
-            |config: Config| App::new(song(), config, Polarity::Light, &Fixed).frame(500.0, 400.0);
+            |config: Config| App::new(song(), config, Polarity::Light, &Fixed).frame(500.0, 320.0);
         assert!(!at(Config::default().with_floor(17.0).unwrap()).fits);
         assert!(at(Config::default().with_floor(8.0).unwrap()).fits);
     }
