@@ -6,7 +6,7 @@ mod text;
 
 pub use text::CoreText;
 
-use cpl_app::{Face, Frame, Ink, Polarity, Shape};
+use cpl_app::{Accent, Face, Frame, Ink, Polarity, Shape, THEMES};
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Hash, PartialEq, Eq)]
@@ -60,20 +60,28 @@ impl RasterCache {
     }
 }
 
-/// The Figma mock's Polarity variables: ink, ink-soft, ink-faint, paper and
-/// ink-wash, in light and dark.
-fn ink_level(polarity: Polarity, ink: Ink) -> u8 {
+/// The Figma mock's Polarity variables as RGB: ink, ink-soft, ink-muted,
+/// ink-faint, paper and ink-wash are grays inverted with the polarity;
+/// highlight is a marker yellow that darkens to amber on black so white
+/// text stays readable on it; accent is the Theme menu's colour.
+fn ink_rgb(polarity: Polarity, ink: Ink, accent: &Accent) -> [u8; 3] {
+    let gray = |level: u8| [level; 3];
     match (polarity, ink) {
-        (Polarity::Light, Ink::Strong) => 0,
-        (Polarity::Light, Ink::Soft) => 74,
-        (Polarity::Light, Ink::Faint) => 184,
-        (Polarity::Dark, Ink::Strong) => 255,
-        (Polarity::Dark, Ink::Soft) => 180,
-        (Polarity::Dark, Ink::Faint) => 74,
-        (Polarity::Light, Ink::Paper) => 255,
-        (Polarity::Dark, Ink::Paper) => 0,
-        (Polarity::Light, Ink::Wash) => 242,
-        (Polarity::Dark, Ink::Wash) => 22,
+        (Polarity::Light, Ink::Strong) => gray(0),
+        (Polarity::Light, Ink::Soft) => gray(74),
+        (Polarity::Light, Ink::Muted) => gray(128),
+        (Polarity::Light, Ink::Faint) => gray(184),
+        (Polarity::Dark, Ink::Strong) => gray(255),
+        (Polarity::Dark, Ink::Soft) => gray(180),
+        (Polarity::Dark, Ink::Muted) => gray(128),
+        (Polarity::Dark, Ink::Faint) => gray(74),
+        (Polarity::Light, Ink::Paper) => gray(255),
+        (Polarity::Dark, Ink::Paper) => gray(0),
+        (Polarity::Light, Ink::Wash) => gray(242),
+        (Polarity::Dark, Ink::Wash) => gray(22),
+        (Polarity::Light, Ink::Highlight) => [255, 224, 102],
+        (Polarity::Dark, Ink::Highlight) => [122, 98, 0],
+        (_, Ink::Accent) => accent.rgb(polarity),
     }
 }
 
@@ -88,7 +96,7 @@ fn draw_shape(
     top: i32,
     shape: &Shape,
     scale: f32,
-    ink: u8,
+    ink: [u8; 3],
 ) {
     let mut x0 = shape.x * scale;
     let mut y0 = shape.y * scale - top as f32;
@@ -130,7 +138,7 @@ fn draw_shape(
             }
             let alpha = (coverage * 255.0).round() as u16;
             let at = (py as usize * width as usize + px as usize) * 4;
-            for channel in &mut pixels[at..at + 3] {
+            for (channel, ink) in pixels[at..at + 3].iter_mut().zip(ink) {
                 *channel = (((*channel as u16) * (255 - alpha) + ink as u16 * alpha) / 255) as u8;
             }
         }
@@ -143,9 +151,19 @@ pub struct PageImage {
     pub pixels: Vec<u8>,
 }
 
-#[derive(Default)]
 pub struct PageCompositor {
     rasters: RasterCache,
+    /// What `Ink::Accent` draws in: chord names.
+    pub accent: Accent,
+}
+
+impl Default for PageCompositor {
+    fn default() -> Self {
+        Self {
+            rasters: RasterCache::default(),
+            accent: THEMES[0],
+        }
+    }
 }
 
 impl PageCompositor {
@@ -170,6 +188,7 @@ impl PageCompositor {
         } else {
             0
         };
+        let accent = self.accent;
         let mut pixels = vec![paper; width_usize * height_usize * 4];
         for pixel in pixels.chunks_exact_mut(4) {
             pixel[3] = 255;
@@ -182,14 +201,14 @@ impl PageCompositor {
                 top,
                 shape,
                 scale,
-                ink_level(frame.polarity, shape.ink),
+                ink_rgb(frame.polarity, shape.ink, &accent),
             );
         }
         for item in &frame.text {
             let Some(raster) = self.rasters.get(item, scale) else {
                 continue;
             };
-            let ink = ink_level(frame.polarity, item.ink);
+            let ink = ink_rgb(frame.polarity, item.ink, &accent);
             let left = (item.x * scale).round() as i32 - text::RASTER_PAD;
             let item_top = (item.baseline * scale).round() as i32 - raster.baseline as i32 - top;
             if item_top >= height as i32 || item_top + (raster.height as i32) <= 0 {
@@ -211,7 +230,7 @@ impl PageCompositor {
                         continue;
                     }
                     let offset = (y as usize * width_usize + x as usize) * 4;
-                    for channel in &mut pixels[offset..offset + 3] {
+                    for (channel, ink) in pixels[offset..offset + 3].iter_mut().zip(ink) {
                         *channel =
                             (((*channel as u16) * (255 - alpha) + ink as u16 * alpha) / 255) as u8;
                     }

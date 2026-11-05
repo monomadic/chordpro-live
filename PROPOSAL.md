@@ -104,7 +104,7 @@ over), a generic metadata multimap, a `{define}` map, `TransposeBy`. What
 | **Metadata** — every standard item (`title subtitle artist composer lyricist arranger copyright album year key time tempo duration capo sorttitle tag`), repeated items, `{meta: name value}` as the generic form, read-only `_key` after transpose | Parsed; `tag` metadata is a file-authored tag in the library |
 | **`%{…}` substitution** — `%{name}`, `%{name|true|false}`, `%{name=value|…}`, `%{}` inside a conditional | Evaluated in every text that the spec allows it in |
 | **Lyric lines** — `[chord]`, `[*annotation]`, chords mid-word, chord-only lines, lines of only chords, `\t`, trailing-space rules | Parsed |
-| **Markup** — `<b>`, `<i>`, `<u>`, `<span …>` and the other Pango-style tags the spec admits in lyrics and comments | Parsed to styled runs; the renderer draws weight and italic, and ignores colour (the page is black and white by design) |
+| **Markup** — `<b>`, `<i>`, `<u>`, `<span …>` and the other Pango-style tags the spec admits in lyrics and comments | Parsed to styled runs; the renderer draws weight and italic, and ignores markup colour (the viewer owns colour: only its accent and highlight) |
 | **Chord names** — a real chord grammar (root, quality, extensions, bass) in the Common, Dutch, German, Latin and Scandinavian note-name systems, Nashville and Roman numbers, note-only mode | Parsed and transposed; the fixed accidental spelling rule stays the *default*, `{transpose: 2f}`'s `s`/`f` suffixes override it |
 | **`{key}`, `{capo}`, `{transpose: n}`** and their interaction (transpose applies from that point on, creates `key_actual`) | Honoured; a mid-song `{transpose}` is a per-section offset in the model |
 | **`{define}`** for string instruments (`base-fret`, `frets`, `fingers`, keys), for keyboards (`keys`), `{chord}` to show a diagram inline, and the `copy`/`display`/`diagram` modifiers | Parsed; string and keyboard diagrams both render in the chord viewer |
@@ -316,11 +316,16 @@ analytically antialiased, with no bitmap scaled anywhere. If a later feature
 needs a true path (a slur, a brace), `resvg`/`tiny-skia` rasterises it to the
 same atlas, as abner already does for its logo.
 
-**Two colours only.** The theme is a polarity plus an ink ramp: `ink`,
-`ink_soft` (chords, labels, metadata) and `ink_faint` (rules, inactive lines),
-authored as gray levels and inverted as a whole. The surface is non-sRGB as in
-switchblade; with only grays in play the one gamma question left is edge
-coverage, and it is listed under unknowns.
+**Monochrome first, colour sparingly.** The theme is a polarity plus an ink
+ramp: `ink`, `ink_soft` (labels, metadata), `ink_muted` (instructions that
+should recede) and `ink_faint` (rules, inactive lines), authored as gray
+levels and inverted as a whole. Colour arrived once the monochrome page
+looked right, and only where it carries meaning: chord names take an
+**accent** chosen from the Theme menu (Apple's system colours with their
+dark variants, default blue `#007AFF`; Ink keeps chords in `ink_soft`), and
+search matches sit on a highlighter yellow that darkens to amber on black.
+The surface is non-sRGB as in switchblade; edge coverage remains the gamma
+question, listed under unknowns.
 
 **One text pipeline, one quad pipeline**, drawn content-then-overlay as
 switchblade does so a panel can sit over the page's own labels.
@@ -599,7 +604,8 @@ These are not re-litigated without the user:
   launch.
 - Em-unit layout with a readability floor in points and the ladder above;
   fit never draws under the floor.
-- Black and white only, as a polarity toggle. No colour themes.
+- Black and white first, as a polarity toggle; colour only as the chord
+  accent (Theme menu) and the search highlight.
 - Sidecar metadata; the app never writes a song file.
 - No Xcode project for either platform; scripts assemble both bundles.
 - Config is a complete default TOML overlaid by a user file with unknown keys

@@ -100,14 +100,25 @@ lyric hit, when asked for, ranks under both.
 - a query line: a soft magnifying glass (drawn as a ring and a handle of
   discs) or `#` while a tag is typed, the query and its caret, the hint
   under the query, then a rule;
-- `FILTERS` and its pills: filled for active filters (paper text), outlined
-  for `+ tag` and the sort;
+- the hint in the muted ink, so it recedes behind the query;
+- `FILTERS` on its own line and the pills under it, drawn exactly as the
+  song page's metadata pills (the page metrics at the mock's body size,
+  where `Page/Meta` equals `search_label_size`): `TAG rock ×`,
+  `RATING ★ 3+ ×`, `+ TAG` and `SORT TITLE`;
 - a results box with a bold header row (the rating column is `RATING`) and
-  one row per match, with matched
-  letters in bold and the selected row in the wash ink;
+  one row per match, with matched letters in bold on a highlighter-yellow
+  mark and the focused row in the wash ink;
 - a footer, on the page status strip's baseline, with counts, folders or
   the last action's notice, and the keys as keycaps: a washed, outlined
   chip per key in strong ink with its action beside it in soft ink.
+
+The frame records where it drew the rows (`RowsArea`), and the search
+page carries that back to the window thread, which hit-tests the pointer
+itself so a move inside one row sends nothing: moving onto another row
+sends `SearchInput::Focus`, a click `OpenRow`, and the wheel `Scroll` in
+whole rows (trackpad points are gathered into rows). Scrolling moves the
+view, pulling the focus along only as far as keeps it visible; Enter opens
+the focused row.
 
 Metadata columns are as wide as their widest value or header plus
 `search_column_gap`. Title and artist share the rest, 58:42. While they

@@ -39,7 +39,7 @@ A macOS viewer is built; the iOS host is not.
   old page until the new one is complete.
 
 On the page: a header with metadata pills and a chord diagram for every
-chord used; tablature as small, soft staves that wrap into systems at bar
+chord used, chord names in the Theme menu's accent; tablature as small, soft staves that wrap into systems at bar
 lines (ladder step 5 folds it, `t` pins it); an overflowing song scrolls or,
 with `v`, turns pages.
 
@@ -120,6 +120,7 @@ Options follow the songs:
 | `--fullscreen` | Open in fake fullscreen, as `f` toggles it |
 | `--tabs show\|fold` | Pin tablature (`testdata/greensleeves.cho` has long tabs) |
 | `--transpose 2` (or `-3`) | Open transposed, as `]` or `[` would |
+| `--accent purple` | Open with that Theme menu accent (`Blue` … `Teal`, or `Ink`) |
 | `--search ris [--open 2 [--next 1]]` | Open in search with a query typed; open the second result as Enter would; step through the results as `n` does |
 | `--store lib.toml` | Use another sidecar (or `$CPL_LIBRARY_STORE`) |
 | `--floor 10` | Set the readability floor in points |
@@ -139,6 +140,11 @@ Keys in the viewer:
 | ↑ ↓, Space, Page Up/Down, Home, End | Scroll or turn pages |
 | `/`, `o`, ⌘F | Search: digits rate, `#` tags, Tab sorts, Enter opens, Escape returns. The query edits as a Mac text field (← →, ⌥ and ⌘ arrows, ⌥⌫, ⌘⌫, Ctrl-A E B F W U K D N P, ⌘V ⌘C ⌘X) |
 | `q`, Escape, ⌘Q | Quit |
+
+In search the pointer works too: moving onto a row focuses it (only a
+move does, so a resting pointer never takes the keyboard's row), a click
+opens it, and the wheel or trackpad scrolls the list. The **Theme** menu in
+the menu bar sets the chord accent.
 
 **Window captures.** Verify visual changes with a capture reached through
 launch flags, never by injecting global keystrokes:
@@ -215,7 +221,11 @@ the commit message.
 - **Xcode-minimal.** macOS needs only the Command Line Tools; bundles are
   built by scripts in `packaging/` (and `ios/`, planned). No `.xcodeproj`,
   ever.
-- **Black and white only**, as a polarity toggle. No colour themes.
+- **Black and white first**, as a polarity toggle; colour is used
+  sparingly, never as decoration. Chord names take the Theme menu's accent
+  (`THEMES` in `cpl-app`, default `#007AFF`, Ink restores monochrome) and
+  search matches sit on a highlighter yellow. Every ink, colour included,
+  has a light and a dark value.
 - Keep dependencies lean; ask before adding one.
 
 ## Conventions

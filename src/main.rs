@@ -1,9 +1,11 @@
 mod conform;
 mod editor;
 mod json;
+mod theme_menu;
 
 use cpl_app::{
-    App, Config, Frame, Library, Polarity, Search, SearchAction, SearchInput, Setlist, Store, Tabs,
+    Accent, App, Config, Frame, Library, Polarity, RowsArea, Search, SearchAction, SearchInput,
+    Setlist, Store, THEMES, Tabs,
 };
 use cpl_render::{CoreText, Gpu, PageCompositor, PageImage, Presented, View};
 use std::{
@@ -17,7 +19,7 @@ use std::{
 use winit::{
     application::ApplicationHandler,
     event::StartCause,
-    event::{ElementState, KeyEvent, WindowEvent},
+    event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{Key, ModifiersState, NamedKey},
     window::{Window, WindowId},
@@ -77,12 +79,21 @@ struct Viewer {
     needs_present: bool,
     config: Config,
     polarity: Polarity,
+    /// The Theme menu's accent, an index into `THEMES`.
+    accent: usize,
+    /// Wakes the event loop when a Theme menu item is chosen.
+    menu_proxy: Option<winit::event_loop::EventLoopProxy<PageReady>>,
     /// The tablature choice; `t` unfolds a folded tab or folds a shown one.
     tabs: Tabs,
     /// Whether the accepted page has tablature, and whether it is folded.
     page_tabs: Option<bool>,
     /// Keys go to search rather than the page.
     searching: bool,
+    /// Search's result rows as last drawn, the pointer in page points, and
+    /// wheel travel not yet a whole row.
+    rows: Option<RowsArea>,
+    pointer: Option<(f32, f32)>,
+    wheel_rest: f32,
     /// Opened with no songs: the library is the home screen, and closing it
     /// before a song is opened quits rather than showing a placeholder.
     library_home: bool,
@@ -126,6 +137,8 @@ struct PageRequest {
     /// Paged mode's page; `offset` is ignored when set.
     page: Option<usize>,
     polarity: Polarity,
+    /// The Theme menu's choice, an index into `THEMES`.
+    accent: usize,
     tabs: Tabs,
     /// The setlist the host thinks it is in; an open from search makes a
     /// new one, and `song` then means nothing until the host catches up.
@@ -209,6 +222,8 @@ struct ReadyPage {
     tabs: Option<bool>,
     /// The worker is showing search, not a song.
     searching: bool,
+    /// Where search drew its result rows, for the pointer.
+    rows: Option<RowsArea>,
     setlist: u64,
     song_count: usize,
     slab: Arc<Slab>,
@@ -225,6 +240,7 @@ struct ViewKey {
     scale: u32,
     inset: u32,
     polarity: Polarity,
+    accent: usize,
     tabs: Tabs,
 }
 
@@ -236,6 +252,7 @@ impl ViewKey {
             scale: request.scale.to_bits(),
             inset: request.inset.to_bits(),
             polarity: request.polarity,
+            accent: request.accent,
             tabs: request.tabs,
         }
     }
@@ -318,6 +335,7 @@ fn compose_slab(
         .min(request.max_texture_side)
         .max(1);
     let top = (offset_px - viewport as i32).clamp(0, page_px as i32 - height as i32);
+    compositor.accent = THEMES[request.accent];
     let image = compositor.compose_slab(page, request.scale, request.width, height, top);
     *next_id += 1;
     Arc::new(Slab {
@@ -356,6 +374,7 @@ impl Worker {
     /// scroll composes only the status strip. Returns whether a slab was
     /// composed, for the timing log.
     fn answer(&mut self, request: &PageRequest) -> (ReadyPage, bool) {
+        self.compositor.accent = THEMES[request.accent];
         if self.search.is_some() {
             return (self.answer_search(request), true);
         }
@@ -485,6 +504,7 @@ impl Worker {
                 view_offset: scroll.offset,
                 tabs,
                 searching: false,
+                rows: None,
                 setlist: self.setlist_id,
                 song_count: self.setlist.len(),
                 slab: Arc::clone(&retained.slab),
@@ -781,6 +801,7 @@ impl Worker {
             view_offset: 0.0,
             tabs: None,
             searching: true,
+            rows: self.search.as_ref().and_then(Search::rows_area),
             setlist: self.setlist_id,
             song_count: self.setlist.len(),
             slab,
@@ -999,6 +1020,7 @@ impl Viewer {
             offset: self.scroll_offset,
             page: self.paged.then_some(self.page),
             polarity: self.polarity,
+            accent: self.accent,
             tabs: self.tabs,
             setlist: self.setlist,
             max_texture_side: self.max_texture_side,
@@ -1020,6 +1042,7 @@ impl Viewer {
                 continue;
             }
             self.searching = page.searching;
+            self.rows = page.rows;
             if page.setlist != self.setlist {
                 // Search opened a new setlist: follow it, from the top.
                 self.setlist = page.setlist;
@@ -1143,6 +1166,11 @@ impl ApplicationHandler<PageReady> for Viewer {
         }
         self.window = Some(window);
         self.gpu = Some(gpu);
+        if let Some(proxy) = self.menu_proxy.take() {
+            theme_menu::install(self.accent, move || {
+                let _ = proxy.send_event(PageReady);
+            });
+        }
         self.request_page();
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
@@ -1160,6 +1188,73 @@ impl ApplicationHandler<PageReady> for Viewer {
             }
             WindowEvent::ScaleFactorChanged { .. } => self.request_page(),
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+            // The pointer in search: moving onto a row focuses it (only a
+            // move does, so a resting pointer never steals the keyboard's
+            // row), a click opens it, and the wheel scrolls the list.
+            WindowEvent::CursorMoved { position, .. } => {
+                let window = self.window.as_ref().unwrap();
+                let scale = window.scale_factor() as f32;
+                let inset = if is_fullscreen(window) {
+                    0.0
+                } else {
+                    TITLE_STRIP_PT
+                };
+                let point = (position.x as f32 / scale, position.y as f32 / scale - inset);
+                self.pointer = Some(point);
+                if !self.searching {
+                    return;
+                }
+                let row = self.rows.and_then(|area| {
+                    area.row_at(point.0, point.1)
+                        .filter(|&row| row != area.cursor)
+                });
+                if let Some(row) = row {
+                    let _ = self
+                        .requests
+                        .send(ToWorker::Search(SearchInput::Focus(row)));
+                    self.request_page();
+                }
+            }
+            WindowEvent::CursorLeft { .. } => self.pointer = None,
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } if self.searching => {
+                let row = self
+                    .rows
+                    .zip(self.pointer)
+                    .and_then(|(area, (x, y))| area.row_at(x, y));
+                if let Some(row) = row {
+                    let _ = self
+                        .requests
+                        .send(ToWorker::Search(SearchInput::OpenRow(row)));
+                    self.request_page();
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } if self.searching => {
+                let Some(area) = self.rows else {
+                    return;
+                };
+                // Wheel notches arrive as lines, a row each; a trackpad as
+                // points. Either way positive y moves the content down,
+                // which is up the list.
+                self.wheel_rest -= match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => {
+                        let scale = self.window.as_ref().unwrap().scale_factor();
+                        (p.y / scale) as f32 / area.row_height
+                    }
+                };
+                let rows = self.wheel_rest.trunc();
+                self.wheel_rest -= rows;
+                if rows != 0.0 {
+                    let _ = self
+                        .requests
+                        .send(ToWorker::Search(SearchInput::Scroll(rows as i32)));
+                    self.request_page();
+                }
+            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -1425,6 +1520,10 @@ impl ApplicationHandler<PageReady> for Viewer {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: PageReady) {
+        if let Some(accent) = theme_menu::take_choice() {
+            self.accent = accent;
+            self.request_page();
+        }
         self.accept_ready_page();
         if self.library_home && !self.searching && self.setlist == 0 {
             event_loop.exit();
@@ -1621,6 +1720,7 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
     let mut size = (980.0_f64, 720.0_f64);
     let mut scale = 2.0_f32;
     let mut dark = false;
+    let mut accent = 0;
     let mut offset = 0.0_f32;
     let mut page = None;
     let mut tabs = Tabs::Auto;
@@ -1669,6 +1769,10 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
                 .map(|v| transpose = v)
                 .is_some(),
             "--search" => value().map(|v| search = Some(v)).is_some(),
+            "--accent" => value()
+                .and_then(|v| Accent::named(&v))
+                .map(|v| accent = v)
+                .is_some(),
             "--store" => value().map(|v| store = Some(PathBuf::from(v))).is_some(),
             "--config" => value()
                 .map(|v| config_path = Some(PathBuf::from(v)))
@@ -1773,6 +1877,7 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
         offset,
         page,
         polarity,
+        accent,
         tabs,
         setlist: 0,
         max_texture_side: 8192,
@@ -1838,6 +1943,7 @@ fn main() -> ExitCode {
     let mut store_path = None;
     let mut config_path = None;
     let mut floor = None;
+    let mut accent = 0;
     while args.len() >= 2
         && matches!(
             args[args.len() - 2].as_str(),
@@ -1851,6 +1957,7 @@ fn main() -> ExitCode {
                 | "--store"
                 | "--config"
                 | "--floor"
+                | "--accent"
                 | "--open"
                 | "--next"
         )
@@ -1874,6 +1981,15 @@ fn main() -> ExitCode {
                 Ok(n) => next_step = n,
                 _ => {
                     eprintln!("invalid --next {value:?}; expected a whole number of songs");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else if flag == "--accent" {
+            match Accent::named(&value) {
+                Some(index) => accent = index,
+                None => {
+                    let names: Vec<&str> = THEMES.iter().map(|t| t.name).collect();
+                    eprintln!("invalid --accent {value:?}; expected {}", names.join(", "));
                     return ExitCode::FAILURE;
                 }
             }
@@ -2019,6 +2135,7 @@ fn main() -> ExitCode {
     let (requests, request_rx) = mpsc::channel::<ToWorker>();
     let (result_tx, results) = mpsc::channel::<ReadyPage>();
     let proxy = event_loop.create_proxy();
+    let menu_proxy = event_loop.create_proxy();
     let config = match load_config(config_path, floor) {
         Ok(config) => config,
         Err(error) => {
@@ -2189,9 +2306,14 @@ fn main() -> ExitCode {
         needs_present: false,
         config,
         polarity,
+        accent,
+        menu_proxy: Some(menu_proxy),
         tabs: tabs.unwrap_or_default(),
         page_tabs: None,
         searching,
+        rows: None,
+        pointer: None,
+        wheel_rest: 0.0,
         library_home,
         setlist: 0,
         pending_step: next_step,

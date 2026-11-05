@@ -4,6 +4,24 @@ This is a record of implemented work and observed checks. `TASKS.md` holds
 open work; `PROPOSAL.md` holds design decisions. Dates are local to the project
 session. A passing headless test does not stand in for a visual window check.
 
+## 2026-11-05
+
+- **Colour, sparingly; a mouse in search.** The no-colour rule is lifted
+  to "monochrome first": chord names (rows, inline chords, diagram names)
+  take an accent from a new **Theme** menu (Blue `#007AFF` by default,
+  Indigo, Purple, Pink, Red, Orange, Green, Teal, or Ink for the old
+  monochrome), each item with its swatch; `--accent` opens on one. Search:
+  `FILTERS` sits on its own line with the pills under it, now the song
+  page's metadata pills exactly; matches sit on a highlighter yellow (amber
+  in dark); the hint is in a new muted ink; the pointer focuses a row on
+  move, opens it on click, and the wheel scrolls the list. Checked in a
+  real window: the Theme menu shows the swatches and choosing Purple
+  recolours the open page; search renders checked headlessly in light and
+  dark. Workspace build, tests, strict clippy and the re-blessed goldens
+  pass. Not yet verified by hand in a window: hover, click and wheel
+  scrolling in search. Unchanged: the Figma mock (pills, highlight,
+  accent), and the theme is not remembered across launches.
+
 ## 2026-11-03
 
 - **Open the source in an external editor.** `e` hands the current song to

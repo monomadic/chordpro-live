@@ -2,7 +2,7 @@
 
 `src/main.rs` owns the winit event loop and the wgpu surface. `cpl-render`
 has no winit dependency. A worker uses `PageCompositor` to rasterise whole
-strings through the CoreText shim and compose a monochrome RGBA **slab**: the
+strings through the CoreText shim and compose an RGBA **slab**: the
 rows of the positioned page around the current offset, at most
 `SLAB_VIEWPORTS` (3) viewports tall and never past the adapter's texture
 limit, so a 980×720 pt window at 2x keeps about 35 MB resident however long
@@ -114,3 +114,20 @@ device pixel of antialiasing, the rule abner's shader uses). An outline is
 never thinner than one device pixel, and a filled shape thinner than one
 widens to one about its centre, so a diagram's grid lines hold at 1x. Shapes go through the same slab
 offset as text, so a slab of a page draws the same pixels as the whole page.
+
+## Inks and the Theme menu
+
+`ink_rgb` resolves each `Ink` for the polarity: the gray ramp (strong,
+soft, muted, faint, paper, wash), the search highlight (`#FFE066`, amber
+`#7A6200` on black) and `Ink::Accent`, the compositor's `accent` from
+`cpl_app::THEMES`. The accent is applied at composite time, so changing it
+measures nothing; it rides on the page request and is part of `ViewKey`,
+so the retained page and the preloaded next song recompose in the new
+colour. `src/theme_menu.rs` and `src/menu_shim.m` (built by the root
+`build.rs`, AppKit only) add a **Theme** menu after the app menu, one item
+per theme with its swatch drawn inline in the title, since macOS 26 does
+not draw `image` on these items. Choosing one stores the index and wakes
+the event loop through its proxy; `user_event` takes it and requests a
+page. `--accent NAME` opens on a theme. The choice is not yet remembered
+across launches.
+

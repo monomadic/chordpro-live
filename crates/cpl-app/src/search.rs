@@ -10,7 +10,7 @@
 //! can also carry filters, which become pills: `+tag ` filters on a tag,
 //! `*3` keeps songs rated three stars or more, and `l:` searches lyrics too.
 
-use crate::{Config, Face, Frame, Ink, Measure, Polarity, Shape, Text};
+use crate::{Config, Face, Frame, Ink, Measure, Polarity, Role, Shape, Text};
 use crate::{library::Library, store::Store};
 
 /// What the rows are ordered by when there is no query to rank them.
@@ -73,6 +73,38 @@ pub enum SearchInput {
     DeleteToStart,
     DeleteToEnd,
     DeleteForward,
+    /// The pointer moved onto result row `n` (an index into the results).
+    Focus(usize),
+    /// A click on result row `n`: focus it and open it.
+    OpenRow(usize),
+    /// The scroll wheel, in whole rows; positive moves down the list.
+    Scroll(i32),
+}
+
+/// Where the result rows were last drawn, in page points, so the host can
+/// hit-test the pointer without composing a frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RowsArea {
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub row_height: f32,
+    /// The result index of the first row drawn, and how many rows show.
+    pub first: usize,
+    pub shown: usize,
+    /// The focused result when the frame was drawn.
+    pub cursor: usize,
+}
+
+impl RowsArea {
+    /// The result index under page point (`x`, `y`), if a row is there.
+    pub fn row_at(&self, x: f32, y: f32) -> Option<usize> {
+        if x < self.left || x >= self.right || y < self.top {
+            return None;
+        }
+        let row = ((y - self.top) / self.row_height) as usize;
+        (row < self.shown).then_some(self.first + row)
+    }
 }
 
 /// What the host must do after an input.
@@ -117,6 +149,8 @@ pub struct Search {
     cursor: usize,
     top: usize,
     matches: Vec<Match>,
+    /// Where the last frame drew the rows; `None` before the first frame.
+    area: Option<RowsArea>,
 }
 
 impl Search {
@@ -134,6 +168,11 @@ impl Search {
     /// The library indices of the rows, in order.
     pub fn results(&self) -> Vec<usize> {
         self.matches.iter().map(|m| m.entry).collect()
+    }
+
+    /// Where the last frame drew the result rows.
+    pub fn rows_area(&self) -> Option<RowsArea> {
+        self.area
     }
 
     /// Puts the cursor on library entry `entry` if it is listed.
@@ -175,6 +214,21 @@ impl Search {
                     };
                 }
             }
+            SearchInput::Focus(row) => {
+                if row < self.matches.len() {
+                    self.cursor = row;
+                }
+            }
+            SearchInput::OpenRow(row) => {
+                if row < self.matches.len() {
+                    self.cursor = row;
+                    return SearchAction::Open {
+                        entries: self.results(),
+                        position: row,
+                    };
+                }
+            }
+            SearchInput::Scroll(rows) => self.scroll_by(rows),
             SearchInput::Up => self.move_by(-1),
             SearchInput::Down => self.move_by(1),
             SearchInput::PageUp => self.move_by(-10),
@@ -305,6 +359,16 @@ impl Search {
         self.query.clear();
         self.caret = None;
         self.requery(library, store);
+    }
+
+    /// Scrolls the list without the cursor leading it; the cursor is
+    /// pulled along only as far as it takes to stay on a visible row.
+    fn scroll_by(&mut self, rows: i32) {
+        let shown = self.area.map_or(1, |area| area.shown.max(1));
+        let last_top = self.matches.len().saturating_sub(shown);
+        self.top = self.top.saturating_add_signed(rows as isize).min(last_top);
+        let last_row = (self.top + shown - 1).min(self.matches.len().saturating_sub(1));
+        self.cursor = self.cursor.clamp(self.top, last_row.max(self.top));
     }
 
     fn move_by(&mut self, delta: isize) {
@@ -534,19 +598,20 @@ impl Search {
             hint_baseline,
             hint_size,
             400,
-            Ink::Soft,
+            Ink::Muted,
         ));
         let rule_y = hint_baseline + hint_size * 1.1;
         frame
             .shapes
             .push(rule(left, rule_y, right - left, Ink::Faint));
 
-        // Filters: a pill per tag filter and the rating floor, filled, then
-        // the hint pills for adding a tag and the sort order, outlined.
-        let pill_h = c.search_pill_height;
-        let centre = rule_y + pill_h * 1.3;
+        // Filters: the label on its own line, then a pill per tag filter
+        // and the rating floor, then hints for adding a tag and the sort.
+        // The pills are the song page's metadata pills at the mock's body
+        // size (where `Page/Meta` is the search label size): a soft outline,
+        // a heavy soft label and a medium strong value, both tracked.
         let label = c.search_label_size;
-        let label_baseline = centre + label * 0.35;
+        let label_baseline = rule_y + label * 2.2;
         frame.text.push(text(
             "FILTERS",
             left,
@@ -555,45 +620,66 @@ impl Search {
             600,
             Ink::Faint,
         ));
-        let mut x = left + w("FILTERS", label, 600) + c.search_column_gap * 4.0;
-        let mut pills: Vec<(String, bool)> = self
+        let body = label / c.meta_size;
+        let pill_h = c.pill_height * body;
+        let pad = c.pill_pad * body;
+        let kv_gap = c.pill_kv_gap * body;
+        let style = |role| c.metrics().style(role);
+        let (label_weight, value_weight) =
+            (style(Role::PillLabel).weight, style(Role::PillValue).weight);
+        let tracked = |content: &str, weight: u16| {
+            w(content, label, weight) + content.chars().count() as f32 * c.meta_tracking * label
+        };
+        let pill_top = label_baseline + label * 0.8;
+        let centre = pill_top + pill_h / 2.0;
+        let pill_baseline = centre + 0.355 * label;
+        let mut pills: Vec<(&str, String)> = self
             .tags
             .iter()
-            .map(|tag| (format!("#{tag}  ×"), true))
+            .map(|tag| ("TAG", format!("{tag}  ×")))
             .collect();
         if self.min_rating > 0 {
-            pills.push((format!("★ {}+  ×", self.min_rating), true));
+            pills.push(("RATING", format!("★ {}+  ×", self.min_rating)));
         }
-        pills.push(("+ tag".to_owned(), false));
-        pills.push((format!("SORT  {}", self.sort.label()), false));
-        for (content, filled) in pills {
-            let pill_w = w(&content, label, 700) + 2.0 * c.search_pill_pad;
+        pills.push(("+ TAG", String::new()));
+        pills.push(("SORT", self.sort.label().to_owned()));
+        let mut x = left;
+        for (name, value) in pills {
+            let name_w = tracked(name, label_weight);
+            let value_w = if value.is_empty() {
+                0.0
+            } else {
+                kv_gap + tracked(&value, value_weight)
+            };
+            let pill_w = 2.0 * pad + name_w + value_w;
             if x + pill_w > right {
                 break;
             }
             frame.shapes.push(Shape {
                 group: 0,
                 x,
-                y: centre - pill_h / 2.0,
+                y: pill_top,
                 width: pill_w,
                 height: pill_h,
                 radius: pill_h / 2.0,
-                stroke: (!filled).then_some(c.search_box_stroke * 0.5),
-                ink: if filled { Ink::Strong } else { Ink::Faint },
+                stroke: Some(c.pill_stroke * body),
+                ink: Ink::Soft,
             });
-            frame.text.push(text(
-                &content,
-                x + c.search_pill_pad,
-                label_baseline,
-                label,
-                700,
-                if filled { Ink::Paper } else { Ink::Soft },
-            ));
-            x += pill_w + c.search_pill_pad * 0.8;
+            let mut pill_text = |content: &str, at: f32, weight: u16, ink: Ink| {
+                frame.text.push(Text {
+                    tracking: c.meta_tracking,
+                    ..text(content, at, pill_baseline, label, weight, ink)
+                });
+            };
+            pill_text(name, x + pad, label_weight, Ink::Soft);
+            if !value.is_empty() {
+                pill_text(&value, x + pad + name_w + kv_gap, value_weight, Ink::Strong);
+            }
+            x += pill_w + c.pill_gap * body;
         }
 
         // The results box, its header row and as many rows as fit.
-        let box_top = centre + pill_h * 1.4;
+        let box_top = pill_top + pill_h + label * 1.8;
         let box_bottom = height - c.margin_bottom - c.status_height * c.scroll_size();
         let stroke = c.search_box_stroke;
         frame.shapes.push(Shape {
@@ -635,6 +721,15 @@ impl Search {
             self.top = self.cursor + 1 - room;
         }
         self.top = self.top.min(self.matches.len().saturating_sub(room.max(1)));
+        self.area = Some(RowsArea {
+            left: left + stroke,
+            right: right - stroke,
+            top: rows_top,
+            row_height: row_h,
+            first: self.top,
+            shown: room.min(self.matches.len().saturating_sub(self.top)),
+            cursor: self.cursor,
+        });
         for (row, m) in self.matches.iter().enumerate().skip(self.top).take(room) {
             let top = rows_top + (row - self.top) as f32 * row_h;
             if row == self.cursor {
@@ -946,6 +1041,22 @@ fn highlighted(
     let mut at = x;
     for (run, bold) in runs {
         let weight = if bold { 700 } else { 400 };
+        let run_w = w(&run, size, weight);
+        if bold {
+            // A marker stroke behind the match, from just above the
+            // ascenders to just under the descenders.
+            let bleed = size * 0.08;
+            frame.shapes.push(Shape {
+                group: 0,
+                x: at - bleed,
+                y: baseline - size * 0.92,
+                width: run_w + 2.0 * bleed,
+                height: size * 1.18,
+                radius: size * 0.18,
+                stroke: None,
+                ink: Ink::Highlight,
+            });
+        }
         frame.text.push(Text {
             content: run.clone(),
             group: 0,
@@ -957,7 +1068,7 @@ fn highlighted(
             tracking: 0.0,
             ink: if bold { Ink::Strong } else { ink },
         });
-        at += w(&run, size, weight);
+        at += run_w;
     }
 }
 
@@ -1445,7 +1556,8 @@ mod tests {
         );
         let has = |s: &str| frame.text.iter().any(|t| t.content == s);
         assert!(has("ris "), "query drawn");
-        assert!(has("★ 3+  ×") && has("+ tag") && has("SORT  TITLE"));
+        assert!(has("RATING") && has("★ 3+  ×") && has("+ TAG"));
+        assert!(has("SORT") && has("TITLE"));
         for header in ORDER {
             assert!(has(header), "{header} header");
         }
@@ -1459,10 +1571,65 @@ mod tests {
         assert!(has("★★★★☆"));
         assert!(has("1 of 4 songs  ·  /songs"));
         let pill = frame.text.iter().find(|t| t.content == "★ 3+  ×").unwrap();
-        assert_eq!(pill.ink, Ink::Paper);
+        assert_eq!(pill.ink, Ink::Strong);
+        assert_eq!(pill.tracking, Config::default().meta_tracking);
+        assert!(
+            frame.shapes.iter().any(|s| s.ink == Ink::Highlight),
+            "the match is marked"
+        );
         assert!(
             frame.shapes.iter().any(|s| s.ink == Ink::Wash),
             "the selected row"
+        );
+    }
+
+    #[test]
+    fn the_pointer_focuses_opens_and_scrolls_rows() {
+        let (library, store) = (songs(), Store::default());
+        let mut search = Search::new(&library, &store);
+        // Short enough that only some of the four songs show.
+        let draw = |search: &mut Search| {
+            search.frame(
+                600.0,
+                330.0,
+                Polarity::Light,
+                &library,
+                &store,
+                &Config::default(),
+                &Fixed,
+            );
+            search.rows_area().unwrap()
+        };
+        let area = draw(&mut search);
+        assert!(area.shown >= 1 && area.shown < 4, "{area:?}");
+        // A point in the first row hits it; one above the rows hits nothing.
+        let y = area.top + area.row_height * 0.5;
+        assert_eq!(area.row_at(area.left + 10.0, y), Some(0));
+        assert_eq!(area.row_at(area.left + 10.0, area.top - 1.0), None);
+
+        search.input(SearchInput::Focus(area.shown - 1), &library, &store);
+        assert_eq!(search.cursor, area.shown - 1);
+
+        // The wheel moves the view; the cursor follows only to stay visible.
+        search.input(SearchInput::Scroll(10), &library, &store);
+        let area = draw(&mut search);
+        assert_eq!(area.first + area.shown, 4, "scrolled to the end: {area:?}");
+        assert!(search.cursor >= area.first);
+        search.input(SearchInput::Scroll(-10), &library, &store);
+        assert_eq!(draw(&mut search).first, 0);
+
+        let action = search.input(SearchInput::OpenRow(1), &library, &store);
+        assert_eq!(
+            action,
+            SearchAction::Open {
+                entries: search.results(),
+                position: 1
+            }
+        );
+        // Out of range, or while a tag is typed, the pointer does nothing.
+        assert_eq!(
+            search.input(SearchInput::OpenRow(9), &library, &store),
+            SearchAction::Redraw
         );
     }
 }

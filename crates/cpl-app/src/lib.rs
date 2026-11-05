@@ -11,7 +11,7 @@ pub use cpl_layout::{Face, Measure};
 use cpl_layout::{MeasuredSong, Metrics, Options, PageMetrics, Role, Solution, Viewport};
 use cpl_song::{SectionKind, Song};
 pub use library::{Entry, Library};
-pub use search::{Search, SearchAction, SearchInput, SortBy};
+pub use search::{RowsArea, Search, SearchAction, SearchInput, SortBy};
 pub use setlist::Setlist;
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 pub use store::Store;
@@ -31,7 +31,88 @@ pub enum Ink {
     Paper,
     /// A tint just off the paper, for the selected row.
     Wash,
+    /// Between soft and faint, for instructions that should recede.
+    Muted,
+    /// A highlighter yellow behind matched text.
+    Highlight,
+    /// The chosen theme's accent, for chord names.
+    Accent,
 }
+
+/// An accent colour for chord names, as sRGB on white and on black.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Accent {
+    pub name: &'static str,
+    pub light: [u8; 3],
+    pub dark: [u8; 3],
+}
+
+impl Accent {
+    pub fn rgb(&self, polarity: Polarity) -> [u8; 3] {
+        match polarity {
+            Polarity::Light => self.light,
+            Polarity::Dark => self.dark,
+        }
+    }
+
+    /// The theme called `name`, ignoring case.
+    pub fn named(name: &str) -> Option<usize> {
+        THEMES
+            .iter()
+            .position(|t| t.name.eq_ignore_ascii_case(name))
+    }
+}
+
+/// The Theme menu, in order: Apple's system colours (with their dark-mode
+/// variants), then Ink, which leaves chords in the soft ink as before
+/// colour arrived. The first is the default.
+pub const THEMES: &[Accent] = &[
+    Accent {
+        name: "Blue",
+        light: [0x00, 0x7A, 0xFF],
+        dark: [0x0A, 0x84, 0xFF],
+    },
+    Accent {
+        name: "Indigo",
+        light: [0x58, 0x56, 0xD6],
+        dark: [0x5E, 0x5C, 0xE6],
+    },
+    Accent {
+        name: "Purple",
+        light: [0xAF, 0x52, 0xDE],
+        dark: [0xBF, 0x5A, 0xF2],
+    },
+    Accent {
+        name: "Pink",
+        light: [0xFF, 0x2D, 0x55],
+        dark: [0xFF, 0x37, 0x5F],
+    },
+    Accent {
+        name: "Red",
+        light: [0xFF, 0x3B, 0x30],
+        dark: [0xFF, 0x45, 0x3A],
+    },
+    Accent {
+        name: "Orange",
+        light: [0xFF, 0x95, 0x00],
+        dark: [0xFF, 0x9F, 0x0A],
+    },
+    Accent {
+        name: "Green",
+        light: [0x34, 0xC7, 0x59],
+        dark: [0x30, 0xD1, 0x58],
+    },
+    Accent {
+        name: "Teal",
+        light: [0x30, 0xB0, 0xC7],
+        dark: [0x40, 0xC8, 0xE0],
+    },
+    Accent {
+        name: "Ink",
+        light: [74, 74, 74],
+        dark: [180, 180, 180],
+    },
+];
 
 #[derive(Debug, Clone)]
 pub struct Text {
@@ -194,16 +275,13 @@ pub struct Config {
     pub status_drop: f32,
     pub max_columns: f32,
     /// The search screen, in points: query, label and row text sizes, the
-    /// header and row heights, pill height and padding, the gap after each
-    /// column, the results box's outline and corner, and the narrowest the
+    /// header and row heights, the gap after each column, the results box's outline and corner, and the narrowest the
     /// title and artist columns may get before metadata columns drop.
     pub search_query_size: f32,
     pub search_label_size: f32,
     pub search_text_size: f32,
     pub search_header_row: f32,
     pub search_row: f32,
-    pub search_pill_height: f32,
-    pub search_pill_pad: f32,
     pub search_column_gap: f32,
     pub search_box_stroke: f32,
     pub search_box_radius: f32,
@@ -487,8 +565,6 @@ impl Config {
             search_text_size: take!("search_text_size"),
             search_header_row: take!("search_header_row"),
             search_row: take!("search_row"),
-            search_pill_height: take!("search_pill_height"),
-            search_pill_pad: take!("search_pill_pad"),
             search_column_gap: take!("search_column_gap"),
             search_box_stroke: take!("search_box_stroke"),
             search_box_radius: take!("search_box_radius"),
@@ -1446,7 +1522,7 @@ impl App {
             weight: 600,
             face: Face::Monospace,
             tracking: 0.0,
-            ink: Ink::Strong,
+            ink: Ink::Accent,
         });
         let marks = top + c.diagram_name_row * body;
         let mark_half = mark_width * body / 2.0;
@@ -1785,10 +1861,10 @@ impl App {
                                 let style = metrics.style(run.role);
                                 let (baseline, ink) = match run.role {
                                     Role::Chord if line.chord_only => {
-                                        (c.inline_lyric_baseline, Ink::Soft)
+                                        (c.inline_lyric_baseline, Ink::Accent)
                                     }
-                                    Role::Chord => (c.chord_baseline, Ink::Soft),
-                                    Role::InlineChord => (c.inline_chord_baseline, Ink::Soft),
+                                    Role::Chord => (c.chord_baseline, Ink::Accent),
+                                    Role::InlineChord => (c.inline_chord_baseline, Ink::Accent),
                                     Role::Lyric if inline => (c.inline_lyric_baseline, Ink::Strong),
                                     Role::Comment if inline => (c.inline_lyric_baseline, Ink::Soft),
                                     // A grid row, in the tab face.
