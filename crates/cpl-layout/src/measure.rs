@@ -60,6 +60,8 @@ pub struct Metrics {
     pub subtitle_size: f32,
     pub label_size: f32,
     pub chord_size: f32,
+    /// Chord name weight, stacked and inline (the mock's `Page/Chord`).
+    pub chord_weight: u16,
     pub chord_gap: f32,
     pub inline_chord_size: f32,
     pub inline_chord_gap: f32,
@@ -82,11 +84,11 @@ impl Metrics {
             Role::Title => (self.title_size, 700, Face::System, 0.0),
             Role::Subtitle => (self.subtitle_size, 400, Face::System, 0.0),
             // The mock's `Page/Label` (SF Pro Bold, tracked) and `Page/Chord`
-            // (SF Pro Semibold): proportional, as the lyrics are.
+            // (SF Pro at `chord_weight`): proportional, as the lyrics are.
             Role::Label => (self.label_size, 700, Face::System, self.label_tracking),
-            Role::Chord => (self.chord_size, 590, Face::System, 0.0),
+            Role::Chord => (self.chord_size, self.chord_weight, Face::System, 0.0),
             Role::Lyric => (1.0, 400, Face::System, 0.0),
-            Role::InlineChord => (self.inline_chord_size, 590, Face::System, 0.0),
+            Role::InlineChord => (self.inline_chord_size, self.chord_weight, Face::System, 0.0),
             Role::Tab => (self.tab_size, 400, Face::Monospace, 0.0),
             Role::Comment => (1.0, 600, Face::System, 0.0),
             // The mock's `Page/Meta` (SF Pro Heavy) and `MetaValue` (Medium).
@@ -736,6 +738,7 @@ mod tests {
             subtitle_size: 1.0,
             label_size: 1.0,
             chord_size: 1.0,
+            chord_weight: 590,
             chord_gap: 0.5,
             inline_chord_size: 0.5,
             inline_chord_gap: 0.25,

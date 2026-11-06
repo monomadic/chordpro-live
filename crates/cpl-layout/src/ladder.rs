@@ -760,6 +760,7 @@ mod tests {
             subtitle_size: PAGE.subtitle_size,
             label_size: 0.7,
             chord_size: 0.8,
+            chord_weight: 590,
             chord_gap: 0.4,
             inline_chord_size: 0.6,
             inline_chord_gap: 0.2,

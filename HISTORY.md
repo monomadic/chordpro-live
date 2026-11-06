@@ -6,6 +6,14 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-11-07
 
+- **Chords follow the mock's `Page/Chord`.** The Figma styles moved to a
+  16 pt body with `Page/Chord` SF Pro Bold 11/16 over `Page/Lyric` 16/23,
+  a 36 pt pair every 44 pt; the em table now matches (`chord_size` 0.688,
+  `chord_baseline` 0.744, `lyric_baseline` 1.887, `line_height` 2.75) and
+  the chord weight is a config key, `chord_weight = 700`, for stacked and
+  inline chords. This replaces the earlier 14 pt step. Checked against a
+  Figma screenshot of the Page frame, in a real window (House of the
+  Rising Sun, 1133x744 at 2x), and with re-blessed goldens.
 - **A faster, smoother library page.** Search measured every result's
   cells with CoreText on every frame to size its columns (60 ms over the
   341-song iCloud library); widths are now cached across frames (0.2 ms),

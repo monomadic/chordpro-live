@@ -207,6 +207,7 @@ pub struct Config {
     pub subtitle_size: f32,
     pub label_size: f32,
     pub chord_size: f32,
+    pub chord_weight: f32,
     /// The readability floor: body text is never smaller.
     pub body_size: f32,
     /// The size body text reads best at, and the size a scrolling page uses.
@@ -517,6 +518,7 @@ impl Config {
             subtitle_size: take!("subtitle_size"),
             label_size: take!("label_size"),
             chord_size: take!("chord_size"),
+            chord_weight: take!("chord_weight"),
             body_size: take!("body_size"),
             comfort_size: take!("comfort_size"),
             max_body_size: take!("max_body_size"),
@@ -688,6 +690,7 @@ impl Config {
             subtitle_size: self.subtitle_size,
             label_size: self.label_size,
             chord_size: self.chord_size,
+            chord_weight: self.chord_weight as u16,
             chord_gap: self.chord_gap,
             inline_chord_size: self.inline_chord_size,
             inline_chord_gap: self.inline_chord_gap,
