@@ -41,7 +41,11 @@ in `config/default.toml`.
 `Measure` for `CoreText` is `sb_text_width`: the line's typographic advance,
 trailing spaces included, with no bitmap drawn. A raster carries one pixel of
 slack on each side (`RASTER_PAD`); compositing places the glyph origin, not
-the bitmap's edge, at the item's `x`.
+the bitmap's edge, at the item's `x`, and the baseline row on the item's
+baseline. The baseline is a whole pixel row, with the ascent above it and
+the descent below each rounded up, so the row the raster reports is the row
+it was drawn on. A frame's `clip` limits the text of one scroll group to a
+band of the slab (the search list).
 Text is rasterised with the font at its point size on a context scaled to
 the display, never as a larger font: SF Pro's tracking and optical size
 depend on the point size, so a 17 pt run requested as 34 pt for a 2x display

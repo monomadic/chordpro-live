@@ -152,8 +152,13 @@ unsigned char *sb_text_rasterize(const char *utf8, double size, double scale, in
     // the typographic box (overshoot, sidebearing) and a clipped edge is far
     // more visible than a dead column.
     int pad = 1;
+    // The baseline sits on a whole pixel row, ascent above and descent below
+    // it each rounded up, so the row reported is exactly where it is drawn;
+    // rounding the two together set text up to a pixel and a half low.
+    int above = (int)ceil(ascent * scale);
+    int below = (int)ceil(descent * scale);
     int w = (int)ceil(width * scale) + pad * 2;
-    int h = (int)ceil((ascent + descent) * scale) + pad * 2;
+    int h = above + below + pad * 2;
     if (w <= 0 || h <= 0 || w > 8192 || h > 8192) {
         CFRelease(line);
         return NULL;
@@ -174,16 +179,16 @@ unsigned char *sb_text_rasterize(const char *utf8, double size, double scale, in
     CGContextSetShouldAntialias(ctx, true);
     CGContextSetShouldSmoothFonts(ctx, false);  // grayscale AA, never subpixel
     CGContextSetGrayFillColor(ctx, 1.0, 1.0);   // full coverage where ink falls
-    CGContextTranslateCTM(ctx, (CGFloat)pad, (CGFloat)pad);
+    CGContextTranslateCTM(ctx, (CGFloat)pad, (CGFloat)(pad + below));
     CGContextScaleCTM(ctx, (CGFloat)scale, (CGFloat)scale);
-    CGContextSetTextPosition(ctx, 0, descent);
+    CGContextSetTextPosition(ctx, 0, 0);
     CTLineDraw(line, ctx);
     CGContextRelease(ctx);
     CFRelease(line);
 
     *out_w = w;
     *out_h = h;
-    if (out_baseline) *out_baseline = (int)lround(ascent * scale) + pad;
+    if (out_baseline) *out_baseline = above + pad;
     return buf;
 }
 

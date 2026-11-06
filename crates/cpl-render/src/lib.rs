@@ -214,9 +214,17 @@ impl PageCompositor {
             if item_top >= height as i32 || item_top + (raster.height as i32) <= 0 {
                 continue;
             }
+            // Rows of the slab this item may touch: all of it, or its clip.
+            let (from, to) = match frame.clip {
+                Some(clip) if clip.group == item.group => (
+                    ((clip.y * scale).round() as i32 - top).max(0),
+                    (((clip.y + clip.height) * scale).round() as i32 - top).min(height as i32),
+                ),
+                _ => (0, height as i32),
+            };
             for row in 0..raster.height as i32 {
                 let y = item_top + row;
-                if y < 0 || y >= height_usize as i32 {
+                if y < from || y >= to {
                     continue;
                 }
                 for col in 0..raster.width as i32 {
@@ -653,6 +661,7 @@ mod cache_tests {
             columns: 1,
             ladder_step: 10,
             toggles: Vec::new(),
+            clip: None,
         };
         let whole = compositor.compose(&frame, 1.0, 120, 200);
         let slab = compositor.compose_slab(&frame, 1.0, 120, 70, 50);
@@ -695,6 +704,7 @@ mod cache_tests {
             columns: 1,
             ladder_step: 0,
             toggles: Vec::new(),
+            clip: None,
         };
         let image = compositor.compose(&frame, 1.0, 100, 60);
         let at = |x: usize, y: usize| image.pixels[(y * 100 + x) * 4];
@@ -750,6 +760,7 @@ mod cache_tests {
             columns: 1,
             ladder_step: 0,
             toggles: Vec::new(),
+            clip: None,
         };
         let light = compositor.compose(&frame, 2.0, 240, 120);
         frame.polarity = Polarity::Dark;

@@ -86,9 +86,12 @@ order, the cursor and the matched rows. `input` takes a decoded
   (Ctrl-A E), ⌥← ⌥→ by word, ⌥⌫ (Ctrl-W) a word back, ⌘⌫ (Ctrl-U) to the
   start, Ctrl-K to the end, ⌦ (Ctrl-D) forward; Ctrl-N P and ⌘↑ ⌘↓ move
   the selection. `insert_text` pastes as plain text, so a pasted digit
-  never rates a song. The host sends ⌘V ⌘C ⌘X to the worker, which runs
-  `pbpaste` or `pbcopy` there, never on the window thread; copy and cut
-  take the whole query.
+  never rates a song. ⌘A selects the whole query and ⇧ with ← →, ⌥← ⌥→ or
+  ⌘← ⌘→ extends a selection from an anchor; the selection sits on the
+  highlighter, ← or → collapses it to that end, and typing (digits
+  included), pasting or deleting replaces it. The host sends ⌘V ⌘C ⌘X to
+  the worker, which runs `pbpaste` or `pbcopy` there, never on the window
+  thread; copy and cut take the selection, else the whole query.
 
 Matching is chordpro-tui's finder (`internal/tui/picker.go`), ported with
 its tests: a case-insensitive subsequence over title and artist, scored for
@@ -105,7 +108,9 @@ lyric hit, when asked for, ranks under both.
   song page's metadata pills (the page metrics at the mock's body size,
   where `Page/Meta` equals `search_label_size`): `TAG rock ×`,
   `RATING ★ 3+ ×`, `+ TAG` and `SORT TITLE`;
-- a results box with a bold header row (the rating column is `RATING`) and
+- a results box with a bold header row (the rating column is `RATING`;
+  with no query the sorted column's header carries ↑ for title or artist,
+  ↓ for rating) and
   one row per match, with matched letters in bold on a highlighter-yellow
   mark and the focused row in the wash ink;
 - a footer, on the page status strip's baseline, with counts, folders or
@@ -116,12 +121,21 @@ The frame records where it drew the rows (`RowsArea`), and the search
 page carries that back to the window thread, which hit-tests the pointer
 itself so a move inside one row sends nothing: moving onto another row
 sends `SearchInput::Focus`, a click `OpenRow`, and the wheel `Scroll` in
-whole rows (trackpad points are gathered into rows). Scrolling moves the
-view, pulling the focus along only as far as keeps it visible; Enter opens
-the focused row.
+rows, fractions included: a trackpad moves the list by exactly its points,
+a wheel notch a row. The list's offset is fractional, so rows glide; they
+are one scroll group, and the frame's `clip` limits their text to the band
+under the header (their shapes are trimmed to it in `frame`). Scrolling
+moves the view, pulling the focus along only as far as keeps it on a whole
+visible row; Enter opens the focused row.
+
+Every width the frame measures is cached in `Search` across frames, by
+text, size and weight: sizing the columns measures each result's cells,
+and doing so per frame cost 60 ms over a 341-song library, against 0.2 ms
+cached.
 
 Metadata columns are as wide as their widest value or header plus
-`search_column_gap`. Title and artist share the rest, 58:42. While they
+`search_column_gap`; key, capo, tempo and year stop at `search_cell_max`,
+and a longer value ends in an ellipsis. Title and artist share the rest, 58:42. While they
 would get less than `search_min_title` each, columns drop in
 chordpro-tui's order: year, tempo, capo, tags, key, rating.
 

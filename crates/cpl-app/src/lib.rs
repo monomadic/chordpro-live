@@ -160,6 +160,9 @@ pub struct Frame {
     /// Where each tablature section's label is drawn, in page points: a
     /// click there folds or shows the tab, as `t` does.
     pub toggles: Vec<Rect>,
+    /// Text in this rect's scroll group draws only inside it: the search
+    /// list, scrolled part way through a row.
+    pub clip: Option<Rect>,
 }
 
 /// A box in page points, for the pointer.
@@ -307,6 +310,7 @@ pub struct Config {
     pub search_box_stroke: f32,
     pub search_box_radius: f32,
     pub search_min_title: f32,
+    pub search_cell_max: f32,
     /// Seconds between library rescans while search is open, so a song
     /// saved into a library folder appears without reopening search.
     pub search_rescan_seconds: f32,
@@ -591,6 +595,7 @@ impl Config {
             search_box_stroke: take!("search_box_stroke"),
             search_box_radius: take!("search_box_radius"),
             search_min_title: take!("search_min_title"),
+            search_cell_max: take!("search_cell_max"),
             search_rescan_seconds: take!("search_rescan_seconds"),
             library_folders: match library.remove("folders") {
                 Some(LibraryValue::Many(folders)) => folders,
@@ -959,6 +964,7 @@ impl App {
                 columns: 1,
                 ladder_step: 10,
                 toggles: toggles.clone(),
+                clip: None,
             },
         }
     }
@@ -1240,6 +1246,7 @@ impl App {
                     columns: 1,
                     ladder_step: 10,
                     toggles: Vec::new(),
+                    clip: None,
                 };
                 let mut first_visible_group = None;
                 for item in content {
@@ -1659,6 +1666,7 @@ impl App {
             },
             ladder_step: solution.step,
             toggles: Vec::new(),
+            clip: None,
         };
         let header_size = c.header_size;
         for (row, baseline) in &solution.header.title_rows {

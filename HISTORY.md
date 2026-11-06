@@ -6,6 +6,21 @@ session. A passing headless test does not stand in for a visual window check.
 
 ## 2026-11-07
 
+- **A faster, smoother library page.** Search measured every result's
+  cells with CoreText on every frame to size its columns (60 ms over the
+  341-song iCloud library); widths are now cached across frames (0.2 ms),
+  so a key or scroll step costs about 5 ms of raster at 2x. The list
+  scrolls by fractions of a row, clipped under the header, so a trackpad
+  glides. The query takes ⌘A and ⇧ arrows (with ⌥ and ⌘) to select, and
+  an edit, copy or cut acts on the selection. Key, capo, tempo and year
+  columns stop at `search_cell_max`, so a long capo note no longer crowds
+  the title; the sorted column's header shows ↑ or ↓. Text sat up to a
+  pixel and a half low everywhere, which showed most inside pills: the
+  raster's reported baseline now matches where it is drawn. Checked with
+  tests for selection, the column cap, the sort arrow and scroll
+  clipping, a part-scrolled headless render, re-blessed goldens, and a
+  real window of the iCloud library (980x720, 2x). Scrolling and typing
+  were not exercised in a window, since captures never inject input.
 - **Smaller chords; tablature opens folded and its label is a switch.**
   Chord names drop from 15 to 14 pt at the 17 pt body (`chord_size`
   0.824). Tablature opens folded; `t` or a click on the tab's label (a hand

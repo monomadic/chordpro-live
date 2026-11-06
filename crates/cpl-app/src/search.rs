@@ -13,6 +13,9 @@
 use crate::{Config, Face, Frame, Ink, Measure, Polarity, Role, Shape, Text};
 use crate::{library::Library, store::Store};
 
+/// The scroll group of the result rows, which the frame's clip applies to.
+const ROWS: usize = 1;
+
 /// What the rows are ordered by when there is no query to rank them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SortBy {
@@ -45,7 +48,7 @@ impl SortBy {
 }
 
 /// A key, already decoded by the host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SearchInput {
     Char(char),
     Backspace,
@@ -73,12 +76,24 @@ pub enum SearchInput {
     DeleteToStart,
     DeleteToEnd,
     DeleteForward,
+    /// ⌘A selects the whole query; ⇧ with an arrow (and ⌥ or ⌘) extends
+    /// the selection as the arrow alone would move the caret. Typing,
+    /// pasting or deleting replaces what is selected, and copy or cut
+    /// takes it.
+    SelectAll,
+    SelectLeft,
+    SelectRight,
+    SelectWordLeft,
+    SelectWordRight,
+    SelectLineStart,
+    SelectLineEnd,
     /// The pointer moved onto result row `n` (an index into the results).
     Focus(usize),
     /// A click on result row `n`: focus it and open it.
     OpenRow(usize),
-    /// The scroll wheel, in whole rows; positive moves down the list.
-    Scroll(i32),
+    /// The scroll wheel or trackpad, in rows, fractions included so the
+    /// list glides; positive moves down the list.
+    Scroll(f32),
 }
 
 /// Where the result rows were last drawn, in page points, so the host can
@@ -87,8 +102,12 @@ pub enum SearchInput {
 pub struct RowsArea {
     pub left: f32,
     pub right: f32,
+    /// The top of the first row drawn, which may sit above `visible.0` when
+    /// the list is scrolled part way through a row.
     pub top: f32,
     pub row_height: f32,
+    /// The band rows show in, top to bottom; rows are clipped to it.
+    pub visible: (f32, f32),
     /// The result index of the first row drawn, and how many rows show.
     pub first: usize,
     pub shown: usize,
@@ -99,7 +118,7 @@ pub struct RowsArea {
 impl RowsArea {
     /// The result index under page point (`x`, `y`), if a row is there.
     pub fn row_at(&self, x: f32, y: f32) -> Option<usize> {
-        if x < self.left || x >= self.right || y < self.top {
+        if x < self.left || x >= self.right || y < self.visible.0 || y >= self.visible.1 {
             return None;
         }
         let row = ((y - self.top) / self.row_height) as usize;
@@ -146,11 +165,20 @@ pub struct Search {
     /// Where typing goes in `query`, a byte offset; `None` is the end, so
     /// setting `query` directly leaves the caret after it.
     caret: Option<usize>,
+    /// The other end of a selection in `query`, a byte offset; the selection
+    /// runs between it and the caret.
+    anchor: Option<usize>,
     cursor: usize,
-    top: usize,
+    /// How far the list is scrolled, in rows; a fraction shows part of the
+    /// top row.
+    scroll: f32,
     matches: Vec<Match>,
     /// Where the last frame drew the rows; `None` before the first frame.
     area: Option<RowsArea>,
+    /// Text widths already measured, by text, size and weight. Sizing the
+    /// columns measures every result's cells, and a frame per key or wheel
+    /// step re-measuring them all was most of its cost.
+    widths: std::cell::RefCell<std::collections::HashMap<(String, u32, u16), f32>>,
 }
 
 impl Search {
@@ -203,6 +231,57 @@ impl Search {
                 _ => {}
             }
             return SearchAction::Redraw;
+        }
+        if input == SearchInput::SelectAll {
+            self.anchor = Some(0);
+            self.caret = None;
+            return SearchAction::Redraw;
+        }
+        if let Some(at) = self.extend_to(input) {
+            let caret = self.caret();
+            self.anchor.get_or_insert(caret);
+            self.caret = Some(at);
+            return SearchAction::Redraw;
+        }
+        let selection = self.selection();
+        if let Some(range) = selection.clone() {
+            // An arrow collapses the selection to its end on that side;
+            // an edit replaces it.
+            match input {
+                SearchInput::Left | SearchInput::Right => {
+                    self.anchor = None;
+                    self.caret = Some(if input == SearchInput::Left {
+                        range.start
+                    } else {
+                        range.end
+                    });
+                    return SearchAction::Redraw;
+                }
+                SearchInput::Backspace
+                | SearchInput::DeleteForward
+                | SearchInput::DeleteWord
+                | SearchInput::DeleteToStart
+                | SearchInput::DeleteToEnd => {
+                    self.delete_selection();
+                    self.requery(library, store);
+                    return SearchAction::Redraw;
+                }
+                SearchInput::Char(c) if !c.is_control() && c != '#' => {
+                    self.delete_selection();
+                    if c.is_ascii_digit() || c == ' ' {
+                        // Typed over a selection, a digit or space is text.
+                        let at = self.caret();
+                        self.query.insert(at, c);
+                        self.caret = Some(at + c.len_utf8());
+                        self.requery(library, store);
+                        return SearchAction::Redraw;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !matches!(input, SearchInput::Focus(_) | SearchInput::Scroll(_)) {
+            self.anchor = None;
         }
         match input {
             SearchInput::Cancel => return SearchAction::Close,
@@ -328,6 +407,45 @@ impl Search {
         SearchAction::Redraw
     }
 
+    /// Where a selecting key moves the caret, or `None` for any other key.
+    fn extend_to(&self, input: SearchInput) -> Option<usize> {
+        let (text, at) = (&self.query, self.caret());
+        Some(match input {
+            SearchInput::SelectLeft => prev_char(text, at),
+            SearchInput::SelectRight => next_char(text, at),
+            SearchInput::SelectWordLeft => word_left(text, at),
+            SearchInput::SelectWordRight => word_right(text, at),
+            SearchInput::SelectLineStart => 0,
+            SearchInput::SelectLineEnd => text.len(),
+            _ => return None,
+        })
+    }
+
+    /// The selected bytes of the query, when any are selected.
+    pub fn selection(&self) -> Option<std::ops::Range<usize>> {
+        let anchor = self
+            .anchor
+            .filter(|&at| at <= self.query.len() && self.query.is_char_boundary(at))?;
+        let caret = self.caret();
+        (anchor != caret).then(|| anchor.min(caret)..anchor.max(caret))
+    }
+
+    /// The selected text, else the whole query: what copy and cut take.
+    pub fn copied_text(&self) -> &str {
+        match self.selection() {
+            Some(range) => &self.query[range],
+            None => &self.query,
+        }
+    }
+
+    fn delete_selection(&mut self) {
+        if let Some(range) = self.selection() {
+            self.query.replace_range(range.clone(), "");
+            self.caret = Some(range.start);
+        }
+        self.anchor = None;
+    }
+
     /// The caret as a byte offset into the query.
     pub fn caret(&self) -> usize {
         self.caret
@@ -348,27 +466,38 @@ impl Search {
             tag.extend(text.chars().filter(|c| *c != ' '));
             return;
         }
+        self.delete_selection();
         let at = self.caret();
         self.query.insert_str(at, &text);
         self.caret = Some(at + text.len());
         self.requery(library, store);
     }
 
-    /// Empties the query, as cut does after the host copies it.
-    pub fn clear_query(&mut self, library: &Library, store: &Store) {
-        self.query.clear();
-        self.caret = None;
+    /// Removes what cut copied: the selection, else the whole query.
+    pub fn cut(&mut self, library: &Library, store: &Store) {
+        if self.selection().is_some() {
+            self.delete_selection();
+        } else {
+            self.query.clear();
+            self.caret = None;
+        }
         self.requery(library, store);
     }
 
     /// Scrolls the list without the cursor leading it; the cursor is
     /// pulled along only as far as it takes to stay on a visible row.
-    fn scroll_by(&mut self, rows: i32) {
-        let shown = self.area.map_or(1, |area| area.shown.max(1));
-        let last_top = self.matches.len().saturating_sub(shown);
-        self.top = self.top.saturating_add_signed(rows as isize).min(last_top);
-        let last_row = (self.top + shown - 1).min(self.matches.len().saturating_sub(1));
-        self.cursor = self.cursor.clamp(self.top, last_row.max(self.top));
+    fn scroll_by(&mut self, rows: f32) {
+        let fits = self.area.map_or(1.0, |area| {
+            (area.visible.1 - area.visible.0) / area.row_height
+        });
+        let most = (self.matches.len() as f32 - fits).max(0.0);
+        self.scroll = (self.scroll + rows).clamp(0.0, most);
+        // The cursor stays on a whole visible row.
+        let first = (self.scroll - 1e-3).ceil().max(0.0) as usize;
+        let last = ((self.scroll + fits + 1e-3).floor() as usize)
+            .saturating_sub(1)
+            .min(self.matches.len().saturating_sub(1));
+        self.cursor = self.cursor.clamp(first, last.max(first));
     }
 
     fn move_by(&mut self, delta: isize) {
@@ -419,7 +548,7 @@ impl Search {
         self.rematch(new, store);
         match entry {
             Some(entry) => self.select(entry),
-            None => self.top = 0,
+            None => self.scroll = 0.0,
         }
     }
 
@@ -427,7 +556,7 @@ impl Search {
     /// best match selected, as chordpro-tui's finder does.
     fn requery(&mut self, library: &Library, store: &Store) {
         self.rematch(library, store);
-        self.top = 0;
+        self.scroll = 0.0;
     }
 
     fn rematch(&mut self, library: &Library, store: &Store) {
@@ -521,6 +650,7 @@ impl Search {
             columns: 1,
             ladder_step: 0,
             toggles: Vec::new(),
+            clip: None,
         };
         let left = c.margin_x;
         let right = width - c.margin_x;
@@ -536,7 +666,14 @@ impl Search {
             ink,
         };
         let w = |content: &str, size: f32, weight: u16| {
-            measure.width(content, size, weight, Face::System)
+            let mut widths = self.widths.borrow_mut();
+            // A font size change leaves stale entries; bound the cache.
+            if widths.len() > 20_000 {
+                widths.clear();
+            }
+            *widths
+                .entry((content.to_owned(), size.to_bits(), weight))
+                .or_insert_with(|| measure.width(content, size, weight, Face::System))
         };
 
         // The query line: a magnifying glass (or `#` while a tag is typed),
@@ -559,6 +696,21 @@ impl Search {
                 left + q * 1.25
             }
         };
+        if let Some(range) = self.selection().filter(|_| self.tag_entry.is_none()) {
+            // The selection sits on the highlighter, like a search match.
+            let from = query_x + w(&typed[..range.start], q, 400);
+            let to = query_x + w(&typed[..range.end], q, 400);
+            frame.shapes.push(Shape {
+                group: 0,
+                x: from,
+                y: baseline - q * 0.95,
+                width: to - from,
+                height: q * 1.15,
+                radius: 2.0,
+                stroke: None,
+                ink: Ink::Highlight,
+            });
+        }
         frame
             .text
             .push(text(typed, query_x, baseline, q, 400, Ink::Strong));
@@ -696,43 +848,72 @@ impl Search {
         let size = c.search_text_size;
         let inner_left = left + stroke + c.search_column_gap;
         let inner_right = right - stroke - c.search_column_gap;
+        // With no query the rows follow the sort, and its column's header
+        // says which way: ↑ for A to Z, ↓ for best first.
+        let sorted = self.query.trim().is_empty() && self.tag_entry.is_none();
+        let header_text = |name: &str| -> String {
+            match (sorted, self.sort, name) {
+                (true, SortBy::Title, "TITLE") | (true, SortBy::Artist, "ARTIST") => {
+                    format!("{name} ↑")
+                }
+                (true, SortBy::Rating, "RATING") => format!("{name} ↓"),
+                _ => name.to_owned(),
+            }
+        };
         let columns = Columns::new(
             inner_right - inner_left,
             c.search_column_gap,
             c.search_min_title,
+            c.search_cell_max,
             library,
             store,
             &self.matches,
             |s, weight| w(s, size, weight),
-            |s| w(s, label, 700),
+            |s| w(&header_text(s), label, 700),
         );
         let header_top = box_top + stroke;
         let header_baseline = header_top + c.search_header_row * 0.5 + label * 0.35;
         for (name, x, _) in columns.visible(inner_left) {
-            frame
-                .text
-                .push(text(name, x, header_baseline, label, 700, Ink::Soft));
+            frame.text.push(text(
+                &header_text(name),
+                x,
+                header_baseline,
+                label,
+                700,
+                Ink::Soft,
+            ));
         }
         let rows_top = header_top + c.search_header_row;
         let row_h = c.search_row;
-        let room = ((box_bottom - stroke - rows_top) / row_h).floor().max(0.0) as usize;
-        if self.cursor < self.top {
-            self.top = self.cursor;
-        } else if room > 0 && self.cursor >= self.top + room {
-            self.top = self.cursor + 1 - room;
+        let rows_bottom = (box_bottom - stroke).max(rows_top);
+        let fits = (rows_bottom - rows_top) / row_h;
+        // The keyboard's row is always whole on screen.
+        let cursor = self.cursor as f32;
+        if cursor < self.scroll {
+            self.scroll = cursor;
+        } else if fits >= 1.0 && cursor + 1.0 > self.scroll + fits {
+            self.scroll = cursor + 1.0 - fits;
         }
-        self.top = self.top.min(self.matches.len().saturating_sub(room.max(1)));
+        self.scroll = self
+            .scroll
+            .clamp(0.0, (self.matches.len() as f32 - fits).max(0.0));
+        let first = self.scroll.floor() as usize;
+        let first_top = rows_top - (self.scroll - first as f32) * row_h;
+        let shown = (((rows_bottom - first_top) / row_h).ceil().max(0.0) as usize)
+            .min(self.matches.len().saturating_sub(first));
         self.area = Some(RowsArea {
             left: left + stroke,
             right: right - stroke,
-            top: rows_top,
+            top: first_top,
             row_height: row_h,
-            first: self.top,
-            shown: room.min(self.matches.len().saturating_sub(self.top)),
+            visible: (rows_top, rows_bottom),
+            first,
+            shown,
             cursor: self.cursor,
         });
-        for (row, m) in self.matches.iter().enumerate().skip(self.top).take(room) {
-            let top = rows_top + (row - self.top) as f32 * row_h;
+        let (texts, shapes) = (frame.text.len(), frame.shapes.len());
+        for (row, m) in self.matches.iter().enumerate().skip(first).take(shown) {
+            let top = first_top + (row - first) as f32 * row_h;
             if row == self.cursor {
                 frame.shapes.push(Shape {
                     group: 0,
@@ -786,6 +967,34 @@ impl Search {
                 }
             }
         }
+        // Rows scroll as one group, clipped to the band: the compositor
+        // clips their text, and their shapes are trimmed here.
+        for item in &mut frame.text[texts..] {
+            item.group = ROWS;
+        }
+        frame.shapes.splice(
+            shapes..,
+            frame.shapes[shapes..]
+                .iter()
+                .filter_map(|shape| {
+                    let y = shape.y.max(rows_top);
+                    let bottom = (shape.y + shape.height).min(rows_bottom);
+                    (bottom > y).then(|| Shape {
+                        y,
+                        height: bottom - y,
+                        group: ROWS,
+                        ..shape.clone()
+                    })
+                })
+                .collect::<Vec<_>>(),
+        );
+        frame.clip = Some(crate::Rect {
+            x: left,
+            y: rows_top,
+            width: right - left,
+            height: rows_bottom - rows_top,
+            group: ROWS,
+        });
         if self.matches.is_empty() {
             frame.text.push(text(
                 if library.is_empty() {
@@ -1126,6 +1335,7 @@ impl Columns {
         width: f32,
         gap: f32,
         min_title: f32,
+        cell_max: f32,
         library: &Library,
         store: &Store,
         matches: &[Match],
@@ -1139,8 +1349,14 @@ impl Columns {
                 let widest = matches
                     .iter()
                     .map(|m| value(&cell(name, &library.entries[m.entry], store).0, 400))
-                    .fold(header(name), f32::max);
-                (name, widest + gap)
+                    .fold(0.0, f32::max);
+                // A short value column stops at `cell_max`, so one long
+                // note ("1 or 2 (Official: 0)") cannot crowd the title.
+                let widest = match name {
+                    "KEY" | "CAPO" | "TEMPO" | "YEAR" => widest.min(cell_max),
+                    _ => widest,
+                };
+                (name, widest.max(header(name)) + gap)
             })
             .collect();
         // Tags can be long; they take what is left, up to their widest.
@@ -1350,8 +1566,48 @@ mod tests {
         search.insert_text("rising\n1969", &library, &store);
         assert_eq!(search.query, "rising 1969");
         assert_eq!(search.caret(), search.query.len());
-        search.clear_query(&library, &store);
+        search.cut(&library, &store);
         assert!(search.query.is_empty());
+    }
+
+    #[test]
+    fn shift_arrows_and_command_a_select_and_an_edit_replaces_the_selection() {
+        let (library, store) = (songs(), Store::default());
+        let mut search = Search::new(&library, &store);
+        let key = |search: &mut Search, input| {
+            search.input(input, &library, &store);
+        };
+        search.insert_text("house sun", &library, &store);
+        key(&mut search, SearchInput::SelectLeft);
+        key(&mut search, SearchInput::SelectLeft);
+        key(&mut search, SearchInput::SelectLeft);
+        assert_eq!(search.copied_text(), "sun");
+        // ← collapses to the selection's start, ⇧→ selects forward again.
+        key(&mut search, SearchInput::Left);
+        assert_eq!((search.selection(), search.caret()), (None, 6));
+        key(&mut search, SearchInput::SelectRight);
+        key(&mut search, SearchInput::SelectRight);
+        assert_eq!(search.copied_text(), "su");
+        // Typing replaces it, digits included.
+        key(&mut search, SearchInput::Char('9'));
+        assert_eq!(search.query, "house 9n");
+        assert_eq!(search.selection(), None);
+        // ⌘A, then backspace, empties the query; with nothing selected
+        // copy takes the whole query.
+        key(&mut search, SearchInput::SelectAll);
+        assert_eq!(search.copied_text(), "house 9n");
+        key(&mut search, SearchInput::Backspace);
+        assert_eq!(search.query, "");
+        search.insert_text("rise", &library, &store);
+        assert_eq!(search.copied_text(), "rise");
+        key(&mut search, SearchInput::SelectWordLeft);
+        search.insert_text("sun", &library, &store);
+        assert_eq!(search.query, "sun");
+        // Cut takes only the selection.
+        key(&mut search, SearchInput::LineStart);
+        key(&mut search, SearchInput::SelectRight);
+        search.cut(&library, &store);
+        assert_eq!(search.query, "un");
     }
 
     #[test]
@@ -1522,6 +1778,7 @@ mod tests {
                 width,
                 12.0,
                 160.0,
+                72.0,
                 &library,
                 &store,
                 &search.matches,
@@ -1537,6 +1794,69 @@ mod tests {
         assert!(titles >= 320.0 - 1e-3, "{narrow:?}");
         let tiny = columns(300.0);
         assert_eq!(tiny.columns.len(), 2, "{tiny:?}");
+    }
+
+    #[test]
+    fn a_long_capo_note_stops_at_the_cell_limit_and_is_cut_short() {
+        let mut library = songs();
+        library.entries[0].capo = "1 or 2 (Official: 0)".into();
+        let store = Store::default();
+        let search = Search::new(&library, &store);
+        let columns = Columns::new(
+            1040.0,
+            12.0,
+            160.0,
+            72.0,
+            &library,
+            &store,
+            &search.matches,
+            |s, _| s.chars().count() as f32 * 7.5,
+            |s| s.chars().count() as f32 * 6.0,
+        );
+        let capo = columns
+            .columns
+            .iter()
+            .find(|(n, _)| *n == "CAPO")
+            .unwrap()
+            .1;
+        assert_eq!(capo, 72.0 + 12.0);
+    }
+
+    #[test]
+    fn the_sorted_column_header_carries_its_arrow() {
+        let (library, store) = (songs(), Store::default());
+        let mut search = Search::new(&library, &store);
+        let config = Config::default();
+        let headers = |search: &mut Search| {
+            let frame = search.frame(
+                1100.0,
+                700.0,
+                Polarity::Light,
+                &library,
+                &store,
+                &config,
+                &Fixed,
+            );
+            frame
+                .text
+                .iter()
+                .map(|t| t.content.clone())
+                .filter(|t| ORDER.iter().any(|name| t.starts_with(name)))
+                .collect::<Vec<_>>()
+        };
+        assert!(headers(&mut search).contains(&"TITLE ↑".to_owned()));
+        search.input(SearchInput::Sort, &library, &store);
+        let shown = headers(&mut search);
+        assert!(shown.contains(&"ARTIST ↑".to_owned()) && shown.contains(&"TITLE".to_owned()));
+        search.input(SearchInput::Sort, &library, &store);
+        assert!(headers(&mut search).contains(&"RATING ↓".to_owned()));
+        // A query ranks the rows instead, so no header claims the order.
+        search.insert_text("ris", &library, &store);
+        assert!(
+            headers(&mut search)
+                .iter()
+                .all(|h| !h.contains('↑') && !h.contains('↓'))
+        );
     }
 
     #[test]
@@ -1612,11 +1932,11 @@ mod tests {
         assert_eq!(search.cursor, area.shown - 1);
 
         // The wheel moves the view; the cursor follows only to stay visible.
-        search.input(SearchInput::Scroll(10), &library, &store);
+        search.input(SearchInput::Scroll(10.0), &library, &store);
         let area = draw(&mut search);
         assert_eq!(area.first + area.shown, 4, "scrolled to the end: {area:?}");
         assert!(search.cursor >= area.first);
-        search.input(SearchInput::Scroll(-10), &library, &store);
+        search.input(SearchInput::Scroll(-10.0), &library, &store);
         assert_eq!(draw(&mut search).first, 0);
 
         let action = search.input(SearchInput::OpenRow(1), &library, &store);

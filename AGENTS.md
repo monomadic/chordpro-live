@@ -138,7 +138,7 @@ Keys in the viewer:
 | `t` | Show or fold tablature, which opens folded; a click on a tab's label does the same |
 | `n` `p`, ← → | Next and previous song |
 | ↑ ↓, Space, Page Up/Down, Home, End | Scroll or turn pages |
-| `/`, `o`, ⌘F | Search: digits rate, `#` tags, Tab sorts, Enter opens, Escape returns. The query edits as a Mac text field (← →, ⌥ and ⌘ arrows, ⌥⌫, ⌘⌫, Ctrl-A E B F W U K D N P, ⌘V ⌘C ⌘X) |
+| `/`, `o`, ⌘F | Search: digits rate, `#` tags, Tab sorts, Enter opens, Escape returns. The query edits as a Mac text field (← →, ⌥ and ⌘ arrows, ⇧ to select, ⌘A, ⌥⌫, ⌘⌫, Ctrl-A E B F W U K D N P, ⌘V ⌘C ⌘X); the sorted column's header shows ↑ or ↓ |
 | `q`, Escape, ⌘Q | Quit |
 
 In search the pointer works too: moving onto a row focuses it (only a

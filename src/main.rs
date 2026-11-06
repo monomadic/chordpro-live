@@ -93,11 +93,9 @@ struct Viewer {
     hand: bool,
     /// Keys go to search rather than the page.
     searching: bool,
-    /// Search's result rows as last drawn, the pointer in page points, and
-    /// wheel travel not yet a whole row.
+    /// Search's result rows as last drawn, and the pointer in page points.
     rows: Option<RowsArea>,
     pointer: Option<(f32, f32)>,
-    wheel_rest: f32,
     /// Opened with no songs: the library is the home screen, and closing it
     /// before a song is opened quits rather than showing a placeholder.
     library_home: bool,
@@ -498,6 +496,7 @@ impl Worker {
                 columns: 1,
                 ladder_step: 10,
                 toggles: Vec::new(),
+                clip: None,
             };
             self.compositor
                 .compose(&frame, scale, request.width, strip_px)
@@ -708,12 +707,12 @@ impl Worker {
                     .stdin
                     .take()
                     .expect("piped stdin")
-                    .write_all(search.query.as_bytes())?;
+                    .write_all(search.copied_text().as_bytes())?;
                 child.wait()
             })
             .is_ok_and(|status| status.success());
         if action == Clipboard::Cut && copied {
-            search.clear_query(library, &self.store);
+            search.cut(library, &self.store);
         }
     }
 
@@ -791,6 +790,7 @@ impl Worker {
     /// The search screen, composed whole: it changes with every key.
     fn answer_search(&mut self, request: &PageRequest) -> ReadyPage {
         let (width, height) = request.logical();
+        let started = Instant::now();
         let search = self.search.as_mut().unwrap();
         let library = self.library.as_ref().unwrap();
         let frame = search.frame(
@@ -802,6 +802,7 @@ impl Worker {
             &self.config,
             &CoreText,
         );
+        let laid_out = started.elapsed();
         let page_px = ((height * request.scale).round() as u32).max(1);
         let slab = compose_slab(
             &mut self.compositor,
@@ -811,6 +812,13 @@ impl Worker {
             request,
             0,
         );
+        if self.timing {
+            eprintln!(
+                "search frame {laid_out:?}, raster {:?}, {} texts",
+                started.elapsed() - laid_out,
+                frame.text.len()
+            );
+        }
         // The page retained before search is stale once it closes.
         self.retained = None;
         ReadyPage {
@@ -1303,21 +1311,20 @@ impl ApplicationHandler<PageReady> for Viewer {
                     return;
                 };
                 // Wheel notches arrive as lines, a row each; a trackpad as
-                // points. Either way positive y moves the content down,
+                // points, which move the list by exactly as much so it
+                // follows the fingers. Positive y moves the content down,
                 // which is up the list.
-                self.wheel_rest -= match delta {
+                let rows = -match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => {
                         let scale = self.window.as_ref().unwrap().scale_factor();
                         (p.y / scale) as f32 / area.row_height
                     }
                 };
-                let rows = self.wheel_rest.trunc();
-                self.wheel_rest -= rows;
                 if rows != 0.0 {
                     let _ = self
                         .requests
-                        .send(ToWorker::Search(SearchInput::Scroll(rows as i32)));
+                        .send(ToWorker::Search(SearchInput::Scroll(rows)));
                     self.request_page();
                 }
             }
@@ -1333,6 +1340,7 @@ impl ApplicationHandler<PageReady> for Viewer {
                 let cmd = self.modifiers.super_key();
                 let ctrl = self.modifiers.control_key();
                 let alt = self.modifiers.alt_key();
+                let shift = self.modifiers.shift_key();
                 let letter = match &logical_key {
                     Key::Character(text) if cmd || ctrl => text.to_lowercase().chars().next(),
                     _ => None,
@@ -1368,8 +1376,23 @@ impl ApplicationHandler<PageReady> for Viewer {
                         Some('p') => Some(SearchInput::Up),
                         _ => None,
                     },
+                    Key::Character(_) if cmd && letter == Some('a') => Some(SearchInput::SelectAll),
                     // Other ⌘ letters are app shortcuts, never typed text.
                     Key::Character(_) if cmd => None,
+                    Key::Named(NamedKey::ArrowLeft) if shift && cmd => {
+                        Some(SearchInput::SelectLineStart)
+                    }
+                    Key::Named(NamedKey::ArrowRight) if shift && cmd => {
+                        Some(SearchInput::SelectLineEnd)
+                    }
+                    Key::Named(NamedKey::ArrowLeft) if shift && alt => {
+                        Some(SearchInput::SelectWordLeft)
+                    }
+                    Key::Named(NamedKey::ArrowRight) if shift && alt => {
+                        Some(SearchInput::SelectWordRight)
+                    }
+                    Key::Named(NamedKey::ArrowLeft) if shift => Some(SearchInput::SelectLeft),
+                    Key::Named(NamedKey::ArrowRight) if shift => Some(SearchInput::SelectRight),
                     Key::Named(NamedKey::Backspace) if cmd => Some(SearchInput::DeleteToStart),
                     Key::Named(NamedKey::Backspace) if alt => Some(SearchInput::DeleteWord),
                     Key::Named(NamedKey::ArrowLeft) if cmd => Some(SearchInput::LineStart),
@@ -2374,7 +2397,6 @@ fn main() -> ExitCode {
         searching,
         rows: None,
         pointer: None,
-        wheel_rest: 0.0,
         library_home,
         setlist: 0,
         pending_step: next_step,
