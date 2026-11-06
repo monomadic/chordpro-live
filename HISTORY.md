@@ -38,6 +38,15 @@ session. A passing headless test does not stand in for a visual window check.
   pages, and with the visual goldens re-blessed after inspection. The click
   itself was not exercised in a window, since captures never inject input.
   The Figma `Page/Chord` style still says 15 pt.
+- **Open songs and folders by dropping them onto the window.** ChordPro
+  extensions, including `.chordpro`, open through the worker; folders become
+  name-ordered setlists, multi-song files keep every song, and successful
+  drops leave search. Invalid drops preserve the current setlist. The worker
+  regression test and workspace build passed; two real window launches
+  presented successfully. Native dragging still needs the hand check in
+  TASKS.md. Workspace tests reached visual goldens, where three cases exceeded
+  their pixel tolerance; goldens were not changed. Strict Clippy reports three
+  existing `chunks_exact_to_as_chunks` warnings in `cpl-app/src/sha256.rs`.
 
 ## 2026-11-05
 

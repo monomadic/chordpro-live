@@ -444,6 +444,12 @@ is chosen over SQLite for the same reason switchblade chose a filesystem
 cache: the data is small (a few hundred bytes per song), it diffs and syncs
 through iCloud Drive as a plain file, and profiling has not asked for more.
 
+Window drops use the command-line opening rule: a ChordPro file opens its
+songs, and a folder opens its immediate song files in name order. The drop
+replaces the current setlist, starts at its first song, and leaves search;
+loading stays on the worker and the old page remains until the new one is ready.
+An unsupported or unreadable drop leaves the current setlist intact.
+
 ## Design source
 
 **Every surface is mocked in Figma:** [chordpro-live — Screens](https://www.figma.com/design/0ovWyKEx7qyWh38a08Wl82)

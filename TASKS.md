@@ -22,6 +22,10 @@ automated checks. When every task in an epic is checked, the epic moves to
 
 ## P2 — complete the proposed viewer
 
+- [ ] Verify native window drops by hand: a `.chordpro` file and a folder,
+  both from a song and from library search; confirm next/previous navigation.
+  Worker coverage is in place; native dragging has not yet been exercised.
+
 - [ ] Build the library, search, sidecar metadata, and setlist navigation.
   Split into:
   - [ ] Saved setlists in the sidecar: an ordered list of fingerprints,

@@ -38,6 +38,9 @@ A macOS viewer is built; the iOS host is not.
   song is composed while the worker is idle, and a song change shows the
   old page until the new one is complete.
 
+Drop a ChordPro file (including `.chordpro`) or a folder onto the window to
+open it as a setlist; folders use song files in name order.
+
 On the page: a header with metadata pills and a chord diagram for every
 chord used, chord names in the Theme menu's accent; tablature as small, soft staves that wrap into systems at bar
 lines, folded when a song opens (`t` or a click on the label shows it); an overflowing song scrolls or,

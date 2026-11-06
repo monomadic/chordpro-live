@@ -152,6 +152,8 @@ struct PageRequest {
 /// to the newest; search keys never are, so none is lost while typing.
 enum ToWorker {
     Page(PageRequest),
+    /// Files or folders dropped onto the window; all I/O stays on the worker.
+    OpenPaths(Vec<PathBuf>),
     /// Open search over the library, with this query typed.
     OpenSearch(String),
     Search(SearchInput),
@@ -533,6 +535,57 @@ impl Worker {
             },
             composed_slab,
         )
+    }
+
+    /// Replace the current setlist only after at least one dropped song loads.
+    fn open_paths(&mut self, dropped: Vec<PathBuf>) {
+        let mut songs = Vec::new();
+        let mut files = Vec::new();
+        let mut folders = Vec::new();
+        for path in dropped {
+            // Folder detection and extension filtering must also stay off the UI thread.
+            if !path.is_dir() && !cpl_app::library::is_song(&path) {
+                continue;
+            }
+            let args = [path.to_string_lossy().into_owned()];
+            let paths = match expand_paths(&args) {
+                Ok(paths) => paths,
+                Err(error) => {
+                    eprintln!("could not open drop: {error}");
+                    continue;
+                }
+            };
+            for path in paths {
+                let text = match fs::read_to_string(&path) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        eprintln!("{path}: {error}");
+                        continue;
+                    }
+                };
+                for part in cpl_song::split(&text) {
+                    songs.push(cpl_song::parse(part.text).song);
+                    files.push(Some(SongFile::new(Path::new(&path), part.text)));
+                }
+            }
+            for folder in library_folders(&args) {
+                if !folders.contains(&folder) {
+                    folders.push(folder);
+                }
+            }
+        }
+        if songs.is_empty() {
+            return;
+        }
+        self.setlist = Setlist::new(songs, self.config.clone(), Polarity::Light);
+        self.setlist_files = files;
+        self.restore_transposes();
+        self.setlist_id += 1;
+        self.folders = folders;
+        self.library = None;
+        self.search = None;
+        self.retained = None;
+        self.preloaded = None;
     }
 
     fn edit(&self, setlist: u64, song: usize) {
@@ -1242,6 +1295,10 @@ impl ApplicationHandler<PageReady> for Viewer {
             return;
         }
         match event {
+            WindowEvent::DroppedFile(path) => {
+                let _ = self.requests.send(ToWorker::OpenPaths(vec![path]));
+                self.request_page();
+            }
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
@@ -2345,11 +2402,13 @@ fn main() -> ExitCode {
             // so only the latest page request is answered; every search key
             // is applied, in order.
             let mut latest = None;
+            let mut dropped = Vec::new();
             for message in
                 std::iter::once(first).chain(std::iter::from_fn(|| request_rx.try_recv().ok()))
             {
                 match message {
                     ToWorker::Page(request) => latest = Some(request),
+                    ToWorker::OpenPaths(paths) => dropped.extend(paths),
                     ToWorker::OpenSearch(query) => worker.open_search(&query),
                     ToWorker::Search(input) => worker.search_input(input),
                     ToWorker::Edit { setlist, song } => worker.edit(setlist, song),
@@ -2360,6 +2419,9 @@ fn main() -> ExitCode {
                         shift,
                     } => worker.transpose(setlist, song, shift),
                 }
+            }
+            if !dropped.is_empty() {
+                worker.open_paths(dropped);
             }
             let Some(request) = latest else {
                 continue;
@@ -2716,6 +2778,42 @@ mod tests {
             "this is not a library"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dropped_files_and_folders_replace_search_with_a_setlist() {
+        let dir = std::env::temp_dir().join(format!("cpl-drop-{}", std::process::id()));
+        let folder = dir.join("songs");
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = dir.join("first.chordpro");
+        std::fs::write(&file, "{title: First}\n[C]Words").unwrap();
+        std::fs::write(folder.join("b.CHORDPRO"), "{title: Second}").unwrap();
+        std::fs::write(
+            folder.join("a.cho"),
+            "{title: Medley}\n{new_song}\n{title: Another}",
+        )
+        .unwrap();
+        std::fs::write(folder.join("notes.txt"), "ignored").unwrap();
+        let mut worker = worker(dir.join("library.toml"));
+        worker.open_search("");
+        worker.open_paths(vec![file.clone(), folder.clone()]);
+        assert!(worker.search.is_none());
+        assert_eq!(worker.setlist_id, 1);
+        assert_eq!(worker.setlist.len(), 4);
+        assert_eq!(worker.setlist.position(), 0);
+        assert_eq!(worker.setlist_files[0].as_ref().unwrap().path, file);
+        assert_eq!(
+            worker.setlist_files[3].as_ref().unwrap().path,
+            folder.join("b.CHORDPRO")
+        );
+        assert_eq!(worker.folders, [dir.clone(), folder.clone()]);
+        worker.open_paths(vec![
+            folder.join("notes.txt"),
+            folder.join("missing.chordpro"),
+        ]);
+        assert_eq!(worker.setlist_id, 1, "an invalid drop keeps the open song");
+        assert_eq!(worker.setlist.len(), 4);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

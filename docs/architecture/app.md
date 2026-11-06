@@ -150,3 +150,13 @@ Terminal on a separate thread. Editor arguments and quoting are interpreted
 by the user's shell; the absolute filename is separately shell-quoted. The
 window and page worker keep running. Reopen the song from search to load
 saved edits; this handoff does not automatically reload the active page.
+
+## Window drops
+
+The host forwards dropped paths to the page worker, which accepts the library's
+ChordPro extensions (including `.chordpro`, case insensitive) and expands folders
+using the command-line rule: immediate song files in name order. A successful
+drop replaces the setlist and leaves search, starting at the first song;
+multi-song files contribute each song. Search then uses the dropped folders
+and file parents. Unsupported, empty or unreadable drops keep the current page.
+File checks, reads, parsing and transpose restoration all run on the worker.
