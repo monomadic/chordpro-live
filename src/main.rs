@@ -4,8 +4,8 @@ mod json;
 mod theme_menu;
 
 use cpl_app::{
-    Accent, App, Config, Frame, Library, Polarity, RowsArea, Search, SearchAction, SearchInput,
-    Setlist, Store, THEMES, Tabs,
+    Accent, App, Config, Frame, Library, Polarity, Rect, RowsArea, Search, SearchAction,
+    SearchInput, Setlist, Store, THEMES, Tabs,
 };
 use cpl_render::{CoreText, Gpu, PageCompositor, PageImage, Presented, View};
 use std::{
@@ -87,6 +87,10 @@ struct Viewer {
     tabs: Tabs,
     /// Whether the accepted page has tablature, and whether it is folded.
     page_tabs: Option<bool>,
+    /// The accepted page's tablature labels, which a click toggles, and
+    /// whether the pointer shows the hand over one.
+    toggles: Vec<Rect>,
+    hand: bool,
     /// Keys go to search rather than the page.
     searching: bool,
     /// Search's result rows as last drawn, the pointer in page points, and
@@ -224,6 +228,9 @@ struct ReadyPage {
     searching: bool,
     /// Where search drew its result rows, for the pointer.
     rows: Option<RowsArea>,
+    /// The tablature labels that show, in window points below the title
+    /// strip: a click on one folds or shows the tab.
+    toggles: Vec<Rect>,
     setlist: u64,
     song_count: usize,
     slab: Arc<Slab>,
@@ -490,6 +497,7 @@ impl Worker {
                 fits: false,
                 columns: 1,
                 ladder_step: 10,
+                toggles: Vec::new(),
             };
             self.compositor
                 .compose(&frame, scale, request.width, strip_px)
@@ -505,6 +513,19 @@ impl Worker {
                 tabs,
                 searching: false,
                 rows: None,
+                toggles: retained
+                    .page
+                    .toggles
+                    .iter()
+                    .map(|rect| Rect {
+                        y: rect.y - scroll.offset,
+                        ..*rect
+                    })
+                    .filter(|rect| {
+                        rect.y >= scroll.band.0 - 1e-3
+                            && rect.y + rect.height <= scroll.band.1 + 1e-3
+                    })
+                    .collect(),
                 setlist: self.setlist_id,
                 song_count: self.setlist.len(),
                 slab: Arc::clone(&retained.slab),
@@ -802,6 +823,7 @@ impl Worker {
             tabs: None,
             searching: true,
             rows: self.search.as_ref().and_then(Search::rows_area),
+            toggles: Vec::new(),
             setlist: self.setlist_id,
             song_count: self.setlist.len(),
             slab,
@@ -996,6 +1018,38 @@ fn library_folders(args: &[String]) -> Vec<PathBuf> {
 }
 
 impl Viewer {
+    /// Flips what the performer sees, from `t` or a click on a tab's
+    /// label; a song without tablature leaves the choice alone.
+    fn toggle_tabs(&mut self) {
+        if let Some(folded) = self.page_tabs {
+            self.tabs = if folded { Tabs::Show } else { Tabs::Fold };
+            self.request_page();
+        }
+    }
+
+    /// Whether the pointer is on a tablature label of the page shown.
+    fn over_toggle(&self) -> bool {
+        !self.searching
+            && self
+                .pointer
+                .is_some_and(|(x, y)| self.toggles.iter().any(|rect| rect.contains(x, y)))
+    }
+
+    /// A hand over a tab label says it can be clicked.
+    fn update_cursor(&mut self) {
+        let hand = self.over_toggle();
+        if hand != self.hand
+            && let Some(window) = &self.window
+        {
+            self.hand = hand;
+            window.set_cursor(if hand {
+                winit::window::CursorIcon::Pointer
+            } else {
+                winit::window::CursorIcon::Default
+            });
+        }
+    }
+
     fn request_page(&mut self) {
         let Some(window) = &self.window else {
             return;
@@ -1043,6 +1097,8 @@ impl Viewer {
             }
             self.searching = page.searching;
             self.rows = page.rows;
+            self.toggles = page.toggles;
+            self.update_cursor();
             if page.setlist != self.setlist {
                 // Search opened a new setlist: follow it, from the top.
                 self.setlist = page.setlist;
@@ -1202,6 +1258,7 @@ impl ApplicationHandler<PageReady> for Viewer {
                 let point = (position.x as f32 / scale, position.y as f32 / scale - inset);
                 self.pointer = Some(point);
                 if !self.searching {
+                    self.update_cursor();
                     return;
                 }
                 let row = self.rows.and_then(|area| {
@@ -1230,6 +1287,15 @@ impl ApplicationHandler<PageReady> for Viewer {
                         .requests
                         .send(ToWorker::Search(SearchInput::OpenRow(row)));
                     self.request_page();
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                if self.over_toggle() {
+                    self.toggle_tabs();
                 }
             }
             WindowEvent::MouseWheel { delta, .. } if self.searching => {
@@ -1390,14 +1456,7 @@ impl ApplicationHandler<PageReady> for Viewer {
                     }
                     self.request_page();
                 }
-                Key::Character(key) if key.eq_ignore_ascii_case("t") => {
-                    // Flip what the performer sees; a song without
-                    // tablature leaves the choice alone.
-                    if let Some(folded) = self.page_tabs {
-                        self.tabs = if folded { Tabs::Show } else { Tabs::Fold };
-                        self.request_page();
-                    }
-                }
+                Key::Character(key) if key.eq_ignore_ascii_case("t") => self.toggle_tabs(),
                 Key::Character(key) if key == "]" => self.transpose(Shift::By(1)),
                 Key::Character(key) if key == "[" => self.transpose(Shift::By(-1)),
                 Key::Character(key) if key == "0" => self.transpose(Shift::Reset),
@@ -1549,7 +1608,7 @@ usage: chordpro-live                      open the library of the current folder
        --paged                            open in paged mode (`v` toggles)
        --page 2                           open paged on the second page
        --fullscreen                       open in fake fullscreen (`f` toggles)
-       --tabs fold                        open with tablature folded (or show)
+       --tabs show                        open with tablature shown (fold, the default, or auto)
        --transpose 2                      open transposed up two semitones
        --search ris [--open 2 [--next 1]] open in search with a query typed,
                                           open the second result as Enter would,
@@ -1723,7 +1782,7 @@ fn render_main(mut args: Vec<String>) -> ExitCode {
     let mut accent = 0;
     let mut offset = 0.0_f32;
     let mut page = None;
-    let mut tabs = Tabs::Auto;
+    let mut tabs = Tabs::default();
     let mut transpose = 0;
     let mut search = None;
     let mut store = None;
@@ -2310,6 +2369,8 @@ fn main() -> ExitCode {
         menu_proxy: Some(menu_proxy),
         tabs: tabs.unwrap_or_default(),
         page_tabs: None,
+        toggles: Vec::new(),
+        hand: false,
         searching,
         rows: None,
         pointer: None,

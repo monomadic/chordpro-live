@@ -652,6 +652,7 @@ mod cache_tests {
             fits: false,
             columns: 1,
             ladder_step: 10,
+            toggles: Vec::new(),
         };
         let whole = compositor.compose(&frame, 1.0, 120, 200);
         let slab = compositor.compose_slab(&frame, 1.0, 120, 70, 50);
@@ -693,6 +694,7 @@ mod cache_tests {
             fits: true,
             columns: 1,
             ladder_step: 0,
+            toggles: Vec::new(),
         };
         let image = compositor.compose(&frame, 1.0, 100, 60);
         let at = |x: usize, y: usize| image.pixels[(y * 100 + x) * 4];
@@ -747,6 +749,7 @@ mod cache_tests {
             fits: true,
             columns: 1,
             ladder_step: 0,
+            toggles: Vec::new(),
         };
         let light = compositor.compose(&frame, 2.0, 240, 120);
         frame.polarity = Polarity::Dark;

@@ -12,7 +12,7 @@ window or GPU dependency.
 
 The page uses up to four columns, `column_gutter` apart. The body follows
 the Figma mock at 17 pt: a chord/lyric pair is `Page/Chord` (SF Pro
-Semibold 15/16 pt, ink-soft) over `Page/Lyric` (17/25 pt, ink), the
+Semibold 14/16 pt, ink-soft) over `Page/Lyric` (17/25 pt, ink), the
 lyric's box tucked three points under the chord row so each chord sits
 close on its words, repeated every `line_height` (46 pt, the 38 pt pair
 plus 8);
@@ -76,9 +76,12 @@ paged or scrolled view therefore never cuts a system. A folded tab draws its
 label and a faint `· FOLDED` cue, or `FOLDED` in the column when the label
 sits in the margin. `App::set_tabs` takes the reader's `Tabs` choice, drops
 the prepared page, and applies the choice to the fit and to the scroll page.
-`tabs_folded` tells the host whether this viewport folds a tab, so the `t`
-key can unfold a folded tab or fold a shown one; a song without tablature
-ignores `t`. The default config is embedded at build time.
+The choice starts as `Fold`. `tabs_folded` tells the host whether this
+viewport folds a tab, so the `t` key can unfold a folded tab or fold a shown
+one; a song without tablature ignores `t`. `Frame::toggles` holds a `Rect`
+around each tab label (and its cue), in page points with its scroll group;
+the host keeps those that show, shifted by the view offset, and a click in
+one does what `t` does, with a hand pointer over it. The default config is embedded at build time.
 
 ## Setlist
 

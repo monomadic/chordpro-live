@@ -157,6 +157,26 @@ pub struct Frame {
     pub fits: bool,
     pub columns: usize,
     pub ladder_step: u8,
+    /// Where each tablature section's label is drawn, in page points: a
+    /// click there folds or shows the tab, as `t` does.
+    pub toggles: Vec<Rect>,
+}
+
+/// A box in page points, for the pointer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    /// The scroll group drawn there; the box counts only while it shows.
+    pub group: usize,
+}
+
+impl Rect {
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        (self.x..=self.x + self.width).contains(&x) && (self.y..=self.y + self.height).contains(&y)
+    }
 }
 
 /// One scroll step over a retained page: where the page sits in the window
@@ -718,6 +738,7 @@ enum PreparedPage {
     Scroll {
         content: Vec<Text>,
         shapes: Vec<Shape>,
+        toggles: Vec<Rect>,
         bounds: BTreeMap<usize, (f32, f32)>,
         sections: Vec<ScrollSection>,
         max_offset: f32,
@@ -810,7 +831,7 @@ impl App {
             larger,
             prepared: RefCell::new(None),
             polarity,
-            tabs: Tabs::Auto,
+            tabs: Tabs::default(),
             hint_widths,
             status_char,
         }
@@ -925,6 +946,7 @@ impl App {
             PreparedPage::Scroll {
                 content,
                 shapes,
+                toggles,
                 max_offset,
                 ..
             } => Frame {
@@ -936,6 +958,7 @@ impl App {
                 fits: false,
                 columns: 1,
                 ladder_step: 10,
+                toggles: toggles.clone(),
             },
         }
     }
@@ -1216,6 +1239,7 @@ impl App {
                     fits: false,
                     columns: 1,
                     ladder_step: 10,
+                    toggles: Vec::new(),
                 };
                 let mut first_visible_group = None;
                 for item in content {
@@ -1377,6 +1401,7 @@ impl App {
         PreparedPage::Scroll {
             content: long.text,
             shapes: long.shapes,
+            toggles: long.toggles,
             bounds: group_bounds,
             sections,
             max_offset,
@@ -1633,6 +1658,7 @@ impl App {
                 0
             },
             ladder_step: solution.step,
+            toggles: Vec::new(),
         };
         let header_size = c.header_size;
         for (row, baseline) in &solution.header.title_rows {
@@ -1793,6 +1819,25 @@ impl App {
                                 Ink::Soft
                             },
                         });
+                        if section.kind == SectionKind::Tab {
+                            // The label, and the cue when folded, is the
+                            // tab's switch.
+                            let label = frame.text.last().unwrap();
+                            let cue = if !o.tab_folded(section) {
+                                0.0
+                            } else if o.side_labels {
+                                c.side_label_inset + section.fold_cue_width
+                            } else {
+                                section.fold_separator_width + section.fold_cue_width
+                            };
+                            frame.toggles.push(Rect {
+                                x: label.x,
+                                y: label.baseline - c.label_baseline * body,
+                                width: (section.label_width + cue) * body,
+                                height: c.label_height * body,
+                                group: label.group,
+                            });
+                        }
                         if o.tab_folded(section) {
                             // The cue says the tab is there and folded, so an
                             // empty label never reads as a missing section.
@@ -2141,11 +2186,12 @@ mod tests {
 
     #[test]
     fn tablature_draws_small_and_soft_beside_a_rule_and_stays_in_the_source() {
-        let app = app(
+        let mut app = app(
             "{title: Test}\n{start_of_tab: Intro}\ne|--3---|\nB|--1---|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
         );
         assert_eq!(app.song().sections[0].kind, SectionKind::Tab);
         assert_eq!(app.song().sections[0].lines[0].lyrics(), "e|--3---|");
+        app.set_tabs(Tabs::Show);
         // Tall and narrow, so the tab and the verse share one column.
         let frame = app.frame(500.0, 900.0);
         assert!(frame.fits);
@@ -2276,6 +2322,10 @@ mod tests {
             Polarity::Light,
             &Fixed,
         );
+        // The viewer starts folded; handing the choice back to the ladder
+        // lets step 5 fold the tab only when the page needs room.
+        assert_eq!(app.tabs(), Tabs::Fold);
+        app.set_tabs(Tabs::Auto);
         let width = 600.0;
         let auto = at_step(&app, width, 5);
         let height = auto.height;
@@ -2353,7 +2403,8 @@ mod tests {
             source.push_str(&format!("[C]Line {index}\n"));
         }
         source.push_str("{end_of_verse}");
-        let app = app(&source);
+        let mut app = app(&source);
+        app.set_tabs(Tabs::Show);
         let (first, max_offset) = app.frame_scrolled(450.0, 260.0, 0.0);
         assert!(max_offset > 0.0);
         assert_eq!(count(&first, "TAB"), 1);
@@ -2372,7 +2423,8 @@ mod tests {
             source.push_str(&format!("[C]Line {index}\n"));
         }
         source.push_str("{end_of_verse}");
-        let app = app(&source);
+        let mut app = app(&source);
+        app.set_tabs(Tabs::Show);
         let (first, max_offset) = app.frame_scrolled(450.0, 300.0, 0.0);
         assert!(max_offset > 0.0);
         assert_eq!(count(&first, "e|--3---|"), 1);
@@ -2382,10 +2434,55 @@ mod tests {
     }
 
     #[test]
+    fn a_tab_opens_folded_and_its_label_is_a_switch() {
+        let mut app = app(
+            "{title: Test}\n{start_of_tab: Intro}\ne|--3---|\n{end_of_tab}\n{start_of_verse: A}\n[C]Alpha\n{end_of_verse}",
+        );
+        let frame = app.frame(500.0, 900.0);
+        assert_eq!(count(&frame, "e|--3---|"), 0);
+        let label = find(&frame, "INTRO");
+        let cue = frame
+            .text
+            .iter()
+            .find(|item| item.content.ends_with("FOLDED"))
+            .unwrap();
+        assert_eq!(frame.toggles.len(), 1);
+        let toggle = frame.toggles[0];
+        assert!(toggle.contains(label.x + 1.0, label.baseline - 1.0));
+        assert!(toggle.contains(cue.x + 1.0, cue.baseline - 1.0));
+        assert!(!toggle.contains(label.x + 1.0, label.baseline + 40.0));
+        // Shown, the label is still the switch; a verse label never is.
+        app.set_tabs(Tabs::Show);
+        let frame = app.frame(500.0, 900.0);
+        assert_eq!(count(&frame, "e|--3---|"), 1);
+        assert_eq!(frame.toggles.len(), 1);
+        let label = find(&frame, "INTRO");
+        assert!(frame.toggles[0].contains(label.x + 1.0, label.baseline - 1.0));
+    }
+
+    #[test]
+    fn a_scrolling_page_keeps_its_tab_switch() {
+        let mut source = String::from(
+            "{title: Test}\n{start_of_tab: Tab}\ne|--3---|\n{end_of_tab}\n{start_of_verse: A}\n",
+        );
+        for index in 0..18 {
+            source.push_str(&format!("[C]Line {index}\n"));
+        }
+        source.push_str("{end_of_verse}");
+        let app = app(&source);
+        let page = app.page(450.0, 260.0);
+        assert!(page.height > 260.0);
+        assert_eq!(page.toggles.len(), 1);
+        let label = find(&page, "TAB");
+        assert!(page.toggles[0].contains(label.x + 1.0, label.baseline - 1.0));
+    }
+
+    #[test]
     fn plain_text_after_a_tab_remains_visible() {
-        let app = app(
+        let mut app = app(
             "{title: Test}\n{start_of_tab}\ne|--3--|\n{end_of_tab}\nSlide up on repeat\n{start_of_verse: Verse 1}\n[C]Hello\n{end_of_verse}",
         );
+        app.set_tabs(Tabs::Show);
         let frame = app.frame(900.0, 600.0);
         assert_eq!(count(&frame, "e|--3--|"), 1);
         assert_eq!(count(&frame, "Slide up on repeat"), 1);

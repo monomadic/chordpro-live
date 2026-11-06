@@ -228,6 +228,10 @@ Least destructive first:
    evenly as the fewest systems allow, and each continuation system repeats
    the string names. A system is one scroll and page group. The reader's
    `t` pins tabs shown or folded and takes this step out of the ladder.
+   **Settled (2026-11-07): tablature opens folded.** A song opens on its
+   words; the player shows the tab with `t` or a click on its label (the
+   pointer becomes a hand there), which folds it again. `--tabs auto`
+   hands the choice back to this step.
 6. *(new)* Repeated choruses after the first collapse to their label and first
    line. The singer knows the words; the chords were shown once. A `{chorus}`
    recall is already this in the model; a chorus the author retyped in full is
@@ -340,7 +344,7 @@ are fixed in `src/main.rs` today)*.
 
 **Page** — the song. Fit mode by default; an overflowing song scrolls,
 and `v` switches it between scroll and paged (sync mode is planned).
-Transpose `[`/`]`, reset `0`, polarity `i`, fold or show tablature `t`,
+Transpose `[`/`]`, reset `0`, polarity `i`, fold or show tablature `t` (or a click on its label),
 fake fullscreen `f`. The status strip (one line, bottom, `ink_faint`) shows mode, key with
 transpose offset, ladder level when any step fired, the section containing
 the top visible line in scroll mode, and a `MORE ↓` flag when

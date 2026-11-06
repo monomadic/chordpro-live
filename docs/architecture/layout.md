@@ -50,7 +50,8 @@ premeasured size that keeps it, and weighs size against what the steps cost
 at its actual point size. A page that fits nowhere scrolls at the
 comfortable size.
 `solve_with` takes the reader's `Tabs` choice: `Auto` lets step 5 fold
-tablature, while `Show` and `Fold` pin it and skip step 5.
+tablature, while `Show` and `Fold` pin it and skip step 5. The viewer's
+choice defaults to `Fold`; `solve` itself passes `Auto`.
 
 ## Tablature
 

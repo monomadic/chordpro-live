@@ -4,6 +4,18 @@ This is a record of implemented work and observed checks. `TASKS.md` holds
 open work; `PROPOSAL.md` holds design decisions. Dates are local to the project
 session. A passing headless test does not stand in for a visual window check.
 
+## 2026-11-07
+
+- **Smaller chords; tablature opens folded and its label is a switch.**
+  Chord names drop from 15 to 14 pt at the 17 pt body (`chord_size`
+  0.824). Tablature opens folded; `t` or a click on the tab's label (a hand
+  pointer over it) shows it and folds it again, and `--tabs auto` restores
+  the ladder's step 5. Checked in a real window (Greensleeves, 980x720 at
+  2x), with app tests for the label's click box on fitted and scrolling
+  pages, and with the visual goldens re-blessed after inspection. The click
+  itself was not exercised in a window, since captures never inject input.
+  The Figma `Page/Chord` style still says 15 pt.
+
 ## 2026-11-05
 
 - **Colour, sparingly; a mouse in search.** The no-colour rule is lifted

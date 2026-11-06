@@ -40,7 +40,7 @@ A macOS viewer is built; the iOS host is not.
 
 On the page: a header with metadata pills and a chord diagram for every
 chord used, chord names in the Theme menu's accent; tablature as small, soft staves that wrap into systems at bar
-lines (ladder step 5 folds it, `t` pins it); an overflowing song scrolls or,
+lines, folded when a song opens (`t` or a click on the label shows it); an overflowing song scrolls or,
 with `v`, turns pages.
 
 Search (`/`, `o` or ⌘F) covers the library, which is also the home screen
@@ -118,7 +118,7 @@ Options follow the songs:
 | `--scroll 120` | Open scrolled that many points |
 | `--paged`, `--page 2` | Open in paged mode, optionally on a page |
 | `--fullscreen` | Open in fake fullscreen, as `f` toggles it |
-| `--tabs show\|fold` | Pin tablature (`testdata/greensleeves.cho` has long tabs) |
+| `--tabs show\|fold\|auto` | Open with tablature shown, folded (the default), or folded by the ladder only when needed (`testdata/greensleeves.cho` has long tabs) |
 | `--transpose 2` (or `-3`) | Open transposed, as `]` or `[` would |
 | `--accent purple` | Open with that Theme menu accent (`Blue` … `Teal`, or `Ink`) |
 | `--search ris [--open 2 [--next 1]]` | Open in search with a query typed; open the second result as Enter would; step through the results as `n` does |
@@ -135,7 +135,7 @@ Keys in the viewer:
 | `e` | Open the current file in `$EDITOR` (or `vi`) in Terminal; reopen from search after saving |
 | `[` `]`, `0` | Transpose a semitone down or up; reset |
 | `v` | Scroll or paged |
-| `t` | Fold or show tablature |
+| `t` | Show or fold tablature, which opens folded; a click on a tab's label does the same |
 | `n` `p`, ← → | Next and previous song |
 | ↑ ↓, Space, Page Up/Down, Home, End | Scroll or turn pages |
 | `/`, `o`, ⌘F | Search: digits rate, `#` tags, Tab sorts, Enter opens, Escape returns. The query edits as a Mac text field (← →, ⌥ and ⌘ arrows, ⌥⌫, ⌘⌫, Ctrl-A E B F W U K D N P, ⌘V ⌘C ⌘X) |

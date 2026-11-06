@@ -606,12 +606,14 @@ pub fn solve(song: &MeasuredSong, m: &PageMetrics, view: Viewport) -> Solution {
 }
 
 /// The viewer's choice for tablature: let ladder step 5 fold it when the
-/// page needs room, or pin it shown or folded, which takes step 5 out.
+/// page needs room, or pin it shown or folded, which takes step 5 out. The
+/// viewer starts folded, so a song opens on its words; `t` or a click on
+/// the label shows the tab.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Tabs {
-    #[default]
     Auto,
     Show,
+    #[default]
     Fold,
 }
 

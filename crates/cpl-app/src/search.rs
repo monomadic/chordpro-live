@@ -520,6 +520,7 @@ impl Search {
             fits: true,
             columns: 1,
             ladder_step: 0,
+            toggles: Vec::new(),
         };
         let left = c.margin_x;
         let right = width - c.margin_x;
