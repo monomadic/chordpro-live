@@ -51,3 +51,21 @@ representations, validated by `build.py`. Source board:
 (657, 22)–(1189, 533) and (657, 615)–(1189, 1143), respectively, with
 112-pixel rounded-corner masks. As with the other board exports, these are
 upscaled raster concepts, centered at 824 pixels wide on a 1024-pixel canvas.
+
+## Neon colourways on black
+
+The original marbled resin style with vivid pigments on black tiles:
+
+1. `split-pick-neon-pink-blue.icns`
+2. `split-pick-neon-cyan-violet.icns`
+3. `split-pick-neon-blue-magenta.icns`
+4. `split-pick-neon-lime-pink.icns`
+
+Each has a matching RGBA PNG master and all standard/Retina representations.
+These are colour variations, not neon-tube designs. They do not change the
+app's default icon. Source board: `exec-1f8c9f28-85e5-45a9-bbda-714af9f56d0c.png`.
+Crops (left, top, right, bottom), in order: (93, 37, 598, 534),
+(655, 37, 1160, 534), (93, 626, 598, 1126), (655, 626, 1160, 1126).
+Each uses a 110-pixel rounded-corner mask, resized with Lanczos filtering to
+824 pixels wide and centered on a transparent 1024-pixel canvas. Large sizes
+are upscaled from the roughly 505-pixel source tiles.
