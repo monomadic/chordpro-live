@@ -93,3 +93,27 @@ Exports use a 90-pixel corner mask, Lanczos resizing to 824 pixels wide, and
 transparent 1024-pixel canvases. The cosmic version includes extra space
 and a mask extension for its orbital ring. Large sizes are upscaled from
 roughly 417-pixel source tiles. These alternatives do not change the app default.
+
+## LIVE lettering alternatives
+
+1. `split-pick-backstage-pass.icns`
+2. `split-pick-candy-live.icns`
+3. `split-pick-arcade-live.icns`
+4. `split-pick-glitter-encore.icns`
+5. `split-pick-psychedelic-live.icns`
+6. `split-pick-cosmic-live.icns`
+
+Each includes a matching 1024-pixel RGBA PNG master and standard/Retina sizes.
+Source board: `exec-e30000af-b957-4f43-84ca-ed65b0246b2e.png`.
+Crops (left, top, right, bottom), in order:
+
+- backstage-pass: (62, 21, 490, 440)
+- candy-live: (553, 21, 981, 440)
+- arcade-live: (1044, 21, 1472, 440)
+- glitter-encore: (62, 503, 490, 930)
+- psychedelic-live: (553, 503, 981, 930)
+- cosmic-live: (1044, 503, 1472, 930)
+
+Exports use 92-pixel corner masks and Lanczos resizing to 824 pixels wide,
+centered on transparent 1024-pixel canvases. Large sizes are upscaled from
+roughly 428-pixel source tiles. These do not change the default app icon.

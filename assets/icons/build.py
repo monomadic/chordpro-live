@@ -17,7 +17,13 @@ for name in ('split-pick', 'split-pick-enamel', 'split-pick-translucent',
              'split-pick-arcade-boss',
              'split-pick-glitter-bomb',
              'split-pick-liquid-psychedelia',
-             'split-pick-pocket-universe'):
+             'split-pick-pocket-universe',
+             'split-pick-backstage-pass',
+             'split-pick-candy-live',
+             'split-pick-arcade-live',
+             'split-pick-glitter-encore',
+             'split-pick-psychedelic-live',
+             'split-pick-cosmic-live'):
     master = Image.open(ROOT / f'{name}.png')
     assert master.size == (1024, 1024) and master.mode == 'RGBA'
     chunks = []
