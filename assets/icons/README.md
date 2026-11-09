@@ -14,7 +14,7 @@ point `ICON` in that script at another `.icns` here.
 - Matching `.png` files are 1024×1024 RGBA masters, with transparent space
   outside the rounded ivory tile. Presentation backgrounds and labels are removed.
 
-All three alternatives include 16, 32, 64, 128, 256, 512 and 1024 pixel representations.
+All alternatives include 16, 32, 64, 128, 256, 512 and 1024 pixel representations.
 The original concept was extracted from a roughly 380-pixel tile and upscaled;
 its 1024-pixel representation does not contain additional source detail.
 The enamel source tile was roughly 1016 pixels wide. These exports preserve
@@ -39,3 +39,15 @@ The translucent alternative was extracted from the roughly 413-pixel tile in
 (85, 511)–(498, 919), with an 88-pixel rounded-corner mask. It uses the same
 824-pixel tile width on a transparent 1024-pixel canvas. Large sizes are
 upscaled from the concept board; this export adds no new source detail.
+
+## Electric alternatives
+
+- `split-pick-illuminated-resin.icns`: neon board number 2, lit blue/red resin.
+- `split-pick-after-hours.icns`: neon board number 4, glowing CP on black.
+
+Both have matching transparent 1024-pixel PNG masters and standard/Retina
+representations, validated by `build.py`. Source board:
+`exec-edecc3dd-d1b7-4ea9-80ad-10ec85a61e4c.png`. Tile crops are
+(657, 22)–(1189, 533) and (657, 615)–(1189, 1143), respectively, with
+112-pixel rounded-corner masks. As with the other board exports, these are
+upscaled raster concepts, centered at 824 pixels wide on a 1024-pixel canvas.
