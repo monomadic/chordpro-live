@@ -11,7 +11,13 @@ CHUNKS = ((b'icp4', 16), (b'icp5', 32), (b'icp6', 64),
 for name in ('split-pick', 'split-pick-enamel', 'split-pick-translucent',
              'split-pick-illuminated-resin', 'split-pick-after-hours',
              'split-pick-neon-pink-blue', 'split-pick-neon-cyan-violet',
-             'split-pick-neon-blue-magenta', 'split-pick-neon-lime-pink'):
+             'split-pick-neon-blue-magenta', 'split-pick-neon-lime-pink',
+             'split-pick-holographic-backstage',
+             'split-pick-forbidden-gummy',
+             'split-pick-arcade-boss',
+             'split-pick-glitter-bomb',
+             'split-pick-liquid-psychedelia',
+             'split-pick-pocket-universe'):
     master = Image.open(ROOT / f'{name}.png')
     assert master.size == (1024, 1024) and master.mode == 'RGBA'
     chunks = []

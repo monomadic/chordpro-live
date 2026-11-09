@@ -69,3 +69,27 @@ Crops (left, top, right, bottom), in order: (93, 37, 598, 534),
 Each uses a 110-pixel rounded-corner mask, resized with Lanczos filtering to
 824 pixels wide and centered on a transparent 1024-pixel canvas. Large sizes
 are upscaled from the roughly 505-pixel source tiles.
+
+## Playful material alternatives
+
+1. `split-pick-holographic-backstage.icns`
+2. `split-pick-forbidden-gummy.icns`
+3. `split-pick-arcade-boss.icns`
+4. `split-pick-glitter-bomb.icns`
+5. `split-pick-liquid-psychedelia.icns`
+6. `split-pick-pocket-universe.icns`
+
+Each has a matching 1024-pixel RGBA PNG master and standard/Retina sizes.
+Source board: `exec-312140c5-f35b-4ca1-8db9-60e8e65c90a1.png`.
+Tile crops (left, top, right, bottom), in order:
+- holographic-backstage: (75, 29, 492, 440)
+- forbidden-gummy: (562, 29, 979, 440)
+- arcade-boss: (1047, 29, 1464, 440)
+- glitter-bomb: (75, 511, 492, 931)
+- liquid-psychedelia: (562, 511, 979, 931)
+- pocket-universe: (1047, 511, 1479, 931)
+
+Exports use a 90-pixel corner mask, Lanczos resizing to 824 pixels wide, and
+transparent 1024-pixel canvases. The cosmic version includes extra space
+and a mask extension for its orbital ring. Large sizes are upscaled from
+roughly 417-pixel source tiles. These alternatives do not change the app default.
