@@ -117,3 +117,27 @@ Crops (left, top, right, bottom), in order:
 Exports use 92-pixel corner masks and Lanczos resizing to 824 pixels wide,
 centered on transparent 1024-pixel canvases. Large sizes are upscaled from
 roughly 428-pixel source tiles. These do not change the default app icon.
+
+## Gold embossed LIVE alternatives
+
+1. `split-pick-holographic-gold.icns`
+2. `split-pick-candy-gold.icns`
+3. `split-pick-arcade-gold.icns`
+4. `split-pick-glitter-gold.icns`
+5. `split-pick-psychedelic-gold.icns`
+6. `split-pick-cosmic-gold.icns`
+
+Each includes a matching 1024-pixel RGBA PNG master and standard/Retina sizes.
+Source board: `exec-905fe5e4-4dd5-4906-add8-e142b1c5083c.png`.
+Crops (left, top, right, bottom), in order:
+
+- holographic-gold: (62, 21, 490, 440)
+- candy-gold: (553, 21, 981, 440)
+- arcade-gold: (1044, 21, 1472, 440)
+- glitter-gold: (62, 503, 490, 930)
+- psychedelic-gold: (553, 503, 981, 930)
+- cosmic-gold: (1044, 503, 1472, 930)
+
+Exports use 92-pixel corner masks and Lanczos resizing to 824 pixels wide,
+centered on transparent 1024-pixel canvases. Large sizes are upscaled from
+roughly 428-pixel source tiles. These do not change the default app icon.
