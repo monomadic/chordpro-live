@@ -1394,6 +1394,7 @@ impl App {
                         SectionKind::Textblock => "TEXT",
                         SectionKind::Embedded(notation) => notation.name(),
                         SectionKind::Unlabelled => "SONG",
+                        SectionKind::Custom => "SECTION",
                     }
                     .to_uppercase()
                 } else {
@@ -2486,6 +2487,18 @@ mod tests {
         assert_eq!(page.toggles.len(), 1);
         let label = find(&page, "TAB");
         assert!(page.toggles[0].contains(label.x + 1.0, label.baseline - 1.0));
+    }
+
+    #[test]
+    fn a_section_of_the_files_own_is_labelled_by_its_name() {
+        let app = app(
+            "{title: Test}\n{start_of_intro}\n[Am]Hum\n{end_of_intro}\n{start_of_pre_chorus}\n[F]Up\n{end_of_pre_chorus}\n{start_of_outro: label=\"Fade\"}\n[C]Out\n{end_of_outro}",
+        );
+        let frame = app.frame(900.0, 700.0);
+        assert_eq!(count(&frame, "INTRO"), 1);
+        assert_eq!(count(&frame, "PRE CHORUS"), 1);
+        assert_eq!(count(&frame, "FADE"), 1);
+        assert_eq!(count(&frame, "Hum"), 1);
     }
 
     #[test]

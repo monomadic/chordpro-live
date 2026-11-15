@@ -4,6 +4,19 @@ This is a record of implemented work and observed checks. `TASKS.md` holds
 open work; `PROPOSAL.md` holds design decisions. Dates are local to the project
 session. A passing headless test does not stand in for a visual window check.
 
+## 2026-11-16
+
+- **Sections a file names itself.** Any `{start_of_name}` the spec does
+  not define (`intro`, `outro`, `interlude`, `pre_chorus`, `tablature` …)
+  is a section of its own, labelled on the page by its name (PRE CHORUS)
+  or its `label=`, where it was an unlabelled stanza with an "unsupported
+  directive" warning. An empty, unlabelled section is dropped, as the
+  reference drops it. `conform` gained a probe for both; over the iCloud
+  tab library 316 of 346 files now parse as the reference does, up from
+  297. Checked with parser and page tests and in a real window
+  (Apocalypse, Cigarettes After Sex, with INTRO and OUTRO). Nested
+  sections, the remaining structure mismatch, are a task.
+
 ## 2026-11-07
 
 - **Chords follow the mock's `Page/Chord`.** The Figma styles moved to a

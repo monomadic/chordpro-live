@@ -34,10 +34,9 @@ automated checks. When every task in an epic is checked, the epic moves to
 - [ ] Parse chords inside a comment (`{comment: [C]Capo}`), as the
   reference does; `chordpro-live conform` reports it. Needs a design for drawing a
   comment's chords.
-- [ ] Keep a section the spec does not name as the reference does:
-  `{start_of_tablature}` (in the iCloud tab library) opens a section
-  named `tablature` there, an unnamed stanza here. `conform` reports it
-  per file; add it to the probe constructs.
+- [ ] Match the reference when a section starts before the previous one
+  ends: `conform` over the iCloud tab library still differs on Black
+  (Pearl Jam) and Are You Lonesome Tonight, which nest `{start_of_…}`.
 - [ ] Lenient import of tab outside a tab section: about a dozen songs in
   the iCloud tab library (Riptide, How Soon Is Now, True Colors) have
   staff lines in a verse, drawn as lyrics. PROPOSAL.md's lenient import

@@ -106,6 +106,10 @@ const PROBES: &[(&str, &str)] = &[
         "{title: T}\n{start_of_grid shape=\"1+4x2+2\" label=\"Intro\"}\nIntro || C~G . | Am / % . | x2\n       |: D . . . :|2 E . . . |.\n{end_of_grid}",
     ),
     (
+        "{start_of_…} sections the spec does not name",
+        "{title: T}\n{start_of_intro}\n[Am]Hum [C]along\n{end_of_intro}\n{start_of_pre_chorus: label=\"Lift\"}\n[F]Up\n{end_of_pre_chorus}\n{start_of_tablature}\ne|--3--|\n{end_of_tablature}",
+    ),
+    (
         "{chorus}",
         "{title: T}\n{soc}\n[G]Sing\n{eoc}\n{sov}\n[C]Verse\n{eov}\n{chorus}",
     ),
@@ -265,6 +269,8 @@ pub fn from_song(song: &Song) -> Model {
                 (None, SectionKind::Textblock) => "textblock",
                 (None, SectionKind::Embedded(notation)) => notation.name(),
                 (None, SectionKind::Unlabelled) => "",
+                // The reference's context is the environment's own name.
+                (None, SectionKind::Custom) => section.name.as_str(),
             };
             // A recall carries its own label, the chorus's when it gives none.
             let label = section.label.clone();

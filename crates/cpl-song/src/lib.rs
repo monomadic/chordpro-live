@@ -88,6 +88,9 @@ impl Song {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
     pub kind: SectionKind,
+    /// The environment's name for a `Custom` section, as written in
+    /// `{start_of_intro}` (`intro`); empty for every other kind.
+    pub name: String,
     pub label: String,
     pub lines: Vec<Line>,
     /// A `{chorus}` recall: the index of the chorus section it repeats. Its
@@ -110,6 +113,10 @@ pub enum SectionKind {
     Embedded(Notation),
     /// A stanza no environment encloses; blank lines separate these.
     Unlabelled,
+    /// An environment the spec does not name, `{start_of_intro}` …
+    /// `{end_of_intro}`, as the reference keeps it: its lines are parsed
+    /// like a verse's and `Section::name` holds the name.
+    Custom,
 }
 
 impl SectionKind {
@@ -346,7 +353,14 @@ impl Parser {
 
     fn close(&mut self) {
         if let Some(section) = self.active.take() {
-            self.song.sections.push(section);
+            // As the reference does, a section with nothing in it and no
+            // label leaves no trace (`{start_of_intro}{end_of_intro}`).
+            let empty = section.lines.is_empty()
+                && section.label.is_empty()
+                && !matches!(section.kind, SectionKind::Embedded(_));
+            if !empty {
+                self.song.sections.push(section);
+            }
         }
     }
 
@@ -354,6 +368,7 @@ impl Parser {
         self.active
             .get_or_insert_with(|| Section {
                 kind: SectionKind::Unlabelled,
+                name: String::new(),
                 label: String::new(),
                 lines: Vec::new(),
                 recall_of: None,
@@ -398,8 +413,11 @@ impl Parser {
             if let Some(selector) = selector
                 && !self.selected(selector)
             {
-                if let Some(kind) = name.strip_prefix("start_of_").and_then(environment) {
-                    self.skipping = Some(end_of(kind));
+                if let Some(env) = name
+                    .strip_prefix("start_of_")
+                    .filter(|env| environment(env).is_some())
+                {
+                    self.skipping = Some(format!("end_of_{env}"));
                 }
                 return;
             }
@@ -440,7 +458,10 @@ impl Parser {
     }
 
     fn directive(&mut self, number: usize, name: &str, value: &str) {
-        if let Some(kind) = name.strip_prefix("start_of_").and_then(environment) {
+        if let Some((environment_name, kind)) = name
+            .strip_prefix("start_of_")
+            .and_then(|env| Some((env, environment(env)?)))
+        {
             // A grid's bare argument is its shape, and notation's is not a
             // label either; only `label="…"` names them.
             let label = match kind {
@@ -449,7 +470,7 @@ impl Parser {
                 }
                 _ => label(value),
             };
-            self.start(number, kind, label);
+            self.start(number, kind, environment_name, label);
             if let SectionKind::Embedded(notation) = kind {
                 self.diagnose(
                     number,
@@ -458,8 +479,11 @@ impl Parser {
             }
             return;
         }
-        if let Some(kind) = name.strip_prefix("end_of_").and_then(environment) {
-            self.end(number, kind, name);
+        if let Some((environment_name, kind)) = name
+            .strip_prefix("end_of_")
+            .and_then(|env| Some((env, environment(env)?)))
+        {
+            self.end(number, kind, environment_name, name);
             return;
         }
         match name {
@@ -521,22 +545,33 @@ impl Parser {
         }
     }
 
-    fn start(&mut self, number: usize, kind: SectionKind, label: &str) {
+    fn start(&mut self, number: usize, kind: SectionKind, name: &str, label: &str) {
         if self.explicit().is_some() {
             self.diagnose(number, "section started before previous section ended");
         }
         self.close();
         self.active = Some(Section {
             kind,
+            name: if kind == SectionKind::Custom {
+                name.into()
+            } else {
+                String::new()
+            },
             label: label.into(),
             lines: Vec::new(),
             recall_of: None,
         });
     }
 
-    fn end(&mut self, number: usize, kind: SectionKind, name: &str) {
+    fn end(&mut self, number: usize, kind: SectionKind, environment: &str, name: &str) {
+        let open_name = self.active.as_ref().map(|section| section.name.as_str());
         match self.explicit() {
-            Some(open) if open == kind => self.close(),
+            Some(open)
+                if open == kind
+                    && (kind != SectionKind::Custom || open_name == Some(environment)) =>
+            {
+                self.close()
+            }
             Some(open) => {
                 self.diagnose(number, format!("{name} closes a {open:?} section"));
                 self.close();
@@ -562,6 +597,7 @@ impl Parser {
         let original = &self.song.sections[index];
         let recalled = Section {
             kind: SectionKind::Chorus,
+            name: String::new(),
             label: if label.is_empty() {
                 original.label.clone()
             } else {
@@ -639,14 +675,19 @@ fn environment(name: &str) -> Option<SectionKind> {
         "abc" => SectionKind::Embedded(Notation::Abc),
         "ly" => SectionKind::Embedded(Notation::Lilypond),
         "svg" => SectionKind::Embedded(Notation::Svg),
+        // Any other word, as the reference reads `start_of_(\w+)`.
+        _ if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') => {
+            SectionKind::Custom
+        }
         _ => return None,
     })
 }
 
-/// The directive that closes an environment.
+/// The directive that closes a verbatim environment (a custom section is
+/// closed by its own name, never here).
 fn end_of(kind: SectionKind) -> String {
     let name = match kind {
-        SectionKind::Verse | SectionKind::Unlabelled => "verse",
+        SectionKind::Verse | SectionKind::Unlabelled | SectionKind::Custom => "verse",
         SectionKind::Chorus => "chorus",
         SectionKind::Bridge => "bridge",
         SectionKind::Tab => "tab",
@@ -878,12 +919,47 @@ mod tests {
 
     #[test]
     fn unsupported_is_visible() {
-        let result = parse("{title: Test}\n{start_of_part}\n");
+        let result = parse("{title: Test}\n{start_of_}\n{frobnicate}\n");
         assert_eq!(result.diagnostics[0].line, 2);
         assert_eq!(
             result.diagnostics[0].message,
-            "unsupported directive: start_of_part"
+            "unsupported directive: start_of_"
         );
+        assert_eq!(
+            result.diagnostics[1].message,
+            "unsupported directive: frobnicate"
+        );
+    }
+
+    #[test]
+    fn a_section_the_spec_does_not_name_keeps_its_name() {
+        let result = parse(
+            "{title: T}\n{start_of_intro}\n[Am]Hum [C]along\n{end_of_intro}\n{start_of_pre_chorus: label=\"Lift\"}\n[F]Up\n{end_of_pre_chorus}",
+        );
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        let sections = &result.song.sections;
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].kind, SectionKind::Custom);
+        assert_eq!(
+            (sections[0].name.as_str(), sections[0].label.as_str()),
+            ("intro", "")
+        );
+        assert_eq!(sections[0].lines[0].segments[1].chord.as_deref(), Some("C"));
+        assert_eq!(
+            (sections[1].name.as_str(), sections[1].label.as_str()),
+            ("pre_chorus", "Lift")
+        );
+        // Its own end closes it; another environment's end does not.
+        let crossed = parse("{start_of_intro}\n[C]a\n{end_of_outro}");
+        assert_eq!(
+            crossed.diagnostics[0].message,
+            "end_of_outro closes a Custom section"
+        );
+        // An empty section without a label leaves nothing, as the
+        // reference's parse does.
+        let empty = parse("{start_of_tablature}\n{end_of_tablature}\n\n[C]After");
+        assert_eq!(empty.song.sections.len(), 1);
+        assert_eq!(empty.song.sections[0].kind, SectionKind::Unlabelled);
     }
 
     #[test]

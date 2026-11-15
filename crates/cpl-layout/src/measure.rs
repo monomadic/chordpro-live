@@ -522,8 +522,12 @@ pub fn measure_song(song: &Song, metrics: &Metrics, measure: &impl Measure) -> M
             }
             // A tab the file leaves unlabelled is still named on the page;
             // the song model keeps the label as written.
+            // So is a section of the file's own (`{start_of_intro}`), by its
+            // name: INTRO, and PRE CHORUS for `pre_chorus`.
             let label = if tab && section.label.is_empty() {
                 "TAB".to_owned()
+            } else if section.kind == SectionKind::Custom && section.label.is_empty() {
+                section.name.replace('_', " ").to_uppercase()
             } else {
                 section.label.to_uppercase()
             };
